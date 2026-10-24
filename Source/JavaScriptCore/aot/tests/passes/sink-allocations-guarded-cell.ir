@@ -1,7 +1,7 @@
 # Guards of an object that is sunk: tests of a virtual object fold, a kept access names a guard of the cell that was built
 # FORM: Prepared
 # RUN: pass SinkAllocations
-# STATISTIC: AllocationsRemoved = 5
+# STATISTIC: AllocationsRemoved = 6
 # STATISTIC: AllocationsSunk = 7
 
 module m0 path="main.js" displayPath="main.js"
@@ -161,7 +161,7 @@ function f6 name="keyOrder" parameters=[{type=anything}] results=[{type=anything
 # CHECK: b3():
 # CHECK-NEXT: Return v0
 
-function f7 name="arrayStorageIsLeftToRun" parameters=[{type=number}] results=[{type=anything}] {
+function f7 name="arrayStorageOfNumbersGoesTheExpectedWay" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):
     v1 = NewArray v0 contents=number
     v2 = Integer integer=0
@@ -175,11 +175,11 @@ function f7 name="arrayStorageIsLeftToRun" parameters=[{type=number}] results=[{
     v7 = ElemGet v1, v2
     Return v7
 }
-# CHECK-LABEL: function f7 name="arrayStorageIsLeftToRun"
-# CHECK: v1:{{*}}= NewArray v0
-# CHECK: v3: boolean = HasArrayStorage v1
-# CHECK: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK: = GetArrayElement v1, v2, v5
+# CHECK-LABEL: function f7 name="arrayStorageOfNumbersGoesTheExpectedWay"
+# CHECK-NOT: NewArray
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: GetArrayElement
+# CHECK: Jump -> next b1()
 
 function f8 name="notThenableIsLeftToRun" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

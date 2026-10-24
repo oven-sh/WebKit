@@ -82,9 +82,22 @@ std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
         return findField(VirtualField::unprovenNamed(known.key));
     case VirtualFieldKind::UnprovenNamed:
         return findField(VirtualField::named(known.key));
-    default:
+    case VirtualFieldKind::LayoutField:
+    case VirtualFieldKind::Element:
+    case VirtualFieldKind::Capture:
+    case VirtualFieldKind::Length:
+    case VirtualFieldKind::Capacity:
+    case VirtualFieldKind::Prototype:
+    case VirtualFieldKind::Callee:
+    case VirtualFieldKind::ArgumentCount:
+    case VirtualFieldKind::RestList:
+    case VirtualFieldKind::StringBase:
+    case VirtualFieldKind::RangeStart:
+    case VirtualFieldKind::RangeEnd:
+    case VirtualFieldKind::Operand:
         return std::nullopt;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 VirtualShapeID VirtualFamily::intern(VirtualShape&& shape)

@@ -12,6 +12,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinUses.h"
 #include "AOTExpectedTypesByUse.h"
+#include "AOTFlowResults.h"
 #include "AOTHeat.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccess.h"
@@ -281,6 +282,9 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             const Type& type = program.typeOf(function, receiver);
             PropertyKeyID key = keyOfNamedAccess(program, access);
             if (!type.anyObject || type.layouts)
+                continue;
+            // A test for the layouts that have the name would turn such an object away, and what stands behind the test would run in the copy.
+            if (PayloadWord::accessSite(opcode) && access.accessSite() && context.inputs.flow.lossOf(access.accessSite()).seesConstructedObject)
                 continue;
             if (keepsCallsByName() && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;

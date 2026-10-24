@@ -368,6 +368,8 @@ void ObjectInterpreter::bindParameter(ValueID parameter, const IncomingBinding& 
 
     if (alias.kind == AliasKind::Object && outgoing.edge.isHandlerEdge() && !fitsTypeWithoutCasts(alias.object, parameterType))
         m_sinking.abandon(alias.object);
+    if (alias.kind == AliasKind::Guard && m_sinking.mayBeListOfNumbers(alias.object))
+        m_sinking.abandon(alias.object);
     if (alias.kind == AliasKind::Guard && m_mode == SinkingMode::Count)
         m_sinking.at(alias.object).needsGuard = true;
     if (stateOf(alias.object)->isCell())

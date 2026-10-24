@@ -14,6 +14,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
 #include "AOTLayoutData.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlacement.h"
 #include "AOTPlacementSteps.h"
@@ -91,16 +92,34 @@ bool mayReadSiteCachesAgain(FunctionAnalyses& analyses, BlockID block)
 // FieldRecordIndex::isStoredWithoutTypeTest: the stubs by name store into such a slot in fewer instructions than PutKnownField, and file nothing either.
 static bool isStoredThroughTableOfFields(const Program& program, const Field& declaration, SlotRepresentation representation)
 {
-    const Type& held = program.at(declaration.declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : declaration.slotType ? declaration.slotType : declaration.declared.type);
+    const Type& held = program.at(slotTypeOf(program, declaration));
     switch (representation) {
     case SlotRepresentation::JSValue:
         return held.isAnything();
     case SlotRepresentation::Int32:
     case SlotRepresentation::OptionalInt32:
         return held.primitives & Primitive::Integer && held.integers.minimum <= minInlineInt32 && held.integers.maximum >= INT32_MAX;
-    default:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::OptionalInt64:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::OptionalDouble:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::OptionalBoolean:
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::LiteralString:
+    case SlotRepresentation::LiteralString32:
+    case SlotRepresentation::DeferredClosure:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 bool storedFieldTakesAnyValue(const Program& program, const Placement& placement, const Function& function, const Value& store)

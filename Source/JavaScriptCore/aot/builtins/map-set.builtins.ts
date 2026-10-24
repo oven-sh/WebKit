@@ -140,6 +140,7 @@ export default b.declarations(
           items: [b.runs("Iterate")],
           callback: [
             b.called({
+              afterwards: "TouchesOnlyWhatRowNames",
               times: "PerElement",
               args: [b.iterated("items"), b.length],
               result: "Stored",
@@ -181,7 +182,7 @@ export default b.declarations(
         uses: {
           this: [b.readsContents()],
           callback: [
-            b.called({ times: "PerElement", this: b.operand("thisArg"), args: [value, key, self], result: "Ignored" }),
+            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.operand("thisArg"), args: [value, key, self], result: "Ignored" }),
           ],
           thisArg: b.inspected,
         },
@@ -242,7 +243,7 @@ export default b.declarations(
           this: [b.readsContents()],
           key: [b.storedIn(key)],
           // The callback gets the key as the map keeps it: +0 for -0.
-          callback: [b.called({ times: "Once", args: [key], result: "Stored", resultTo: value })],
+          callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [key], result: "Stored", resultTo: value })],
         },
         usesFeature: "MapGetOrInsert",
         nativeSymbols: ["mapProtoFuncGetOrInsertComputed"],
@@ -323,6 +324,7 @@ export default b.declarations(
           this: [b.readsContents()],
           callback: [
             b.called({
+              afterwards: "TouchesOnlyWhatRowNames",
               times: "PerElement",
               this: b.operand("thisArg"),
               args: [element, element, self],
@@ -429,7 +431,7 @@ export default b.declarations(
         uses: {
           this: [b.readsContents()],
           key: [b.storedIn(key)],
-          callback: [b.called({ times: "Once", args: [b.operand("key")], result: "Stored", resultTo: value })],
+          callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [b.operand("key")], result: "Stored", resultTo: value })],
         },
         usesFeature: "MapGetOrInsert",
         nativeSymbols: ["protoFuncWeakMapGetOrInsertComputed"],
@@ -530,7 +532,7 @@ export default b.declarations(
       uses: {
         cleanup: [
           b.storedIn(b.resultSlot("cleanup")),
-          b.called({ times: "Later", args: [b.resultSlot("heldValue")], result: "Ignored" }),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", args: [b.resultSlot("heldValue")], result: "Ignored" }),
         ],
       },
       implementation: b.hostCall,

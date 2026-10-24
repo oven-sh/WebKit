@@ -181,7 +181,10 @@ static void collectAccesses(FlowScopeIndex& index)
 static bool canOwnVariables(ModuleKind kind)
 {
     switch (kind) {
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:

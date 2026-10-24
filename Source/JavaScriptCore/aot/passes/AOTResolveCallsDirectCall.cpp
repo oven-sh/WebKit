@@ -86,6 +86,22 @@ static bool hasProvenArrayContents(const Type& type)
     return part && part->contentsAreProven;
 }
 
+// The list has no place among the declared parameters: what flow has proven of it is assumed at the head of the callee. Who makes an array predicts its storage from its elements as its readers do.
+static TypeID provenElementTypeOfHiddenRest(const Program& program, const Function& callee)
+{
+    std::optional<unsigned> index = callee.hiddenRestParameterIndex();
+    if (!index || !callee.hasBody())
+        return TypeTable::anything;
+    const Block& entry = callee.at(entryBlock);
+    ValueID list = entry.parameters[*index];
+    for (ValueID id : entry.values) {
+        const Value& value = callee.at(id);
+        if (value.opcode == Opcode::AssumeType && value.valueOperand() == list && hasProvenArrayContents(program.at(value.castType())))
+            return arrayElementTypeOf(program, program.at(value.castType()));
+    }
+    return TypeTable::anything;
+}
+
 namespace {
 
 class DirectCallBuilder {
@@ -230,9 +246,14 @@ ValueID DirectCallBuilder::createHiddenRest()
         return m_request.hiddenRest;
 
     RELEASE_ASSERT(!m_request.restArray);
+    TypeID elementType = provenElementTypeOfHiddenRest(m_program, m_callee);
+    Vector<ValueID, 8> elements;
+    for (ValueID element : argumentsFrom(m_request, m_callee.numberOfPositionalParameters()))
+        elements.append(elementType == TypeTable::anything ? element : convertArgument(element, DeclaredType { .type = elementType }));
+
     Value rest = IRBuilder::make(Opcode::NewArray);
-    rest.setContents(TypeTable::anything);
-    rest.setElementsOperands(argumentsFrom(m_request, m_callee.numberOfPositionalParameters()));
+    rest.setContents(elementType);
+    rest.setElementsOperands(elements.span());
     return insert(WTF::move(rest));
 }
 

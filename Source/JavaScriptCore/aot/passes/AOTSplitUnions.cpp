@@ -11,11 +11,14 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinUses.h"
+#include "AOTCodeSizeEstimate.h"
 #include "AOTEscapeAnalysis.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTInt32Conversions.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRegionCloner.h"
 #include "AOTResolveCalls.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
@@ -299,9 +302,333 @@ static bool needsCellForReadsByKeyOnly(FunctionAnalyses& analyses, ValueID argum
     });
 }
 
+namespace {
+
+struct LoopSplit {
+    BlockID header;
+    Edge entry;
+    Vector<BlockID> region;
+    ValueID receiver;
+    ValueID narrowestName;
+    TypeID testedType;
+    bool restTakesEveryValue { false };
+};
+
+// A loop that takes the elements of one object, which may be of several classes, gets a copy for one class. The class is tested once, in front of the loop.
+class LoopSplitter {
+    WTF_MAKE_NONCOPYABLE(LoopSplitter);
+public:
+    explicit LoopSplitter(FunctionPassContext& context)
+        : m_context(context)
+        , m_program(context.program)
+        , m_function(context.function)
+        , m_analyses(context.analyses)
+    {
+    }
+
+    PassOutcome run();
+
+private:
+    std::optional<LoopSplit> findSplit();
+    std::optional<LoopSplit> planFor(const NaturalLoop&);
+    bool servesEveryAccess(ValueID receiver, const BitVector* isInLoop, const UnionPart&);
+    bool isUsedAsNumber(ValueID element);
+    bool holdsNumbersByUse(ValueID receiver, const BitVector& isInLoop);
+    bool isExpectedToHoldNumbers(ValueID receiver, ValueID narrowestName, const BitVector& isInLoop);
+    ValueID findNarrowestName(ValueID receiver, ProgramPoint front);
+    TypeID chooseTestedType(ValueID receiver, ValueID narrowestName, const BitVector& isInLoop, BlockID front, bool& restTakesEveryValue);
+    void split(const LoopSplit&);
+
+    FunctionPassContext& m_context;
+    const Program& m_program;
+    Function& m_function;
+    FunctionAnalyses& m_analyses;
+    BitVector m_isFinishedHeader;
+    unsigned m_numberOfSplitLoops { 0 };
+};
+
+PassOutcome LoopSplitter::run()
+{
+    while (std::optional<LoopSplit> plan = findSplit()) {
+        if (m_context.exceeds(LimitID::MaxSeparatedLoopsPerFunction, m_numberOfSplitLoops + 1))
+            break;
+        split(*plan);
+        ++m_numberOfSplitLoops;
+    }
+    return m_numberOfSplitLoops ? PassOutcome::Changed : PassOutcome::Unchanged;
+}
+
+// Outer loops come first: the test stands in front of the widest loop that does not change the object.
+std::optional<LoopSplit> LoopSplitter::findSplit()
+{
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    Vector<const NaturalLoop*, 8> candidates;
+    for (unsigned index = 0; index < loops.numLoops(); ++index) {
+        if (!m_isFinishedHeader.get(loops.loop(index).header().index()))
+            candidates.append(&loops.loop(index));
+    }
+    AOT::stableSort(candidates, std::ranges::greater { }, &NaturalLoop::size);
+    for (const NaturalLoop* loop : candidates) {
+        m_isFinishedHeader.set(loop->header().index());
+        if (std::optional<LoopSplit> plan = planFor(*loop))
+            return plan;
+    }
+    return std::nullopt;
+}
+
+bool LoopSplitter::servesEveryAccess(ValueID receiver, const BitVector* isInLoop, const UnionPart& part)
+{
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+        if ((isInLoop && !isInLoop->get(block.index())) || frequencies.classOf(block) == BlockFrequency::Rare)
+            continue;
+        for (ValueID id : m_function.at(block).values) {
+            const Value& access = m_function.at(id);
+            std::optional<uint32_t> operandIndex = splitOperandOf(access);
+            if (!operandIndex || m_analyses.identityOf(access.operand(*operandIndex)) != receiver)
+                continue;
+            if (!resolvesOnPart(m_context, access, part))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool LoopSplitter::isUsedAsNumber(ValueID element)
+{
+    static constexpr OpcodeSet numericOperations = int32ConvertingOperations | OpcodeSet {
+        Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow, Opcode::Negate, Opcode::Increment, Opcode::Decrement,
+    };
+    static constexpr OpcodeSet operationsOnTwoOfAKind { Opcode::Add, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::Eq, Opcode::StrictEq };
+    for (const Use& use : m_analyses.useLists().usesOf(element)) {
+        if (use.kind != Use::Kind::Operand)
+            continue;
+        const Value& user = m_function.at(use.user);
+        if (numericOperations.contains(user.opcode))
+            return true;
+        if (operationsOnTwoOfAKind.contains(user.opcode) && m_program.expectedOrTypeOf(m_function, user.operand(!use.operandIndex)).isNumber())
+            return true;
+        if (user.opcode == Opcode::Upcast && isUsedAsNumber(use.user))
+            return true;
+    }
+    return false;
+}
+
+bool LoopSplitter::holdsNumbersByUse(ValueID receiver, const BitVector& isInLoop)
+{
+    for (size_t block : isInLoop) {
+        for (ValueID id : m_function.blocks[block].values) {
+            const Value& access = m_function.at(id);
+            if (!elementAccessOf(access.opcode) || m_analyses.identityOf(access.objectOperand()) != receiver)
+                continue;
+            if (OperandPosition::value(access.opcode) ? m_program.expectedOrTypeOf(m_function, access.valueOperand()).isNumber() : isUsedAsNumber(id))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool LoopSplitter::isExpectedToHoldNumbers(ValueID receiver, ValueID narrowestName, const BitVector& isInLoop)
+{
+    TypeID expected = m_function.at(narrowestName).expected();
+    if (!expected)
+        return holdsNumbersByUse(receiver, isInLoop);
+    const Type& type = m_context.types.at(expected);
+    if (type.anyObject || type.anyFunction || type.layouts || !type.functions.isEmpty() || !type.builtins.isEmpty())
+        return false;
+    if (type.classes.size() != 1 || type.classes[0].builtinClass != BuiltinClasses::Array)
+        return false;
+    const Type& contents = m_context.types.at(type.classes[0].contentsAt(0));
+    if (contents.isNumberOrNullish())
+        return true;
+    return contents.primitives & Primitive::Number && holdsNumbersByUse(receiver, isInLoop);
+}
+
+// What a test in front of the loop has proven of the object holds inside it.
+ValueID LoopSplitter::findNarrowestName(ValueID receiver, ProgramPoint front)
+{
+    ValueID narrowest;
+    for (uint32_t index = 0; index < m_function.values.size(); ++index) {
+        ValueID name(index);
+        if (m_analyses.identityOf(name) != receiver || !m_analyses.dominates(name, front))
+            continue;
+        if (!narrowest || m_program.typeOf(m_function, name).isSubsetOf(m_program.typeOf(m_function, narrowest), m_program))
+            narrowest = name;
+    }
+    return narrowest;
+}
+
+TypeID LoopSplitter::chooseTestedType(ValueID receiver, ValueID narrowestName, const BitVector& isInLoop, BlockID front, bool& restTakesEveryValue)
+{
+    const Type& whole = m_program.typeOf(m_function, narrowestName);
+    if (isClosedUnion(whole)) {
+        UnionParts parts = unionPartsOf(whole);
+        const UnionPart* last = nullptr;
+        unsigned numberOfServingParts = 0;
+        for (const UnionPart& part : parts) {
+            if (!canSeparateByTest(m_program, m_context.types, whole, parts, part) || !servesEveryAccess(receiver, &isInLoop, part))
+                continue;
+            ++numberOfServingParts;
+            last = &part;
+        }
+        if (numberOfServingParts < 2)
+            return { };
+        return m_context.types.intern(testedTypeOf(*last));
+    }
+
+    // Nobody could follow the object. What is asked only for what bytes have may be bytes as well as the array that it is taken for.
+    if (!whole.anyObject || !m_context.build.recordedOptions().usesExpectedTypes() || !isExpectedToHoldNumbers(receiver, narrowestName, isInLoop))
+        return { };
+    UnionParts bytes = unionPartsOf(Type::builtinClass(BuiltinClasses::Uint8Array).withoutClassProofs());
+    if (!servesEveryAccess(receiver, nullptr, bytes[0]))
+        return { };
+    TypeID testedType = m_context.types.intern(bytes[0].type);
+    Value test = IRBuilder::make(Opcode::TypeTest, { narrowestName });
+    test.setTestedType(testedType);
+    if (m_analyses.findEarlierTest(test, front) == EarlierTest::Failed)
+        return { };
+    restTakesEveryValue = true;
+    return testedType;
+}
+
+std::optional<LoopSplit> LoopSplitter::planFor(const NaturalLoop& loop)
+{
+    BlockID header = loop.header();
+    if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || heatClassOf(m_context, header) != HeatClass::Hot)
+        return std::nullopt;
+    bool isLoopOfProgram = std::ranges::any_of(m_function.at(header).values, [&](ValueID value) {
+        return m_function.at(value).opcode == Opcode::LoopHint;
+    });
+    if (!isLoopOfProgram)
+        return std::nullopt;
+    std::optional<Edge> entry = m_analyses.naturalLoops().findSingleEntry(loop);
+    if (!entry)
+        return std::nullopt;
+
+    LoopSplit plan;
+    plan.header = header;
+    plan.entry = *entry;
+    BitVector isInLoop(m_function.blocks.size());
+    uint64_t bytes = 0;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        BlockID block = loop.at(index);
+        isInLoop.set(block.index());
+        plan.region.append(block);
+        bytes += estimatedCodeBytes(m_program, m_function, m_function.at(block));
+    }
+    if (m_context.exceeds(LimitID::MaxBytesOfSeparatedLoop, bytes))
+        return std::nullopt;
+
+    const UseLists& uses = m_analyses.useLists();
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    Vector<ValueID, 4> receivers;
+    for (BlockID block : plan.region) {
+        if (frequencies.classOf(block) == BlockFrequency::Rare)
+            continue;
+        for (ValueID id : m_function.at(block).values) {
+            const Value& access = m_function.at(id);
+            if (!elementAccessOf(access.opcode))
+                continue;
+            ValueID receiver = m_analyses.identityOf(access.objectOperand());
+            if (!isInLoop.get(uses.blockOf(receiver).index()) && !receivers.contains(receiver))
+                receivers.append(receiver);
+        }
+    }
+    for (ValueID receiver : receivers) {
+        plan.narrowestName = findNarrowestName(receiver, pointBeforeTerminatorOf(m_function, entry->from));
+        if (!plan.narrowestName)
+            continue;
+        plan.testedType = chooseTestedType(receiver, plan.narrowestName, isInLoop, entry->from, plan.restTakesEveryValue);
+        if (!plan.testedType)
+            continue;
+        if (RegionCloner::checkCanDuplicate(m_analyses, plan.region.span()) != CloneCheck::CanClone)
+            return std::nullopt;
+        plan.receiver = receiver;
+        return plan;
+    }
+    return std::nullopt;
+}
+
+void LoopSplitter::split(const LoopSplit& plan)
+{
+    BitVector isInLoop(m_function.blocks.size());
+    for (BlockID block : plan.region)
+        isInLoop.set(block.index());
+
+    // Whatever else names the object in front of the loop is the same object inside it.
+    Vector<ValueID, 4> names;
+    Vector<Use, 16> usesInLoop;
+    const UseLists& uses = m_analyses.useLists();
+    for (uint32_t index = 0; index < m_function.values.size(); ++index) {
+        ValueID name(index);
+        if (m_analyses.identityOf(name) != plan.receiver || uses.locationOf(name).placement == ValuePlacement::Detached || isInLoop.get(uses.blockOf(name).index()))
+            continue;
+        size_t numberOfUsesBefore = usesInLoop.size();
+        for (const Use& use : uses.usesOf(name)) {
+            if (isInLoop.get(use.block.index()))
+                usesInLoop.append(use);
+        }
+        if (usesInLoop.size() > numberOfUsesBefore)
+            names.append(name);
+    }
+
+    IRBuilder builder({ m_context.build, m_program, &m_context.inputs.flow, &m_context.inputs.effects, m_context.id }, m_function, m_context.types, &m_analyses);
+    builder.setOrigin(m_function.at(plan.entry.from).terminator.origin());
+    BlockID front = builder.splitEdge(plan.entry);
+    BlockFrequency frequency = m_function.at(front).frequency;
+    Arguments arguments(m_function.at(front).terminator.next().arguments);
+    m_function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+    builder.moveToEndOf(front);
+    if (plan.restTakesEveryValue)
+        builder.emitFailureOfPredictions(Target { plan.header, Arguments(arguments), { } });
+    ValueID test = builder.appendTypeTest(plan.narrowestName, plan.testedType);
+    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, frequency);
+
+    auto narrows = [&](ValueID proven, ValueID name) {
+        return m_program.typeOf(m_function, proven).isSubsetOf(m_program.typeOf(m_function, name), m_program);
+    };
+    RegionCloner cloner(builder, m_function);
+    for (ValueID name : names) {
+        if (narrows(branch.provenOnTaken, name))
+            cloner.mapValue(name, branch.provenOnTaken);
+    }
+    cloner.cloneBlocks(plan.region.span(), [](ValueID, Value&) { });
+    builder.moveToEndOf(branch.taken);
+    builder.emitJump(cloner.cloneOf(plan.header), Arguments(arguments));
+    builder.moveToEndOf(branch.notTaken);
+    builder.emitJump(plan.header, WTF::move(arguments));
+    if (!plan.restTakesEveryValue) {
+        for (const Use& use : usesInLoop) {
+            if (narrows(branch.provenOnNotTaken, usedValueOf(m_function, use)))
+                replaceUse(m_function, use, branch.provenOnNotTaken);
+        }
+    }
+    m_analyses.didChangeControlFlow();
+    cloner.repairSSA(m_analyses);
+    m_analyses.didChangeControlFlow();
+
+    for (BlockID block : plan.region) {
+        m_isFinishedHeader.set(block.index());
+        m_isFinishedHeader.set(cloner.cloneOf(block).index());
+    }
+}
+
+} // anonymous namespace
+
 PassOutcome splitUnions(FunctionPassContext& context)
 {
-    return UnionSplitter(context).run();
+    bool didSplitLoops = context.analyses.naturalLoops().numLoops() && LoopSplitter(context).run() == PassOutcome::Changed;
+    if (didSplitLoops) {
+        retypeValues(context);
+        resolveBuiltins(context);
+        resolveAccesses(context);
+    }
+    PassOutcome outcome = UnionSplitter(context).run();
+    if (!didSplitLoops)
+        return outcome;
+    retypeValues(context);
+    context.keptAnalyses = { };
+    return PassOutcome::Changed;
 }
 
 UnionSplitter::UnionSplitter(FunctionPassContext& context)

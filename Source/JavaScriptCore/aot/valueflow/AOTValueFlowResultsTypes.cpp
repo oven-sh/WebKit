@@ -1146,12 +1146,7 @@ void computeNumbersOfPositions(ValueFlowNumbersOfValues& prepared, const FlowRes
 // What a read of the position gives by its type alone.
 Type NumbersOfPositions::typeWithoutProof(const DeclaredType& declared) const
 {
-    const Type& type = m_inputs.program.at(declared.type);
-    if (!declared.flags.contains(PositionFlags::IsExpected) || !type.isJavaScriptValue())
-        return type;
-    Type anything = Type::anything();
-    anything.primitives |= type.primitives & Primitive::Absent;
-    return anything;
+    return m_inputs.program.at(m_inputs.program.provenTypeOf(declared));
 }
 
 // A counter of a loop is an integer by induction, and under a bound by the test that the loop ends on.
@@ -1168,7 +1163,6 @@ bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std
         declared->type = arena.intern(typeAt(position, typeWithoutProof(*declared)));
         declared->flags.remove(PositionFlags::IsExpected);
     }
-    TypeID anyValue = arena.withPrimitives(TypeTable::anything, Primitive::Absent);
     for (size_t index : m_restsOnCheck[id.index()]) {
         Value& value = copy.edit(ValueID(index));
         if (value.opcode == Opcode::Check || value.opcode == Opcode::AssumeType) {
@@ -1177,7 +1171,7 @@ bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std
             value.setValueOperand(operand);
         }
         if (value.opcode == Opcode::Upcast)
-            value.setCastType(anyValue);
+            value.setCastType(TypeTable::anythingOrAbsent);
     }
 
     AnalysisContext context { m_inputs.build, program, nullptr, nullptr, id };
@@ -1790,15 +1784,20 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         const Value& test = function.at(observed.test);
         ValueSetID held = setOf(observed.operand);
         prove(test.operand(0), [&] { return held; });
-        if (test.opcode != Opcode::Check || mayComeFromUnseenCaller(test.operand(0)) || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
+        if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
-        if (positions.isSurelyInside(held, test.castType()))
+        size_t numberOfClaimsBefore = update.claims.size();
+        // Nothing is proven of what an unseen caller passes.
+        if (mayComeFromUnseenCaller(test.operand(0))) {
+        } else if (positions.isSurelyInside(held, test.castType()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
             // The type of such a location was only expected, or the check would not stand behind the read. Of any other value the proof of its type stands in front of the check, which then fails by the types alone.
             if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.castType())))
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
         }
+        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(held, program.at(test.castType())))
+            update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
     AOT::sort(update.proofs, { }, &FlowValueProof::value);
     AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);

@@ -786,9 +786,14 @@ void generateGrowCompactTable(StubAssembler& jit)
     jit.add32(TrustedImm32(1), count);
     jit.store32(count, Address(larger, CompactTable::offsetOfUsed()));
     jit.store32(count, Address(larger, CompactTable::offsetOfAliveCount()));
-    jit.store8(TrustedImm32(static_cast<int32_t>(CompactTable::Status::Replaced)), Address(table, CompactTable::offsetOfStatus()));
-    jit.storePtr(larger, Address(table, CompactTable::offsetOfUsed()));
+    // The collector may look at the table between any two of these stores: it sees a table without entries, then a replaced one without a successor.
+    static_assert(CompactTable::offsetOfAliveCount() == CompactTable::offsetOfUsed() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
+    jit.store64(TrustedImm32(0), Address(table, CompactTable::offsetOfUsed()));
     jit.store32(TrustedImm32(0), Address(table, CompactTable::offsetOfCapacity()));
+    jit.storeFence();
+    jit.store8(TrustedImm32(static_cast<int32_t>(CompactTable::Status::Replaced)), Address(table, CompactTable::offsetOfStatus()));
+    jit.storeFence();
+    jit.storePtr(larger, Address(table, CompactTable::offsetOfUsed()));
     jit.storePtr(larger, Address(owner, offsetOfHashTableStorage()));
     Jump fullTableNeedsBarrier = branchIfBarrierIsNeeded(jit, table, registers.candidate);
     Label fullTableIsRemembered = jit.label();

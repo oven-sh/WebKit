@@ -68,13 +68,12 @@ static Vector<FieldData> collectStaticFields(TableEncoder& encoder, const Layout
             continue;
 
         // Nothing checks what arrives at an expected position, so the run time accepts every value there.
-        const DeclaredType& declared = program.at(field.variable).declared;
         fields.append(FieldData {
             .name = encoder.identifierNumber(field.key),
             .flags = 0,
             .operandIndex = 0,
             .slot = placedVariableSlot(encoder, field.variable),
-            .type = encoder.typeOffset(declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : declared.type),
+            .type = encoder.typeOffset(TypeTable::valuesOf(program.provenTypeOf(program.at(field.variable).declared))),
         });
     }
     return fields;

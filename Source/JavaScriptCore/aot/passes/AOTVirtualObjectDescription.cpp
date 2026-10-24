@@ -480,8 +480,7 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         const Vector<DeclaredType>& captures = program.at(description.function).captures;
         if (field.index >= captures.size())
             return TypeTable::never;
-        const DeclaredType& capture = captures[field.index];
-        return capture.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : capture.type;
+        return program.provenTypeOf(captures[field.index]);
     }
     case VirtualFieldKind::Length:
         // The type of every read of an array's length. Where the program has none, no read asks whether a carried length fits.

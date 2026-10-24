@@ -214,9 +214,30 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     }
     case AbstractHeap::ObjectFields:
         return stabilityOfObjectField(program, access, location.key());
-    default:
+    case AbstractHeap::ShapeWords:
+    case AbstractHeap::OrderWords:
+    case AbstractHeap::MemberGuards:
+    case AbstractHeap::PrototypeLinks:
+    case AbstractHeap::NamedProperties:
+    case AbstractHeap::Elements:
+    case AbstractHeap::ArrayStorage:
+    case AbstractHeap::TypedArrayStorage:
+    case AbstractHeap::TypedArrayElements:
+    case AbstractHeap::CollectionStorage:
+    case AbstractHeap::CollectionEntries:
+    case AbstractHeap::InternalFields:
+    case AbstractHeap::RegExpState:
+    case AbstractHeap::PromiseState:
+    case AbstractHeap::StringStorage:
+    case AbstractHeap::StringBuilderContents:
+    case AbstractHeap::ParserState:
+    case AbstractHeap::ExternalState:
+    case AbstractHeap::AllocatorState:
+    case AbstractHeap::RuntimeState:
+    case AbstractHeap::ValidationState:
         return LocationStability::Unknown;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } } } // namespace JSC::AOT::Typed

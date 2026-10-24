@@ -112,6 +112,7 @@ public:
 
 private:
     Vector<InlineSite> findCandidates(uint32_t firstFrame) const;
+    bool handsWholeResultToFrequentCode(ValueID call) const;
     PassOutcome markNoReturnCallBlocks();
 
     bool canSummarize(FunctionID callee) const;
@@ -179,18 +180,37 @@ PassOutcome CallInliner::run()
     }
 }
 
+// Nothing is gained in rare code by itself. But where the result goes on into code that runs often, it meets the result of the call that runs often, whose parts are put together for as long as this one is a cell.
+bool CallInliner::handsWholeResultToFrequentCode(ValueID call) const
+{
+    if (m_program.at(m_caller.at(call).function()).role != FunctionRole::ResultWrapper)
+        return false;
+    const UseLists& useLists = m_context.analyses.useLists();
+    Vector<ValueID, 4> worklist { call };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+            if (use.kind == Use::Kind::EdgeArgument && m_caller.at(targetOf(m_caller, use.edge()).block).frequency == BlockFrequency::Normal)
+                return true;
+            if (use.kind == Use::Kind::Operand && interpretedOf(m_caller.at(use.user).opcode) == Interpretation::Cast)
+                worklist.append(use.user);
+        }
+    }
+    return false;
+}
+
 Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
 {
     const CFG& cfg = m_context.analyses.cfg();
     Vector<InlineSite> sites;
     for (uint32_t blockIndex = 0; blockIndex < m_caller.blocks.size(); ++blockIndex) {
         BlockID blockID(blockIndex);
-        if (!cfg.isReachable(blockID) || isRecordedAsRare(m_caller, blockID))
+        if (!cfg.isReachable(blockID))
             continue;
+        bool isRare = isRecordedAsRare(m_caller, blockID);
         const Block& block = m_caller.at(blockID);
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
-            if (m_caller.at(id).inlineFrame >= firstFrame && isCandidate(m_caller.at(id)))
+            if (m_caller.at(id).inlineFrame >= firstFrame && isCandidate(m_caller.at(id)) && (!isRare || handsWholeResultToFrequentCode(id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
@@ -199,7 +219,7 @@ Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
 
     const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block) == BlockFrequency::Rare;
+        return frequencies.classOf(site.block) == BlockFrequency::Rare && !handsWholeResultToFrequentCode(site.call);
     });
     return sites;
 }

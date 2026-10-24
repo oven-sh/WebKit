@@ -32,9 +32,34 @@ static constexpr bool writesOnlyNamedBlocks(SelectionRuleID rule)
     case SelectionRuleID::InlineBuiltin:
     case SelectionRuleID::OperatorForm:
         return true;
-    default:
+    case SelectionRuleID::None:
+    case SelectionRuleID::ClassDefinition:
+    case SelectionRuleID::DescriptorLiteral:
+    case SelectionRuleID::AccessorGroup:
+    case SelectionRuleID::SlotStoreRun:
+    case SelectionRuleID::PropertyRun:
+    case SelectionRuleID::EncodedVariableTest:
+    case SelectionRuleID::SubstringView:
+    case SelectionRuleID::SwitchString:
+    case SelectionRuleID::SwitchNumber:
+    case SelectionRuleID::HoistStringCharacters:
+    case SelectionRuleID::SharedStringOrder:
+    case SelectionRuleID::IntegerBound:
+    case SelectionRuleID::FreshPromiseFulfillment:
+    case SelectionRuleID::AwaitInPlace:
+    case SelectionRuleID::ResolvedCallTarget:
+    case SelectionRuleID::RegExpLiteralMatch:
+    case SelectionRuleID::ThrowNewError:
+    case SelectionRuleID::KeyPartsLookup:
+    case SelectionRuleID::StringBuilderParts:
+    case SelectionRuleID::ArrayLiteralStorage:
+    case SelectionRuleID::DataEncoding:
+    case SelectionRuleID::ClosureForm:
+    case SelectionRuleID::NumberPaths:
+    case SelectionRuleID::TestAndBranch:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 RewriteSession::RewriteSession(SelectionContext& context, SelectionRuleID rule, size_t numberOfGroups)

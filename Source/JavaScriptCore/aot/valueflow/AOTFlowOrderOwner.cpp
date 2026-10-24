@@ -475,7 +475,9 @@ void FlowScopeOwnerAnalysis::recordOwnReferences()
             case FunctionReferenceKind::Closure:
                 followClosure(*frame, reference.value, reference.function);
                 break;
-            default:
+            case FunctionReferenceKind::Call:
+            case FunctionReferenceKind::Constructor:
+            case FunctionReferenceKind::Dispatch:
                 if (!findFrame(reference.function))
                     lower(reference.function, entryAt(*frame, reference.value));
                 break;

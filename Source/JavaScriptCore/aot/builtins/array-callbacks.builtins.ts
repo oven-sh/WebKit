@@ -45,6 +45,7 @@ const traversalOverload = (name: string, receiver: Receiver, outcome: Outcome) =
       this: [...receiver.uses, ...(outcome.receiverUses ?? [])],
       callback: [
         b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
           this: b.operand("thisArg"),
           args: [receiver.element, b.length, self],
@@ -127,6 +128,7 @@ const foldOverload = (name: string, fold: Fold) =>
       this: [...fold.receiver.uses, ...(fold.receiverUses ?? [])],
       callback: [
         b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
           args: [fold.accumulator, fold.receiver.element, b.length, self],
           result: fold.result,
@@ -140,7 +142,7 @@ const foldOverload = (name: string, fold: Fold) =>
 const foldMethod = (name: string) => b.method(`Array.prototype.${name}`, folds.map(fold => foldOverload(name, fold)));
 
 const comparatorCall = (compared: b.PlaceLike) =>
-  b.called({ times: "Repeatedly", args: [compared, compared], result: "Escapes" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", args: [compared, compared], result: "Escapes" });
 const stringComparison = b.runsOnContents("ToPrimitive");
 
 interface SortOutcome {
@@ -184,6 +186,7 @@ const itemsProtocols = b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimi
 
 const mapperCall = (item: b.PlaceLike) =>
   b.called({
+    afterwards: "TouchesOnlyWhatRowNames",
     times: "PerElement",
     this: b.operand("thisArg"),
     args: [item, b.length],
@@ -199,7 +202,7 @@ export default b.declarations(
     uses: {
       // The groups hold the items, and nothing describes the object that holds the groups.
       items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.nativeMemory)],
-      callback: [b.called({ times: "PerElement", args: [b.iterated("items"), b.length], result: "Escapes" })],
+      callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", args: [b.iterated("items"), b.length], result: "Escapes" })],
     },
     model: b.functionIn("models/Objects", "groupBy"),
     implementation: b.compiled("ObjectConstructor", "groupBy"),
@@ -259,7 +262,7 @@ export default b.declarations(
         ],
         mapper: [
           b.retained,
-          b.called({ times: "Later", this: b.operand("thisArg"), args: [b.any, b.length], result: "Escapes" }),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.operand("thisArg"), args: [b.any, b.length], result: "Escapes" }),
         ],
         thisArg: [b.retained],
       },

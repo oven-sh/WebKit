@@ -111,7 +111,11 @@ uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate
             ++numberOfRemovedChecks;
             continue;
         }
-        // Flow lists a check only where it has one of the two answers.
+        if (entry.mayFail) {
+            check.setCause(CheckCause::MayFail);
+            continue;
+        }
+        // Flow lists a check only where it has one of the three answers.
         RELEASE_ASSERT(entry.arriving);
         assumeCheckedType(check);
         check.setCastType(entry.arriving);

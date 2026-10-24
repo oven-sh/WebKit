@@ -42,9 +42,23 @@ std::optional<ExpectedForm> formInFieldTable(const PlacedSlot& slot)
     case SlotRepresentation::Int32:
     case SlotRepresentation::OptionalInt32:
         return slot.isOutOfLine() ? std::nullopt : formOfWords(ExpectedForm::InlineInt32, sizeof(uint32_t));
-    default:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::OptionalInt64:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::OptionalDouble:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::OptionalBoolean:
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::LiteralString:
+    case SlotRepresentation::LiteralString32:
         return std::nullopt;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool slotHoldsValueOfProperty(const Field& declaration)

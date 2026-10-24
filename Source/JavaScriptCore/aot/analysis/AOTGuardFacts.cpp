@@ -247,7 +247,26 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
         return { MemoryLocation(AbstractHeap::PrototypeLinks), MemoryLocation(AbstractHeap::NamedProperties) };
     case Proof::ArrayStorage:
         return { MemoryLocation(AbstractHeap::ArrayStorage) };
-    default:
+    case Proof::None:
+    case Proof::TestedType:
+    case Proof::Truthiness:
+    case Proof::Equality:
+    case Proof::IntegerBound:
+    case Proof::ExactFunction:
+    case Proof::CaseValue:
+    case Proof::NotNullish:
+    case Proof::Shape:
+    case Proof::OwnInstance:
+    case Proof::InBounds:
+    case Proof::NotThenable:
+    case Proof::MemberUnchanged:
+    case Proof::PrototypeLinkUnchanged:
+    case Proof::EvaluatedOnce:
+    case Proof::UnmodifiedGenerator:
+    case Proof::EnumeratorCurrent:
+    case Proof::PlainData:
+    case Proof::SourceOpen:
+    case Proof::TextMatches:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -421,7 +440,25 @@ bool allocationProves(const Program& program, const Function& function, const Va
         if (test.isWritable() && !allocatesWritableStorage(function, allocation))
             return false;
         return allocatedClass && test.arrayStorage() != ArrayStorage::Other && arrayStorageOfNewArray(program, function, allocation) == test.arrayStorage();
-    default:
+    case Proof::None:
+    case Proof::TestedType:
+    case Proof::Truthiness:
+    case Proof::Equality:
+    case Proof::IntegerBound:
+    case Proof::ExactFunction:
+    case Proof::CaseValue:
+    case Proof::NotNullish:
+    case Proof::InBounds:
+    case Proof::NotThenable:
+    case Proof::MemberUnchanged:
+    case Proof::PrototypeLinkUnchanged:
+    case Proof::EvaluatedOnce:
+    case Proof::KeyOrder:
+    case Proof::UnmodifiedGenerator:
+    case Proof::EnumeratorCurrent:
+    case Proof::PlainData:
+    case Proof::SourceOpen:
+    case Proof::TextMatches:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -443,7 +480,11 @@ static OptionSet<PristineAspects> requiredPristineAspects(Opcode opcode)
     case Interpretation::Store:
     case Interpretation::Test:
         return PristineAspects::Storage;
-    default:
+    case Interpretation::None:
+    case Interpretation::Allocation:
+    case Interpretation::Cast:
+    case Interpretation::List:
+    case Interpretation::Guards:
         return { PristineAspects::Storage, PristineAspects::Names };
     }
     RELEASE_ASSERT_NOT_REACHED();

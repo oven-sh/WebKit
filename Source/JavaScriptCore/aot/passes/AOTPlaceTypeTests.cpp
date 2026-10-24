@@ -270,9 +270,29 @@ static ArrivalsAtTestedValue arrivalsBehind(UnprovenCause cause)
     case UnprovenCause::ObjectWithoutLayout:
     case UnprovenCause::Untracked:
         return ArrivalsAtTestedValue::Open;
-    default:
+    case UnprovenCause::Unknown:
+    case UnprovenCause::ResultDisabled:
+    case UnprovenCause::LimitReached:
+    case UnprovenCause::BuiltinBase:
+    case UnprovenCause::UnknownBase:
+    case UnprovenCause::ClassEvaluatedAgain:
+    case UnprovenCause::ReachesNativeCode:
+    case UnprovenCause::ReachesUnknownJavaScript:
+    case UnprovenCause::UnknownWriter:
+    case UnprovenCause::UnprovenContents:
+    case UnprovenCause::FieldDeleted:
+    case UnprovenCause::UnknownKeyDelete:
+    case UnprovenCause::PropertyRedefined:
+    case UnprovenCause::PropertyAdded:
+    case UnprovenCause::UnknownKeyStore:
+    case UnprovenCause::StoreOfOtherType:
+    case UnprovenCause::IntegrityChanged:
+    case UnprovenCause::PrototypeChanged:
+    case UnprovenCause::OwnPropertyHidesMember:
+    case UnprovenCause::LeftByPasses:
         return ArrivalsAtTestedValue::NotRecorded;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static ArrivalsAtTestedValue arrivalsAtValueTestedBy(FunctionPassContext& context, const TestPlacementPlan& plan, const PlannedTest& planned)

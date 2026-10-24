@@ -198,9 +198,37 @@ struct NameOfText {
     UniquedStringImpl* uid;
 };
 
+// Where the objects of one Structure keep their own value under one key, found by the cell of the key. Nothing is asked of the key, so a string that is no atom is found as fast as one that is.
+// Or that neither such an object nor any object above it has anything under the key.
+struct KeyedValuePlace {
+    static constexpr unsigned numberOfPlacesPerAccess = 512;
+    static constexpr unsigned numberOfPlaces = 2 * numberOfPlacesPerAccess;
+    static constexpr unsigned sizeShift = 4;
+    static constexpr uint32_t offsetMask = (numberOfPlacesPerAccess - 1) << sizeShift;
+
+    // The places for reads come first, then those for stores that replace the value.
+    static constexpr int32_t offsetOfFirst(SlotAccess access)
+    {
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(access != SlotAccess::Define);
+        return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
+    }
+
+    // No StructureID is odd.
+    static constexpr uint32_t absenceBit = 1;
+
+    JSCell* key;
+    uint32_t structureID;
+    union {
+        // Slot::wordIndexFor().
+        int32_t wordIndex;
+        // Beside the absence bit: PropertyCacheWords::absenceFilterGeneration when this was written. It holds for as long as that stays.
+        uint32_t generation;
+    };
+};
+
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
-    static constexpr uint32_t missesBetweenFilings = 16;
+    static constexpr uint32_t missesBetweenFilings = 64;
 };
 
 struct FrontWords {
@@ -256,6 +284,7 @@ static_assert(1u << StructureRowWords::wordShift == sizeof(uint32_t));
 static_assert(sizeof(AbsenceFilter) == 1u << AbsenceFilter::sizeShift && hasOneBitSet(AbsenceFilter::numberOfFilters) && hasOneBitSet(AbsenceFilter::numberOfWords));
 static_assert(std::is_trivially_copyable_v<AbsenceFilter> && std::is_aggregate_v<AbsenceFilter>);
 static_assert(sizeof(NameOfText) == 1u << NameOfText::sizeShift && NameOfText::numberOfPairs == 1u << (64 - NameOfText::pairShift));
+static_assert(sizeof(KeyedValuePlace) == 1u << KeyedValuePlace::sizeShift && hasOneBitSet(KeyedValuePlace::numberOfPlacesPerAccess));
 static_assert(std::is_trivially_default_constructible_v<PropertyCacheWords>);
 static_assert(OBJECT_OFFSETOF(PropertyCacheWords, hashedSlotOffsetMask) == OBJECT_OFFSETOF(PropertyCacheWords, hashedSlots) + sizeof(void*));
 

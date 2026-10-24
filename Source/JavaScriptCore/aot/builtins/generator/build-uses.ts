@@ -651,6 +651,7 @@ function applyCallback(context: OverloadContext, callee: ModelOperand, use: UseO
   context.callbacks.push({
     callee,
     times: use.times,
+    afterwards: use.afterwards,
     constructs: use.constructs ?? false,
     newTarget: passedPlaceOf(use.newTarget),
     thisValue: passedPlaceOf(use.thisValue),

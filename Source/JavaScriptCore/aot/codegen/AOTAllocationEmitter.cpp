@@ -501,7 +501,16 @@ CellPointer AllocationEmitter::cellAroundInnerObject(const ValueContext& value, 
             return decode(in<NarrowReference>(place.innerObject()));
         case Representation::JSValue:
             return unboxCell(in<Boxed>(place.innerObject()));
-        default:
+        case Representation::Unchosen:
+        case Representation::Void:
+        case Representation::Boolean:
+        case Representation::Int32:
+        case Representation::Int64:
+        case Representation::Double:
+        case Representation::OptionalInt64:
+        case Representation::OptionalDouble:
+        case Representation::LiteralString:
+        case Representation::RawWord:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -624,7 +633,7 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
         return cell;
     };
     auto setByOperation = [&] {
-        return callOperation<CellPointer>(value, RuntimeOperation::SetConstructPrototype, { cell, requested, numberOfAllocation.value_or(word32(static_cast<int32_t>(value->allocation().index()))) }, { .isOnRarePath = true });
+        return callOperation<CellPointer>(value, RuntimeOperation::SetConstructPrototype, { cell, requested, numberOfAllocation.value_or(word32(static_cast<int32_t>(value->allocation().index()))), word32(value->fields().empty()) }, { .isOnRarePath = true });
     };
     if (mayAllocateOtherLayout(m_program, value.value())) {
         define(value, either<CellPointer>(hasSitePrototype, useCell, setByOperation));

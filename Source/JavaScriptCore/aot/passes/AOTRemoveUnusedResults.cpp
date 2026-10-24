@@ -306,7 +306,7 @@ static ResultRemovalPlan planResultRemoval(const Program& program, const CallGra
         if (used.isEmpty())
             used.set(0);
         if (used.bitCount() == 1)
-            plan.singleResultTypes[index] = provenResultTypeOf(results[*used.begin()]);
+            plan.singleResultTypes[index] = program.provenTypeOf(results[*used.begin()]);
         plan.numberOfRemovedResults += results.size() - used.bitCount();
         plan.isCandidate.quickSet(index);
         plan.candidates.append(id);

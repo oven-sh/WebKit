@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
+#include "AOTFlowApply.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
@@ -83,7 +85,10 @@ Vector<Edge, 2> AllocationSinking::collectCellEdges(VirtualObjectID object, Bloc
         const ObjectState* entering = state.isReachable ? state.find(object) : nullptr;
         if (!entering)
             continue;
-        if (entering->isCell())
+        // What may be a cell on a way that seldom runs is built there.
+        BlockFrequency frequency = m_function.at(edge.from).frequency;
+        bool isRarer = frequency != m_function.at(merge).frequency && rarerOf(frequency, m_function.at(merge).frequency) == frequency;
+        if (entering->isCell() || (isRarer && entering->hasCell()))
             cellEdges.append(edge);
         else
             hasOtherShape = true;
@@ -183,6 +188,96 @@ bool AllocationSinking::meetsWholeResultOfCallee(const Candidate& join) const
     });
 }
 
+// Whether the list fits the storage that its readers expect is asked where it is made, of each element that may be no such number. Behind that there are two lists, and of each the answer is known:
+// the one that is made of numbers, and one for every value, on a way that seldom runs.
+static void testElementsOfList(IRBuilder& builder, const Program& program, Function& function, ProgramPoint point)
+{
+    Value list = function.at(function.at(point.block).values[point.index]);
+    TypeID typeOfList = list.type;
+    Type numbers = typeOfNumbersIn(arrayStorageAtAllocation(program, program.at(typeOfList)));
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    BlockID holdsOtherValue;
+
+    Vector<ValueID, 4> elements;
+    for (ValueID element : list.elementsOperands()) {
+        if (program.typeOf(function, element).isSubsetOf(numbers, program)) {
+            elements.append(element);
+            continue;
+        }
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(element, numbers), OperandIndex::TypeTest::value, BlockFrequency::Normal, BlockFrequency::Rare);
+        elements.append(branch.provenOnTaken);
+        if (!holdsOtherValue)
+            holdsOtherValue = builder.addBlock(BlockFrequency::Rare);
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitJump(holdsOtherValue);
+        builder.moveToEndOf(branch.taken);
+    }
+    Value listOfNumbers = list;
+    listOfNumbers.setContents(builder.types().intern(program.at(list.contents()).intersectWith(numbers, builder.types())));
+    listOfNumbers.setElementsOperands(elements.span());
+    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), typeOfList)));
+
+    if (!holdsOtherValue)
+        return;
+    builder.moveToEndOf(holdsOtherValue);
+    list.setContents(TypeTable::anything);
+    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), typeOfList)) });
+}
+
+bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
+{
+    Vector<ProgramPoint, 2> points;
+    for (ValueID literal : m_testedListsThatMayNotFit) {
+        const Value& list = m_function.at(literal);
+        ValueLocation location = m_analyses.useLists().locationOf(literal);
+        if (list.opcode != Opcode::NewArray || location.placement != ValuePlacement::InBlock)
+            continue;
+        if (list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
+            continue;
+        // Only an allocation is a guard of what it makes.
+        bool isGuard = std::ranges::any_of(m_analyses.useLists().usesOf(literal), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard;
+        });
+        if (isGuard)
+            continue;
+        points.append(ProgramPoint { location.block, location.index });
+    }
+    AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
+        return a.block != b.block ? a.block > b.block : a.index > b.index;
+    });
+    for (ProgramPoint point : points)
+        testElementsOfList(builder, m_program, builder.function(), point);
+    return !points.isEmpty();
+}
+
+// A block that only hands its parameter on to the next block where values meet hides from that one which way brings the parts and which the whole.
+bool AllocationSinking::handOnToNextJoin(IRBuilder& builder, const Candidate& join)
+{
+    const Block& block = m_function.at(join.block);
+    if (!block.values.isEmpty() || block.parameters.size() != 1 || block.terminator.kind != TerminatorKind::Jump || block.terminator.next().block == join.block)
+        return false;
+    bool isOnlyHandedOn = std::ranges::all_of(m_analyses.useLists().usesOf(join.definition), [&](const Use& use) {
+        return use.kind == Use::Kind::EdgeArgument && use.block == join.block;
+    });
+    Vector<Edge, 4> edges(m_analyses.cfg().incomingEdges(join.block));
+    bool takesArguments = std::ranges::all_of(edges, [&](Edge edge) {
+        return !edge.isHandlerEdge() && numberOfExplicitArguments(m_function, edge) == 1;
+    });
+    if (!isOnlyHandedOn || !takesArguments)
+        return false;
+
+    Target next = block.terminator.next();
+    for (Edge edge : edges) {
+        ValueID incoming = valuePassedOn(m_function, edge, 0);
+        Vector<ValueID, 4> arguments(next.arguments.size(), [&](size_t index) {
+            return next.arguments[index] == join.definition ? incoming : next.arguments[index];
+        });
+        builder.redirectEdge(edge, next.block, Arguments(arguments.span()));
+    }
+    builder.emptyUnreachableBlocks();
+    return true;
+}
+
 bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
 {
     Vector<DuplicationPlan, 2> plans;
@@ -195,6 +290,10 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
     }
     if (plans.isEmpty() || hasSpentItsWork())
         return false;
+    for (const DuplicationPlan& plan : plans) {
+        if (at(plan.object).isJoin && handOnToNextJoin(builder, at(plan.object)))
+            return true;
+    }
 
     Vector<Candidate> savedCandidates = m_candidates;
     SinkingDecisions savedDecisions = m_decisions;

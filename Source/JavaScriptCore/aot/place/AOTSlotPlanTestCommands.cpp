@@ -364,9 +364,10 @@ static ASCIILiteral nameOf(FieldTableEntry::Form form)
         return "InlineNarrowCell"_s;
     case FieldTableEntry::Form::OutOfLineValue:
         return "OutOfLineValue"_s;
-    default:
+    case FieldTableEntry::Form::Field:
         return "Field"_s;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void printExpectedForms(const SlotPlanViewContext& view)

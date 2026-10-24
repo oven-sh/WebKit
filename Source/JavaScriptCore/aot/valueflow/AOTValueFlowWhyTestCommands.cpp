@@ -412,13 +412,26 @@ static SortOfObject sortOf(const Program& program, const ValueFlowUniverse& univ
             return SortOfObject::RecordSite;
         case LayoutKind::Instance:
             return SortOfObject::InstanceSite;
-        default:
+        case LayoutKind::Container:
+        case LayoutKind::Environment:
+        case LayoutKind::Closure:
+        case LayoutKind::CoroutineFrame:
+        case LayoutKind::BuiltinResult:
+        case LayoutKind::ModuleNamespace:
             return SortOfObject::OtherLayoutSite;
         }
     }
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::CoroutineResult:
+    case ValueFlowObjectKind::RestArray:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::Key:
         return SortOfObject::Other;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlowObjectID object)
@@ -1071,7 +1084,11 @@ static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildCont
             ++births[place].functions;
             break;
         }
-        default:
+        case CallersOfCheckedFunction::ClosureIsLost:
+        case CallersOfCheckedFunction::ClosureIsHeldByNativeCode:
+        case CallersOfCheckedFunction::PassUntrackedObject:
+        case CallersOfCheckedFunction::PassWhatFits:
+        case CallersOfCheckedFunction::PassNothing:
             break;
         }
     }
@@ -1743,7 +1760,30 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
             return "prototype-link"_s;
         case ValueFlowNameKind::InternalFields:
             return "internal-fields"_s;
-        default:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             return { };
         }
     };

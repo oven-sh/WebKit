@@ -82,7 +82,11 @@ static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& univer
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
                 parts.append(universe.objects());
                 break;
-            default:
+            case BuiltinTypePartKind::Operand:
+            case BuiltinTypePartKind::Slot:
+            case BuiltinTypePartKind::IteratedValues:
+            case BuiltinTypePartKind::CallbackResult:
+            case BuiltinTypePartKind::Prototype:
                 return ValueSets::anything;
             }
         }
@@ -144,7 +148,14 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
                 members.append(universe.objectOf(part.builtin));
                 break;
             // An object that is allocated with the layout loses it when a property is deleted or redefined.
-            default:
+            case BuiltinTypePartKind::InstanceOfReceiverClass:
+            case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
+            case BuiltinTypePartKind::Layout:
+            case BuiltinTypePartKind::Operand:
+            case BuiltinTypePartKind::Slot:
+            case BuiltinTypePartKind::IteratedValues:
+            case BuiltinTypePartKind::CallbackResult:
+            case BuiltinTypePartKind::Prototype:
                 break;
             }
         }

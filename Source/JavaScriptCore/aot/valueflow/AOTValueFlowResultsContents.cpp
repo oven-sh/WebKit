@@ -344,9 +344,21 @@ static BuiltinClassID classOfCandidate(const ValueFlowResultInputs& inputs, Valu
         return program.at(function).hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) ? universe.classOf(object) : BuiltinClassID();
     case ValueFlowObjectKind::CoroutineResult:
         return universe.classOf(object);
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Builtin:
+    case ValueFlowObjectKind::ModuleBuiltin:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::Closure:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::Instance:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 BuiltinClassID classOfFollowedContainer(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
@@ -421,7 +433,38 @@ void ContainerAnalysis::collectStoredValues()
         case ValueFlowNameKind::Slot:
         case ValueFlowNameKind::InternalFields:
             return true;
-        default:
+        case ValueFlowNameKind::Property:
+        case ValueFlowNameKind::Getter:
+        case ValueFlowNameKind::Setter:
+        case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::SetterUnderUnknownKey:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::CopiedFrom:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             return false;
         }
     });
@@ -914,7 +957,11 @@ Type ContainerAnalysis::typeOfContents(ValueFlowPositions& positions, uint32_t i
         return Type::never();
     case ValueFlowProof::Proven:
         break;
-    default:
+    case ValueFlowProof::IllTyped:
+    case ValueFlowProof::Untracked:
+    case ValueFlowProof::OutsideFamily:
+    case ValueFlowProof::UndecidedLayout:
+    case ValueFlowProof::Disabled:
         return Type::anything();
     }
     Type type = result.narrowed ? WTF::move(*result.narrowed) : Type::anything();

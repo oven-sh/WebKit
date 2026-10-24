@@ -1582,7 +1582,10 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
                 if (key.isInstanceOfNode())
                     share.instances.append(number);
                 break;
-            default:
+            case ValueFlowMadeNodeKind::Lookup:
+            case ValueFlowMadeNodeKind::CallGroup:
+            case ValueFlowMadeNodeKind::Hub:
+            case ValueFlowMadeNodeKind::Marked:
                 break;
             }
         }
@@ -2408,7 +2411,13 @@ void ValueFlowSolver::takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& nodes)
                 if (!madeNodes.isUnionOfParts)
                     listToLink(madeNodes);
                 break;
-            default:
+            case ValueFlowMadeNodeKind::Constant:
+            case ValueFlowMadeNodeKind::Lookup:
+            case ValueFlowMadeNodeKind::CallGroup:
+            case ValueFlowMadeNodeKind::Hub:
+            case ValueFlowMadeNodeKind::Masked:
+            case ValueFlowMadeNodeKind::Marked:
+            case ValueFlowMadeNodeKind::Instance:
                 break;
             }
         }
@@ -3203,7 +3212,12 @@ bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
     if (!key)
         return false;
     switch (key->kind) {
-    default:
+    case ValueFlowMadeNodeKind::Read:
+    case ValueFlowMadeNodeKind::Written:
+    case ValueFlowMadeNodeKind::Lookup:
+    case ValueFlowMadeNodeKind::CallGroup:
+    case ValueFlowMadeNodeKind::WrittenUnderKind:
+    case ValueFlowMadeNodeKind::ReadUnderKind:
         // What is read, looked up or called through a set that holds known objects too may come out of one of those.
         return key->set && m_sets.onlyMember(key->set) == m_input.placeholders.unknown;
     case ValueFlowMadeNodeKind::Constant:
@@ -3230,7 +3244,11 @@ bool ValueFlowSolver::maySaturate(ValueFlowNodeID node) const
             return true;
         case ValueFlowMadeNodeKind::Lookup:
             return key->name().kind == ValueFlowNameKind::Property || key->name().kind == ValueFlowNameKind::Elements || key->name().kind == ValueFlowNameKind::UnknownKey;
-        default:
+        case ValueFlowMadeNodeKind::Constant:
+        case ValueFlowMadeNodeKind::Hub:
+        case ValueFlowMadeNodeKind::Masked:
+        case ValueFlowMadeNodeKind::Marked:
+        case ValueFlowMadeNodeKind::Instance:
             return false;
         }
     }

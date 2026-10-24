@@ -26,7 +26,18 @@ static bool looksAtObjects(const BuiltinOverload& overload)
         case BuiltinPropertyActionKind::DefinesFrom:
         case BuiltinPropertyActionKind::TakesDescriptorMap:
             return true;
-        default:
+        case BuiltinPropertyActionKind::ReadsByKey:
+        case BuiltinPropertyActionKind::StoresByKey:
+        case BuiltinPropertyActionKind::DeletesByKey:
+        case BuiltinPropertyActionKind::DefinesName:
+        case BuiltinPropertyActionKind::TakesDescriptor:
+        case BuiltinPropertyActionKind::ChangesIntegrity:
+        case BuiltinPropertyActionKind::ChangesPrototype:
+        case BuiltinPropertyActionKind::BecomesPrototype:
+        case BuiltinPropertyActionKind::DefinesGetter:
+        case BuiltinPropertyActionKind::DefinesSetter:
+        case BuiltinPropertyActionKind::DescribesOwnProperties:
+        case BuiltinPropertyActionKind::DescribesResult:
             return false;
         }
     });
@@ -250,7 +261,41 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::EveryProperty:
         noter.notes.observedUnderAnyKey.add(key.set);
         break;
-    default:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         // A read of what was stored under a key nobody knows finds nothing that was stored by name. A read under such a key takes every property.
         break;
     }
@@ -665,7 +710,18 @@ void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplicati
                 else
                     noter.notes.enumerated.add(ValueSets::anything);
                 break;
-            default:
+            case BuiltinPropertyActionKind::ReadsByKey:
+            case BuiltinPropertyActionKind::StoresByKey:
+            case BuiltinPropertyActionKind::DeletesByKey:
+            case BuiltinPropertyActionKind::DefinesName:
+            case BuiltinPropertyActionKind::TakesDescriptor:
+            case BuiltinPropertyActionKind::ChangesIntegrity:
+            case BuiltinPropertyActionKind::ChangesPrototype:
+            case BuiltinPropertyActionKind::BecomesPrototype:
+            case BuiltinPropertyActionKind::DefinesGetter:
+            case BuiltinPropertyActionKind::DefinesSetter:
+            case BuiltinPropertyActionKind::DescribesOwnProperties:
+            case BuiltinPropertyActionKind::DescribesResult:
                 break;
             }
         }
@@ -712,7 +768,9 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
         case BuiltinKeyKind::Operand:
             addOnce(notes->testsUnderOperands, NotesOfBuiltins::TestUnderOperand { action.object, *action.key.operand, looksAtOwnPropertyAlone });
             return;
-        default:
+        case BuiltinKeyKind::Any:
+        case BuiltinKeyKind::Indexes:
+        case BuiltinKeyKind::ElementsOf:
             addOnce(notes->observedUnderAnyKey, action.object);
             return;
         }
@@ -761,7 +819,18 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
                     else
                         notes->enumeratesAnything = true;
                     break;
-                default:
+                case BuiltinPropertyActionKind::ReadsByKey:
+                case BuiltinPropertyActionKind::StoresByKey:
+                case BuiltinPropertyActionKind::DeletesByKey:
+                case BuiltinPropertyActionKind::DefinesName:
+                case BuiltinPropertyActionKind::TakesDescriptor:
+                case BuiltinPropertyActionKind::ChangesIntegrity:
+                case BuiltinPropertyActionKind::ChangesPrototype:
+                case BuiltinPropertyActionKind::BecomesPrototype:
+                case BuiltinPropertyActionKind::DefinesGetter:
+                case BuiltinPropertyActionKind::DefinesSetter:
+                case BuiltinPropertyActionKind::DescribesOwnProperties:
+                case BuiltinPropertyActionKind::DescribesResult:
                     break;
                 }
             }

@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTInductionVariables.h"
+#include "AOTNaturalLoops.h"
 #include "AOTOperatorForms.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTValueIdentity.h"
@@ -240,6 +241,10 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter)
             for (const InductionTest& test : variable.tests) {
                 if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
                     continue;
+                if (reporter.isClaimed(test.comparison)) {
+                    counters.append({ variable.parameter, test.comparison, test.stayingEdge });
+                    continue;
+                }
                 const Type& bound = reporter.typeOf(test.bound);
                 if (!(bound.isInteger() && !bound.isInt32()) && !reporter.isClaimed(reporter.analyses().identityOf(test.bound)))
                     continue;
@@ -270,6 +275,114 @@ static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& val
     });
 }
 
+static constexpr OpcodeSet operatorsThatReckonInEitherForm { Opcode::Add, Opcode::Sub, Opcode::Mul };
+static constexpr OpcodeSet callsOfFunctionsOfTheProgram { Opcode::Call, Opcode::CallDirect, Opcode::Construct };
+static constexpr OpcodeSet usersOfPositions = operationsOnElements | operationsOnElementsOfViews
+    | OpcodeSet { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsInBounds, Opcode::IsElementPresent };
+static constexpr OpcodeSet usersOfIntegers = testedBitwiseOperators | OpcodeSet { Opcode::Mod, Opcode::TypeTest, Opcode::CallBuiltin };
+
+enum class WantedForm : uint8_t { Number, Integer, ShowsOnceCallsAreInlined };
+
+// Whether a likely turn of the loop does something with the counter, or with what it reckons from the counter and other integers, that an integer is better for: finds an element, takes its bits or a remainder, hands it to a built-in function. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
+static WantedForm findWantedForm(TestSiteReporter& reporter, const NaturalLoop& loop, const InductionVariable& counter)
+{
+    WantedForm wanted = WantedForm::Number;
+    const Function& function = reporter.function();
+    const UseLists& useLists = reporter.analyses().useLists();
+    const NaturalLoops& loops = reporter.analyses().naturalLoops();
+    Vector<ValueID, maxNamesOfCounter> names { counter.parameter };
+    auto follow = [&](ValueID name) {
+        if (!names.contains(name) && names.size() < maxNamesOfCounter)
+            names.append(name);
+    };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
+                continue;
+            switch (use.kind) {
+            case Use::Kind::Operand: {
+                const Value& user = function.at(use.user);
+                if (isCastWithoutTest(user.opcode)) {
+                    follow(use.user);
+                    continue;
+                }
+                if (counter.steppedValues.contains(use.user))
+                    continue;
+                if (usersOfIntegers.contains(user.opcode) || (usersOfPositions.contains(user.opcode) && use.operandIndex == positionOperandIndex))
+                    return WantedForm::Integer;
+                if (callsOfFunctionsOfTheProgram.contains(user.opcode) && !reporter.context().isBehindRounds)
+                    wanted = WantedForm::ShowsOnceCallsAreInlined;
+                if (operatorsThatReckonInEitherForm.contains(user.opcode) && reporter.typeOf(user.operand(1 - use.operandIndex)).isInteger())
+                    follow(use.user);
+                continue;
+            }
+            case Use::Kind::EdgeArgument: {
+                const Target& target = targetOf(function, use.edge());
+                const Block& block = function.at(target.block);
+                if (loops.belongsTo(target.block, loop) && use.operandIndex < block.parameters.size())
+                    follow(block.parameters[use.operandIndex]);
+                continue;
+            }
+            case Use::Kind::TerminatorOperand:
+            case Use::Kind::HandlerArgument:
+            case Use::Kind::BlockSubject:
+                continue;
+            }
+        }
+    }
+    return wanted;
+}
+
+// The copy of a turn whose tests have failed hands the loop what it has counted up, in a join in front of the loop. That is an integer once the counter is.
+static bool startsAtInteger(TestSiteReporter& reporter, ValueID start)
+{
+    const Type& type = reporter.typeOf(start);
+    if (type.isInt32())
+        return true;
+    ValueLocation location = reporter.analyses().useLists().locationOf(reporter.analyses().identityOf(start));
+    return type.isNumberWithoutFraction() && location.placement == ValuePlacement::Parameter && location.block != entryBlock;
+}
+
+// `i < n; i++` with `n: number`. Below an int32 the counter is one.
+static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& reporter, const Value& comparison)
+{
+    if (!relationalOperators.contains(comparison.opcode))
+        return std::nullopt;
+    auto mayBeBound = [&](uint32_t operandIndex) {
+        const Type& bound = reporter.typeOf(comparison.operand(operandIndex));
+        return bound.isNumber() && !bound.isInteger() && reporter.typeOf(comparison.operand(1 - operandIndex)).isNumberWithoutFraction();
+    };
+    if (!mayBeBound(leftOperand) && !mayBeBound(rightOperand))
+        return std::nullopt;
+    const NaturalLoop* loop = reporter.analyses().naturalLoops().innerMostLoopOf(reporter.point().block);
+    if (!loop)
+        return std::nullopt;
+
+    for (const InductionVariable& variable : reporter.analyses().inductionVariables().of(*loop).variables) {
+        if (variable.step.kind != InductionStepKind::Constant || !variable.start || !startsAtInteger(reporter, variable.start))
+            continue;
+        for (const InductionTest& test : variable.tests) {
+            if (test.comparison != reporter.use() || test.tested != TestedValue::BeforeStep || test.boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test.relation, variable.direction))
+                continue;
+            ValueID bound = reporter.analyses().identityOf(test.bound);
+            bool isLeftBound = reporter.analyses().identityOf(comparison.operand(leftOperand)) == bound;
+            bool isRightBound = reporter.analyses().identityOf(comparison.operand(rightOperand)) == bound;
+            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand))
+                return std::nullopt;
+            switch (findWantedForm(reporter, *loop, variable)) {
+            case WantedForm::Number:
+                return std::nullopt;
+            case WantedForm::ShowsOnceCallsAreInlined:
+                reporter.putOffUse();
+                return std::nullopt;
+            case WantedForm::Integer:
+                return isLeftBound ? leftOperand : rightOperand;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 // The one rule behind this one looks at tests of a type, so a site that is left out here is claimed from nobody.
 static_assert(!hasOperatorForm(Opcode::TypeTest));
 
@@ -284,6 +397,11 @@ void reportOperatorTests(TestSiteReporter& reporter)
             return;
         uint32_t numberOfOperands = value.numberOfOperands();
         RELEASE_ASSERT(numberOfOperands == 1 || numberOfOperands == 2);
+
+        if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, value)) {
+            reporter.report({ makeTypeTest(value.operand(*bound), TypeTable::int32) }, chooseOperatorForm(site, value).effects.normal);
+            return;
+        }
 
         TestedTypePerOperand tested;
         for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)

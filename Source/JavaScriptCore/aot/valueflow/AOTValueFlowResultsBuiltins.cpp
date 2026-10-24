@@ -173,7 +173,29 @@ static BuiltinWriteForm formOfWrite(ValueFlowNameKind kind)
         return BuiltinWriteForm::OfPrototypeLink;
     case ValueFlowNameKind::Slot:
         return BuiltinWriteForm::OfSlot;
-    default:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return BuiltinWriteForm::Other;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -415,7 +437,12 @@ static OptionSet<BuiltinUse> usesEnteringCode(BuiltinKind kind)
     case BuiltinKind::DataProperty:
     case BuiltinKind::NativeBinding:
         return callingBuiltinUses | accessingBuiltinUses;
-    default:
+    case BuiltinKind::Namespace:
+    case BuiltinKind::Constructor:
+    case BuiltinKind::Function:
+    case BuiltinKind::Prototype:
+    case BuiltinKind::Method:
+    case BuiltinKind::Constant:
         return callingBuiltinUses;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -450,7 +477,18 @@ static void addPrototypesOfAllocatedClasses(const ValueFlowResultInputs& inputs,
             case ValueFlowObjectKind::RestArray:
             case ValueFlowObjectKind::Site:
                 break;
-            default:
+            case ValueFlowObjectKind::Primitive:
+            case ValueFlowObjectKind::UnknownObject:
+            case ValueFlowObjectKind::Builtin:
+            case ValueFlowObjectKind::ModuleBuiltin:
+            case ValueFlowObjectKind::Namespace:
+            case ValueFlowObjectKind::Closure:
+            case ValueFlowObjectKind::FunctionPrototype:
+            case ValueFlowObjectKind::ConstructedObject:
+            case ValueFlowObjectKind::Instance:
+            case ValueFlowObjectKind::Prototype:
+            case ValueFlowObjectKind::ResultOfBuiltin:
+            case ValueFlowObjectKind::Key:
                 continue;
             }
             BuiltinClassID builtinClass = universe.classOf(object);
@@ -851,7 +889,18 @@ static bool writesUnderKey(BuiltinPropertyActionKind kind)
     case BuiltinPropertyActionKind::DefinesGetter:
     case BuiltinPropertyActionKind::DefinesSetter:
         return true;
-    default:
+    case BuiltinPropertyActionKind::ReadsByKey:
+    case BuiltinPropertyActionKind::AssignsFrom:
+    case BuiltinPropertyActionKind::TakesDescriptorMap:
+    case BuiltinPropertyActionKind::ChangesIntegrity:
+    case BuiltinPropertyActionKind::ChangesPrototype:
+    case BuiltinPropertyActionKind::BecomesPrototype:
+    case BuiltinPropertyActionKind::ReadsGetter:
+    case BuiltinPropertyActionKind::ReadsSetter:
+    case BuiltinPropertyActionKind::TestsByKey:
+    case BuiltinPropertyActionKind::DescribesOwnProperties:
+    case BuiltinPropertyActionKind::DescribesResult:
+    case BuiltinPropertyActionKind::DefinesFrom:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1108,7 +1157,10 @@ void WritesOfLockedLocations::noteApplication(const Notes& notes, const ValueFlo
             case BuiltinKeyKind::Operand:
                 noteUnderNamesAmong(notes, application.valueAt(*action.key.operand, notes.maker), application.function, valuePassedAt(call, *action.key.operand), receivers, witness);
                 break;
-            default:
+            case BuiltinKeyKind::None:
+            case BuiltinKeyKind::Any:
+            case BuiltinKeyKind::Indexes:
+            case BuiltinKeyKind::ElementsOf:
                 break;
             }
         }
@@ -1275,7 +1327,12 @@ static void forEachPartAllocatedAsResult(const BuiltinTable& builtins, BuiltinID
             case BuiltinTypePartKind::Layout:
                 functor(part);
                 break;
-            default:
+            case BuiltinTypePartKind::Builtin:
+            case BuiltinTypePartKind::Operand:
+            case BuiltinTypePartKind::Slot:
+            case BuiltinTypePartKind::IteratedValues:
+            case BuiltinTypePartKind::CallbackResult:
+            case BuiltinTypePartKind::Prototype:
                 break;
             }
         }

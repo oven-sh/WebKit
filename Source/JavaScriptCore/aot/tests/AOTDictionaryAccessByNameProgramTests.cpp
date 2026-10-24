@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPropertyCachesWords.h"
 #include "AOTShellProgramTestSupport.h"
 
 namespace JSC { namespace AOT {
@@ -34,6 +35,11 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 }
 )IR"_s;
 
+// Where the object answers, one access in MissesOfPairs::missesBetweenFilings leaves for an operation: 6 or 7 of the 400 that measure() makes, which it tells from the 3 at most of a cache.
+#if CPU(X86_64)
+static_assert(400 / MissesOfPairs::missesBetweenFilings > 3 && 400 / MissesOfPairs::missesBetweenFilings + 1 <= 8);
+#endif
+
 #define MEASURE_ACCESSES R"JS(
 const operations = ["GetByIdAndCache", "GetById", "PutByIdAndCache", "PutById"];
 const calls = () => {
@@ -44,9 +50,9 @@ const calls = () => {
 const measure = (what, access) => {
     const callsBefore = calls();
     let result;
-    for (let i = 0; i < 100; i++) result = access(i);
+    for (let i = 0; i < 400; i++) result = access(i);
     const callsMade = calls() - callsBefore;
-    const served = callsMade <= 3 ? "cached" : callsMade <= 8 ? "the object answers" : callsMade >= 100 ? "not cached" : callsMade + " calls";
+    const served = callsMade <= 3 ? "cached" : callsMade <= 8 ? "the object answers" : callsMade >= 400 ? "not cached" : callsMade + " calls";
     print(what + ": " + result + (globalThis.printsCalls ? ", " + served : ""));
 };
 const create = () => {
@@ -107,8 +113,8 @@ globalThis.publish = (read, store) => {
     OUTPUT_LINE("another name added: 3", cached) \
     OUTPUT_LINE("getter: 5", READ_CACHED_LATE(cached, objectAnswers)) \
     OUTPUT_LINE("held, flattened before: 2", cached) \
-    OUTPUT_LINE("stored, flattened before: 99", cached) \
-    OUTPUT_LINE("read after the stores: 99", cached) \
+    OUTPUT_LINE("stored, flattened before: 399", cached) \
+    OUTPUT_LINE("read after the stores: 399", cached) \
     OUTPUT_LINE("deleted: undefined", cached) \
     OUTPUT_LINE("added under the same Structure: 6", cached) \
     OUTPUT_LINE("read-only: 7", notCached)
@@ -157,7 +163,7 @@ globalThis.publish = (read, store) => {
     OUTPUT_LINE("flattened by the first read: 2", READ_CACHED_LATE(cached, objectAnswers)) \
     OUTPUT_LINE("held: 2", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("replaced: 3", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
-    OUTPUT_LINE("stored: 99", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
+    OUTPUT_LINE("stored: 399", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("deleted: undefined", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("added: 4", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("another name in the place of a deleted one: 4", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \

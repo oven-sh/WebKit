@@ -85,9 +85,30 @@ static bool isEnteredBehindStackCheck(const Function& function, EntrySet entrySe
     case FunctionRole::ResultWrapper:
     case FunctionRole::GenericEntrypoint:
         return true;
-    default:
+    case FunctionRole::Model:
+    case FunctionRole::Signature:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
+    case FunctionRole::GenericVersion:
+    case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
+    case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
+    case FunctionRole::CoroutineRamp:
+    case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
+    case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWorker:
+    case FunctionRole::OutlinedBody:
+    case FunctionRole::Serializer:
+    case FunctionRole::Parser:
+    case FunctionRole::ValidatingParser:
+    case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
+    case FunctionRole::StubBody:
         return entrySet == EntrySet::DirectCallers && !function.creator.is<CreatorRecord::Entrypoint>();
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static BitVector findCandidates(const Program& program, const CallGraph& callGraph, const BuildContext& build)

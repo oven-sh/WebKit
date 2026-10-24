@@ -59,7 +59,12 @@ static bool namesOperation(AccessForm form)
     case AccessForm::Variable:
     case AccessForm::GetterInSlot:
         return true;
-    default:
+    case AccessForm::ByName:
+    case AccessForm::Namespace:
+    case AccessForm::Builtin:
+    case AccessForm::Method:
+    case AccessForm::Call:
+    case AccessForm::Split:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -561,7 +566,12 @@ static bool isBoundToInstance(const PropertyAccessQuery& query, const PropertyAc
     if (query.isPrivate || !plan.conditions.isEmpty())
         return true;
     switch (plan.form) {
-    default:
+    case AccessForm::Variable:
+    case AccessForm::Namespace:
+    case AccessForm::Builtin:
+    case AccessForm::Method:
+    case AccessForm::Call:
+    case AccessForm::GetterInSlot:
         return true;
     case AccessForm::ByName:
     case AccessForm::Slot:
@@ -595,7 +605,14 @@ static KnowledgeLevel levelOf(const PropertyAccessPlan& plan, KnowledgeLevel mem
         return KnowledgeLevel::Unknown;
     case AccessForm::Split:
         return memberLevel;
-    default:
+    case AccessForm::Slot:
+    case AccessForm::Constant:
+    case AccessForm::Variable:
+    case AccessForm::Namespace:
+    case AccessForm::Builtin:
+    case AccessForm::Method:
+    case AccessForm::Call:
+    case AccessForm::GetterInSlot:
         return plan.needsNoTest() ? memberLevel : KnowledgeLevel::Expected;
     }
     RELEASE_ASSERT_NOT_REACHED();

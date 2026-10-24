@@ -46,7 +46,11 @@ static bool mayInterceptStore(MemberKind kind)
     case MemberKind::Method:
     case MemberKind::Variable:
         return false;
-    default:
+    case MemberKind::Unknown:
+    case MemberKind::Field:
+    case MemberKind::Accessor:
+    case MemberKind::Namespace:
+    case MemberKind::Builtin:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();

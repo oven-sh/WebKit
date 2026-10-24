@@ -45,7 +45,17 @@ bool placesLayoutsWhereTypesNameThem(const ExpectedResult& expected)
                 return member.field.has_value();
             });
         }
-        default:
+        case ValidationShape::Kind::Unknown:
+        case ValidationShape::Kind::Never:
+        case ValidationShape::Kind::Undefined:
+        case ValidationShape::Kind::Null:
+        case ValidationShape::Kind::AnyObject:
+        case ValidationShape::Kind::Primitive:
+        case ValidationShape::Kind::BooleanLiteral:
+        case ValidationShape::Kind::NumberLiteral:
+        case ValidationShape::Kind::StringLiteral:
+        case ValidationShape::Kind::Array:
+        case ValidationShape::Kind::Union:
             return true;
         }
     });

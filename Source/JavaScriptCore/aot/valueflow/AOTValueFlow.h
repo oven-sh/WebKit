@@ -108,7 +108,32 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
         return written == ValueFlowNameKind::InternalFields;
     case ValueFlowNameKind::InternalFields:
         return written == ValueFlowNameKind::Slot;
-    default:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
     return false;

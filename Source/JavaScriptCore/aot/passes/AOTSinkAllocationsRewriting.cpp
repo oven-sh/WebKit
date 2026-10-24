@@ -53,6 +53,11 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
         if (hasStored(shape, fieldIndex))
             type = types.unionOf(type, typeOfField(context, family.descriptionOf(shape), field));
     }
+    // The lists of a family may hold different types. A value goes from head to head as it is, also where a tag has left fewer variants, and is cast where it is read.
+    if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
+        for (const VirtualObjectDescription& description : family.descriptions())
+            type = types.unionOf(type, typeOfField(context, description, field));
+    }
 
     if (state.hasCell() && state.fieldsValidInCell.get(fieldIndex)) {
         std::span<const VirtualObjectDescription> descriptionsOfCells = family.descriptions();

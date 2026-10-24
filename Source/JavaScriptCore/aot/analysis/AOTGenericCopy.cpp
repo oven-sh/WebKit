@@ -106,7 +106,10 @@ static bool canCopyInsideFunction(CloneCheck check)
     case CloneCheck::CanClone:
     case CloneCheck::FunctionMayNotBeCloned:
         return true;
-    default:
+    case CloneCheck::Unknown:
+    case CloneCheck::OperandMustBeDefinition:
+    case CloneCheck::BoundToFrame:
+    case CloneCheck::HandlerOutsideRegion:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

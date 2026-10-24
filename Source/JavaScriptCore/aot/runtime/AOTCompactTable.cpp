@@ -411,6 +411,58 @@ void CompactTable::becomeObsolete(VM& vm, Status status, JSCell* next)
     vm.writeBarrier(this);
 }
 
+// The caller holds the lock of the cell. Whoever stands at an entry of this table comes to the same entry as by way of every table that is left out.
+void CompactTable::skipObsoleteSuccessors()
+{
+    // An entry has at least four bytes behind the index, so no entry of this table has a number as large as this.
+    uint32_t room = static_cast<uint32_t>((cellSize() - offsetOfIndex()) / sizeof(uint32_t));
+    Vector<uint32_t, 32> merged;
+    // The entries of such a table are not in the cell.
+    if (m_keysShiftAndFlags & keysAreInImage)
+        return;
+    while (m_status == Status::Replaced) {
+        // A stub replaces a table without the lock, and stores the successor last.
+        WTF::loadLoadFence();
+        auto* next = uncheckedDowncast<CompactTable>(successor());
+        if (!next)
+            return;
+        Locker locker { next->cellLock() };
+        if (next->m_status == Status::Live)
+            return;
+        WTF::loadLoadFence();
+        if (!next->successor())
+            return;
+        if (next->m_status == Status::Cleared) {
+            m_status = Status::Cleared;
+            numberOfDeletedEntries() = 0;
+            successor() = next->successor();
+            return;
+        }
+        std::span<const uint32_t> own { deletedEntries(), numberOfDeletedEntries() };
+        std::span<const uint32_t> later { next->deletedEntries(), next->numberOfDeletedEntries() };
+        // Nothing is left of this table, or the next one lost nothing: the list stays as it is.
+        if (own.size() == room || later.empty()) {
+            successor() = next->successor();
+            continue;
+        }
+        merged.shrink(0);
+        size_t passed = 0;
+        for (uint32_t entryOfNext : later) {
+            uint64_t entry = static_cast<uint64_t>(entryOfNext) + passed;
+            for (; passed < own.size() && own[passed] <= entry; ++passed, ++entry)
+                merged.append(own[passed]);
+            if (entry >= room)
+                break;
+            merged.append(static_cast<uint32_t>(entry));
+        }
+        merged.append(own.subspan(passed));
+        RELEASE_ASSERT(merged.size() <= room);
+        memcpySpan(std::span { deletedEntries(), merged.size() }, merged.span());
+        numberOfDeletedEntries() = static_cast<uint32_t>(merged.size());
+        successor() = next->successor();
+    }
+}
+
 CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue value) const
 {
     uint32_t count = m_used;
@@ -753,10 +805,14 @@ CompactStorage::Position CompactTable::next(VM&, JSCell* storage, uint32_t entry
             }
             return { };
         case Status::Cleared:
-            storage = tableOf(asObject(table->successor()));
-            entry = 0;
-            break;
         case Status::Replaced: {
+            // The collector moves the successor of such a table on.
+            Locker locker { table->cellLock() };
+            if (table->m_status == Status::Cleared) {
+                storage = tableOf(asObject(table->successor()));
+                entry = 0;
+                break;
+            }
             uint32_t deletedBefore = 0;
             while (deletedBefore < table->numberOfDeletedEntries() && table->deletedEntries()[deletedBefore] < entry)
                 ++deletedBefore;

@@ -232,6 +232,7 @@ public:
     bool hasCandidates() const;
     bool splitEdgesNeedingCode(IRBuilder&);
     bool duplicateLiveRange(IRBuilder&);
+    bool testElementsOfLists(IRBuilder&);
     void rewrite(IRBuilder&, const FreshResultShape* = nullptr);
     void recordLosses();
     void countStatistics();
@@ -330,6 +331,8 @@ public:
     void addEdgeNeedingCode(Edge);
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
+    bool mayBeListOfNumbers(VirtualObjectID) const;
+    void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
 
     RewriteTables& tables() { return *m_tables; }
     RewriteCursor& cursor() { return *m_cursor; }
@@ -378,6 +381,7 @@ private:
     void resetCounters();
 
     bool meetsWholeResultOfCallee(const Candidate&) const;
+    bool handOnToNextJoin(IRBuilder&, const Candidate& join);
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);
     bool paysWithoutEdges(VirtualObjectID, std::span<const Edge>);
@@ -448,6 +452,7 @@ private:
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
     Vector<Edge, 2> m_edgesNeedingCode;
+    Vector<ValueID, 2> m_testedListsThatMayNotFit;
     const FreshResultShape* m_resultShape { nullptr };
     bool m_mustSolveAgain { false };
     uint64_t m_work { 0 };

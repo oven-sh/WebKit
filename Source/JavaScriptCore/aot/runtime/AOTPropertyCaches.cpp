@@ -102,6 +102,8 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         m_isSharedByInstances = m_vm.aotState().instances.size() > 1;
         m_front.clear();
         m_hashedTable.clear();
+        for (Instance* earlier : m_vm.aotState().instances)
+            zeroSpan(earlier->keyedValuePlaces());
     }
     m_hasInstance = true;
     if (instance.globalObject)
@@ -293,6 +295,8 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
 {
     if (!++m_absenceFilterGeneration) [[unlikely]] {
         m_absenceFilters.fill(AbsenceFilter { });
+        for (Instance* instance : m_vm.aotState().instances)
+            zeroSpan(instance->keyedValuePlaces());
         m_absenceFilterGeneration = 1;
     }
     // Compiled code asks for a name by its number, and a store asks the filters only for a name that has a column.

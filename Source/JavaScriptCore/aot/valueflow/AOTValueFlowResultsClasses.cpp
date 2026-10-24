@@ -426,9 +426,40 @@ static bool namesAccessors(ValueFlowNameKind kind)
     case ValueFlowNameKind::EveryGetter:
     case ValueFlowNameKind::EverySetter:
         return true;
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool namesValuesOfProperties(ValueFlowNameKind kind)
@@ -439,9 +470,42 @@ static bool namesValuesOfProperties(ValueFlowNameKind kind)
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::EveryProperty:
         return true;
-    default:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 ClosuresTakenOutOfMembers::ClosuresTakenOutOfMembers(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, ValueSetID closuresOfMembers)
@@ -579,9 +643,19 @@ bool ClosuresTakenOutOfMembers::leavesClosuresInPlace(Walk& walk, ValueFlowState
         default:
             return false;
         }
-    default:
+    case ValueFlowStatementKind::CallGroup:
+    case ValueFlowStatementKind::Behavior:
+    case ValueFlowStatementKind::Escape:
+    case ValueFlowStatementKind::ModuleEvaluation:
+    case ValueFlowStatementKind::Coroutine:
+    case ValueFlowStatementKind::EntryChecks:
+    case ValueFlowStatementKind::HostRoots:
+    case ValueFlowStatementKind::UsedBuiltins:
+    case ValueFlowStatementKind::UnseenCode:
+    case ValueFlowStatementKind::ModulesLoadedByName:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void ClosuresTakenOutOfMembers::noteStatement(Walk& walk, ValueFlowStatementID id, const ValueFlowStatement& statement) const
@@ -819,9 +893,43 @@ static std::optional<MethodKind> kindOfMemberUnder(ValueFlowNameKind kind)
         return MethodKind::Getter;
     case ValueFlowNameKind::Setter:
         return MethodKind::Setter;
-    default:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return std::nullopt;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool mayNameAnyMember(ValueFlowNameKind kind)
@@ -832,9 +940,42 @@ static bool mayNameAnyMember(ValueFlowNameKind kind)
     case ValueFlowNameKind::SetterUnderUnknownKey:
     case ValueFlowNameKind::CopiedFrom:
         return true;
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // `const members = (Point.prototype = {})`: the object of an allocation site that is stored as the prototype object of one constructor function. No class for an object that two functions get.

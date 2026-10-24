@@ -97,12 +97,14 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
     return answersOnlyForLength || type == JSFunctionType || type == SlimClosureWithPropertiesType;
 }
 
-static bool holdsBoxedValueInCell(const FieldData& field)
+// An offset names a word of the cell only below firstOutOfLineOffset, and a large cell has words behind that.
+static PropertyOffset offsetOfBoxedValueInCell(const FieldData& field)
 {
-    if (field.isOutOfLine())
-        return false;
     SlotRepresentation representation = field.slot.representation();
-    return representation == SlotRepresentation::JSValue || representation == SlotRepresentation::Cell;
+    if (field.isOutOfLine() || (representation != SlotRepresentation::JSValue && representation != SlotRepresentation::Cell))
+        return invalidOffset;
+    PropertyOffset offset = Slot::offsetFor(static_cast<int32_t>(field.slot.offset / sizeof(EncodedJSValue)));
+    return isInlineOffset(offset) ? offset : invalidOffset;
 }
 
 // Only the key order says that such a field exists where its slot holds nothing. Its value is undefined then.
@@ -194,8 +196,7 @@ static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStr
         return stopAt(&object, walk);
     if (!field || !object.isInSlot(*field))
         return lookUpExtraPropertyOfCompiledObject(start, uid, object, field, walk);
-    PropertyOffset offset = holdsBoxedValueInCell(*field) ? Slot::offsetFor(static_cast<int32_t>(field->slot.offset / sizeof(EncodedJSValue))) : invalidOffset;
-    return stopAtField(object, *field, offset, walk);
+    return stopAtField(object, *field, offsetOfBoxedValueInCell(*field), walk);
 }
 
 static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl* uid, JSObject* object, ChainWalk& walk)

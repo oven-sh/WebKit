@@ -130,7 +130,9 @@ struct NarrowedCopy {
 constexpr bool isSummarizedCall(Opcode opcode)
 {
     switch (effectRuleOf(opcode)) {
-    default:
+    case EffectRule::Call:
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
         return true;
     case EffectRule::Declared:
     case EffectRule::Operator:

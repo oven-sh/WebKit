@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowApply.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -232,7 +233,7 @@ static ValueID emitValueOrUndefined(AllocationSinking& sinking, ObjectInterprete
 
     RewriteCursor& cursor = sinking.cursor();
     IRBuilder& builder = cursor.builder();
-    ValueID carried = interpreter.valueOfField(object, field);
+    ValueID carried = interpreter.valueOfField(object, field, type);
     ValueID none = builder.appendUndefined();
     ValueID isCarried = interpreter.emitTagTest(object, *carriedBits);
     BlockID continuation = cursor.addUncoveredBlock();
@@ -267,7 +268,7 @@ Execution ObjectInterpreter::executeRead(ValueID id)
         return executeOther(id);
 
     auto executeOnCell = [&] {
-        if (hasPositionFromAnsweredTest(id, object))
+        if (reliesOnAnswerThatCellDoesNotKeep(id, object))
             m_sinking.abandon(object);
         requireCell(receiver, causeOf(id, 0));
         return executeOther(id);
@@ -338,7 +339,7 @@ Execution ObjectInterpreter::executeRead(ValueID id)
         return Execution::Interpreted;
     case FieldRead::Value:
         if (isRewriting())
-            replaceRead(id, valueOfField(object, *field));
+            replaceRead(id, valueOfField(object, *field, function().at(id).type));
         return Execution::Interpreted;
     case FieldRead::ValueOrUndefined:
         if (isRewriting())
@@ -511,7 +512,7 @@ Execution ObjectInterpreter::executeStore(ValueID id)
         return executeOther(id);
 
     auto executeOnCell = [&] {
-        if (hasPositionFromAnsweredTest(id, object))
+        if (reliesOnAnswerThatCellDoesNotKeep(id, object))
             m_sinking.abandon(object);
         requireCell(receiver, causeOf(id, 0));
         return executeOther(id);
@@ -713,6 +714,15 @@ ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field)
     VirtualObjectID held = stateOf(object)->objectHeldIn(field);
     RELEASE_ASSERT(held);
     return cellOf(held);
+}
+
+// One value carries an element for every variant of a join, under the union of their types. Whoever asks has found that the variants that are left hold the narrower type.
+ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, TypeID typeInVariants)
+{
+    ValueID value = valueOfField(object, field);
+    if (isWithin(program(), function().at(value).type, typeInVariants))
+        return value;
+    return cursor().emit(makeAssumeType(value, typeInVariants));
 }
 
 ValueID ObjectInterpreter::emitUndefined()

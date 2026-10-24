@@ -77,7 +77,33 @@ HeapKey keyOfFoundName(ValueFlowName name)
     case ValueFlowNameKind::EveryGetter:
     case ValueFlowNameKind::EverySetter:
         return unknownHeapKey;
-    default:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return unknownHeapKey;
     case ValueFlowNameKind::MemberWritten:
         return { HeapKeyClass::Name, PropertyKeyID(name.payload) };
@@ -446,7 +472,10 @@ void HeapRule::appendPrototypeAtCreation(ValueFlowObjectID object, Members& prot
         case LayoutKind::Instance:
             prototypes.append(m_universe.prototypeOf(site.layout));
             return;
-        default:
+        case LayoutKind::Environment:
+        case LayoutKind::Closure:
+        case LayoutKind::CoroutineFrame:
+        case LayoutKind::ModuleNamespace:
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1562,7 +1591,40 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::EveryMemberRead:
         noteUseOfMembers(unknownHeapKey, BuiltinUse::Read);
         return;
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         break;
     }
     if (splitLookupThroughPlaceholders())
@@ -1585,7 +1647,34 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::EveryGetter:
         collectAccessors(BuiltinCallMode::Get);
         return;
-    default:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -334,6 +334,7 @@ struct Instance : InstanceHeader {
 
     std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
     static constexpr ptrdiff_t offsetOfBoxedCalls();
+    std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> keyedValuePlaces() { return std::span<KeyedValuePlace, KeyedValuePlace::numberOfPlaces> { reinterpret_cast<KeyedValuePlace*>(reinterpret_cast<uint8_t*>(this) + InstanceLayout::offsetOfKeyedValuePlaces), KeyedValuePlace::numberOfPlaces }; }
 
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
@@ -399,6 +400,7 @@ static_assert(AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots) <= 504, "On ARM64,
 static_assert(sizeof(Instance) <= InstanceLayout::offsetOfKeyOrderSteps);
 static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache) <= InstanceLayout::offsetOfBuiltinLocationStates);
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
+static_assert(KeyedValuePlace::numberOfPlaces * sizeof(KeyedValuePlace) <= InstanceLayout::bytesReservedForKeyedValuePlaces && sizeof(InstancePrefix) <= 32 * KB);
 static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
 static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");

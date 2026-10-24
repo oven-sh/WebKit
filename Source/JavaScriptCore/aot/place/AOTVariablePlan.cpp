@@ -73,7 +73,7 @@ BitVector findVariablesDescribedToRunTime(const Program& program, const FlowResu
 // Nothing checks what arrives at an expected position, and a variable has no other place for a value that does not fit its form.
 static const Type& typeOfStoredValues(const Program& program, const Variable& variable)
 {
-    return program.at(variable.declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : variable.declared.type);
+    return program.at(program.provenTypeOf(variable.declared));
 }
 
 static bool isFilledWithUndefinedValue(const Program& program, const Variable& variable)

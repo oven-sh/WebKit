@@ -47,6 +47,12 @@ struct PathsNotInImage {
     std::array<String, 32> paths WTF_GUARDED_BY_LOCK(lock);
 };
 
+// Static strings: every thread may hold them.
+struct PathsOfModules {
+    Lock lock;
+    UncheckedKeyHashMap<uint32_t, StringImpl*> byModule WTF_GUARDED_BY_LOCK(lock);
+};
+
 } // anonymous namespace
 
 std::optional<ModuleID> findModule(StringView publicPath)
@@ -71,11 +77,18 @@ std::optional<ModuleID> findModule(StringView publicPath)
     return found;
 }
 
+// Each frame of each stack trace asks.
 String modulePath(ModuleID module)
 {
-    std::optional<ModuleTable> table = currentModuleTable();
-    RELEASE_ASSERT(table);
-    return table->pathText(module);
+    static NeverDestroyed<PathsOfModules> pathsOfModules;
+    PathsOfModules& paths = pathsOfModules.get();
+    Locker locker { paths.lock };
+    return paths.byModule.ensure(module.index() + 1, [&] {
+        std::optional<ModuleTable> table = currentModuleTable();
+        RELEASE_ASSERT(table);
+        String path = table->pathText(module);
+        return &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef();
+    }).iterator->value;
 }
 
 bool entryPointIsCommonJS(JSGlobalObject* realm)

@@ -15,6 +15,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionKinds.h"
 #include "AOTNameClass.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -38,14 +39,8 @@ BitVector computeTypesNeededAtRunTime(const PlacementContext& context, const Pla
         if (!visitedLayouts.add(id.index()) || (layoutsOutOfUse == LayoutsOutOfUse::Exclude && sites.layoutsOutOfUse.get(id.index())))
             return;
         FieldIndex numberOfFields = program.at(id).fields.size();
-        for (FieldIndex index = 0; index < numberOfFields; ++index) {
-            const Field& declaration = fieldAt(program, declarationOf(program, { id, index }));
-            // What FieldData::type holds: typeHeldBy() in AOTLayoutTableEncoding.cpp.
-            if (declaration.form.contains(FieldForm::IsAccessor))
-                addType(declaration.slotType);
-            else if (!declaration.declared.flags.contains(PositionFlags::IsExpected))
-                addType(declaration.slotType ? declaration.slotType : declaration.declared.type);
-        }
+        for (FieldIndex index = 0; index < numberOfFields; ++index)
+            addType(recordedTypeOf(program, fieldAt(program, declarationOf(program, { id, index }))));
     };
 
     addType(TypeTable::anything);

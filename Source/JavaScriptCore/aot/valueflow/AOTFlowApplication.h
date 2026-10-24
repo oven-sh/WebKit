@@ -88,6 +88,8 @@ struct FlowClaimUpdate {
     bool isRedundant { false };
     // Where nothing that arrives can pass: the type of what arrives. See ValueFlowPositions::typeWhereNothingPasses().
     TypeID arriving;
+    // See ValueFlowPositions::turnsAwayConstructedObject().
+    bool mayFail { false };
 };
 
 // Written only where the set is complete.

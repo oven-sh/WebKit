@@ -107,9 +107,31 @@ static bool canBeRoleOfFunctionAsRead(FunctionRole role)
     case FunctionRole::EntryChecks:
     case FunctionRole::StubBody:
         return true;
-    default:
+    case FunctionRole::Source:
+    case FunctionRole::Library:
+    case FunctionRole::Model:
+    case FunctionRole::Signature:
+    case FunctionRole::GenericEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
+    case FunctionRole::GenericVersion:
+    case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
+    case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
+    case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
+    case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWorker:
+    case FunctionRole::OutlinedBody:
+    case FunctionRole::Serializer:
+    case FunctionRole::Parser:
+    case FunctionRole::ValidatingParser:
+    case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
         return static_cast<unsigned>(role) < numberOfWireEnumerators<FunctionRole>;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // Passes append the functions they derive, so the functions as read end at the first function that only a pass can have appended.

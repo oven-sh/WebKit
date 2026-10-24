@@ -229,14 +229,13 @@ static std::optional<FreshResultShape> tryReturnParts(const AnalysisContext& con
     return std::nullopt;
 }
 
-static FreshResultShape shapeOfOrdinaryResult(const Function& function)
+static FreshResultShape shapeOfOrdinaryResult(const Program& program, const Function& function)
 {
     FreshResultShape shape;
     shape.state = FreshResultsState::NotFresh;
     shape.variants.append(FreshResultVariant { });
     shape.fieldOfPart.append(VirtualField { });
-    const DeclaredType& result = function.result();
-    shape.partTypes.append(result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type);
+    shape.partTypes.append(program.provenTypeOf(function.result()));
     shape.cellPart = 0;
     return shape;
 }
@@ -256,7 +255,7 @@ ResultWorker createResultWorker(const AnalysisContext& context, const ResultWork
 
     std::optional<FreshResultShape> shape = tryReturnParts(context, worker, types);
     if (!shape)
-        shape = shapeOfOrdinaryResult(worker);
+        shape = shapeOfOrdinaryResult(context.program, worker);
     return { WTF::move(worker), WTF::move(*shape) };
 }
 

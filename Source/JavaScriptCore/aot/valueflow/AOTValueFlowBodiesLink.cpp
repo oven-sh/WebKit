@@ -183,9 +183,18 @@ FunctionID ValueFlowUniverse::functionOf(ValueFlowObjectID object) const
         return FunctionID(index - m_firstConstructedObject);
     case ValueFlowObjectKind::Site:
         return m_functionOfSiteObject[index - m_firstSite];
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Builtin:
+    case ValueFlowObjectKind::ModuleBuiltin:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::Instance:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 FunctionID ValueFlowUniverse::closureFunction(ValueFlowObjectID object) const
@@ -200,9 +209,22 @@ BuiltinID ValueFlowUniverse::builtinOf(ValueFlowObjectID object) const
         return BuiltinID(object.index() - m_firstBuiltin);
     case ValueFlowObjectKind::ModuleBuiltin:
         return m_moduleBuiltins[object.index() - m_firstModuleBuiltin].builtin;
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::Closure:
+    case ValueFlowObjectKind::CoroutineResult:
+    case ValueFlowObjectKind::RestArray:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::Site:
+    case ValueFlowObjectKind::Instance:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 ModuleID ValueFlowUniverse::moduleWithBody(FunctionID function) const
@@ -218,9 +240,22 @@ ModuleID ValueFlowUniverse::moduleOf(ValueFlowObjectID object) const
         return m_moduleBuiltins[object.index() - m_firstModuleBuiltin].module;
     case ValueFlowObjectKind::Namespace:
         return ModuleID(object.index() - m_firstNamespace);
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Builtin:
+    case ValueFlowObjectKind::Closure:
+    case ValueFlowObjectKind::CoroutineResult:
+    case ValueFlowObjectKind::RestArray:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::Site:
+    case ValueFlowObjectKind::Instance:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 PropertyKeyID ValueFlowUniverse::keyOf(ValueFlowObjectID object) const
@@ -249,9 +284,21 @@ LayoutID ValueFlowUniverse::layoutOf(ValueFlowObjectID object) const
         return LayoutID((object.index() - m_firstLayoutObject) / 2);
     case ValueFlowObjectKind::Namespace:
         return m_layoutOfNamespace[object.index() - m_firstNamespace];
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Builtin:
+    case ValueFlowObjectKind::ModuleBuiltin:
+    case ValueFlowObjectKind::Closure:
+    case ValueFlowObjectKind::CoroutineResult:
+    case ValueFlowObjectKind::RestArray:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 ValueFlowObjectID ValueFlowUniverse::objectAllocatedUnder(const Program& program, ValueFlowObjectID site, ValueFlowObjectID prototype) const
@@ -292,9 +339,18 @@ BuiltinClassID ValueFlowUniverse::classOf(ValueFlowObjectID object) const
         return BuiltinClasses::Object;
     case ValueFlowObjectKind::CoroutineResult:
         return m_classOfCoroutineResult[functionOf(object).index()];
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Builtin:
+    case ValueFlowObjectKind::ModuleBuiltin:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::Instance:
+    case ValueFlowObjectKind::Prototype:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return { };
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // The function object of a built-in may be a closure of a function of the library.
@@ -1021,6 +1077,7 @@ private:
         universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
         universe.m_objects = ValueSets::complement(universe.m_primitives);
         universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(universe.m_placeholdersAlone));
+        universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
         universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
         universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
 

@@ -130,7 +130,6 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     jit.loadPtr(Address(r.structure, Structure::propertyTableUnsafeOffset()), r.size);
     isUnknown.append(jit.branchTestPtr(CCallHelpers::Zero, r.size));
     jit.loadPtr(Address(r.size, PropertyTable::offsetOfIndexVector()), r.vector);
-    isUnknown.append(jit.branchTestPtr(CCallHelpers::Zero, r.vector, TrustedImm32(PropertyTable::flagOfCompactIndexVector)));
     jit.load32(Address(r.size, PropertyTable::offsetOfIndexSize()), r.size);
     // StringImpl::existingSymbolAwareHash().
     jit.load32(Address(r.uid, StringImpl::flagsOffset()), r.index);
@@ -138,6 +137,7 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     jit.load32(Address(r.uid, OBJECT_OFFSETOF(SymbolImpl::StaticSymbolImpl, m_hashForSymbolShiftedWithFlagCount)), r.index);
     isNoSymbol.link(&jit);
     jit.urshift32(TrustedImm32(StringImpl::s_flagCount), r.index);
+    Jump isWide = jit.branchTestPtr(CCallHelpers::Zero, r.vector, TrustedImm32(PropertyTable::flagOfCompactIndexVector));
 
     // PropertyTable::findImpl(). The address in vector is one too high, by the flag. The entries lie behind the index, and their numbers begin at one.
     JumpList isFound;
@@ -157,12 +157,48 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     }
     isUnknown.append(jit.jump());
 
+    // A table with room for 255 names or more: the index has words of 32 bits, and an entry has the name, the offset and the attributes each by itself.
+    isWide.link(&jit);
+    constexpr int32_t offsetOfOffsetInWideEntry = sizeof(UniquedStringImpl*);
+    constexpr int32_t offsetOfAttributesInWideEntry = offsetOfOffsetInWideEntry + sizeof(PropertyOffset);
+    constexpr PropertyOffset maxOffsetBesideAttributes = (1 << 23) - 1;
+    static_assert(sizeof(PropertyTableEntry) == 16);
+    {
+        PropertyTableEntry sample(nullptr, 0x01020304, 0x7f);
+        PropertyOffset offsetOfSample;
+        uint8_t attributesOfSample;
+        memcpy(&offsetOfSample, reinterpret_cast<const uint8_t*>(&sample) + offsetOfOffsetInWideEntry, sizeof(offsetOfSample));
+        memcpy(&attributesOfSample, reinterpret_cast<const uint8_t*>(&sample) + offsetOfAttributesInWideEntry, sizeof(attributesOfSample));
+        RELEASE_ASSERT(offsetOfSample == sample.offset() && attributesOfSample == sample.attributes());
+    }
+    JumpList isFoundInWideEntry;
+    for (unsigned probe = 0; probe < maxProbes; ++probe) {
+        if (probe)
+            jit.add32(TrustedImm32(probe), r.index);
+        jit.add32(TrustedImm32(-1), r.size, entry);
+        jit.and32(entry, r.index);
+        jit.load32(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour), entry);
+        isAbsentHere.append(jit.branchTest32(CCallHelpers::Zero, entry));
+        jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(PropertyTableEntry)))), entry);
+        jit.getEffectiveAddress(BaseIndex(entry, r.size, CCallHelpers::TimesFour, -static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
+        jit.addPtr(r.vector, entry);
+        isFoundInWideEntry.append(jit.branchPtr(CCallHelpers::Equal, Address(entry), r.uid));
+    }
+    isUnknown.append(jit.jump());
+
+    isFoundInWideEntry.link(&jit);
+    jit.load32(Address(entry, offsetOfOffsetInWideEntry), r.index);
+    isUnknown.append(jit.branch32(CCallHelpers::Above, r.index, TrustedImm32(maxOffsetBesideAttributes)));
+    jit.load8(Address(entry, offsetOfAttributesInWideEntry), entry);
+    jit.lshift32(TrustedImm32(8), r.index);
+    jit.or32(r.index, entry);
+
     isFound.link(&jit);
 }
 
 // A read returns the value of a data property and what a getter answers.
 template<typename Functor>
-static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, JumpList& cannotCallGetter, const Functor& beforeGetter)
+static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, JumpList& cannotCallGetter, const Functor& beforeGetter, const ScopedLambda<void()>* willReturnValue = nullptr)
 {
     constexpr int32_t accessorOrCustom = static_cast<int32_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue);
     constexpr int32_t custom = static_cast<int32_t>(PropertyAttribute::CustomAccessorOrValue);
@@ -186,6 +222,8 @@ static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuest
         isLoaded.link(&jit);
     };
     Jump isNoValue = jit.branchTest32(CCallHelpers::NonZero, entry, TrustedImm32(accessorOrCustom));
+    if (willReturnValue)
+        (*willReturnValue)();
     loadProperty(jit.result());
     jit.returnToCaller();
 
@@ -369,7 +407,7 @@ static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestio
     hasNoField.link(&jit);
 }
 
-void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isUnknown)
+void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isUnknown, const ScopedLambda<void()>* willReturnValue)
 {
     constexpr int32_t flagsOfOwnLookup = OverridesGetOwnPropertySlot | OverridesGetPrototype;
     static_assert((flagsOfOwnLookup | HasStaticPropertyTable) <= UINT8_MAX);
@@ -403,7 +441,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     // A name may spell an index, and an element is in no property table.
     isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
     loadStructure(jit, r.object, r.structure);
-    answerByPropertyTableAndReturn(jit, question, r, isAbsentHere, isUnknown, isUnknown, [] { });
+    answerByPropertyTableAndReturn(jit, question, r, isAbsentHere, isUnknown, isUnknown, [] { }, willReturnValue);
 
     isAbsentHere.link(&jit);
     // A property of a static table is put into the property table at its first read. Until all of them are there, what the property table lacks may be in the static one.

@@ -67,7 +67,9 @@ static BitVector findAlwaysEvaluatedModules(const Program& program)
 static LockedWriteForm writeFormOf(AccessKind kind)
 {
     switch (kind) {
-    default:
+    case AccessKind::Store:
+    case AccessKind::Define:
+    case AccessKind::Delete:
         return LockedWriteForm::Operation;
     case AccessKind::Call:
     case AccessKind::Construct:
@@ -127,7 +129,9 @@ static bool dominatesEveryReturn(FunctionAnalyses& analyses, BlockID block)
 static bool isProgramModule(ModuleKind kind)
 {
     switch (kind) {
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
         return true;
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
@@ -203,7 +207,11 @@ static RefusalInSloppyCode refusalInSloppyCode(const BuiltinTable& table, Builti
     case BuiltinKind::Method:
         // What the language puts under a string is writable and configurable where it is one of these. Under a symbol some are not, and the host does as it likes.
         return entry.origin == BuiltinOrigin::Engine && !table.isSymbolName(entry.name) ? RefusalInSloppyCode::Throws : RefusalInSloppyCode::MayThrow;
-    default:
+    case BuiltinKind::Prototype:
+    case BuiltinKind::Accessor:
+    case BuiltinKind::DataProperty:
+    case BuiltinKind::Constant:
+    case BuiltinKind::NativeBinding:
         return RefusalInSloppyCode::IsLikelySilent;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -344,7 +352,11 @@ static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Functi
         return !hasAccessorFunction && (!value || value->primitives || mayHoldObject(table, member));
     case BuiltinKind::NativeBinding:
         return true;
-    default:
+    case BuiltinKind::Namespace:
+    case BuiltinKind::Constructor:
+    case BuiltinKind::Function:
+    case BuiltinKind::Prototype:
+    case BuiltinKind::Method:
         return !hasAccessorFunction && (!value || mayStore(*value, member));
     }
     RELEASE_ASSERT_NOT_REACHED();

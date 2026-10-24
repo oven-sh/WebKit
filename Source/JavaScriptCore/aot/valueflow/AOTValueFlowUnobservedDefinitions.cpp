@@ -320,7 +320,14 @@ private:
         case TerminatorKind::Throw:
         case TerminatorKind::Rethrow:
             return m_isKnownToOtherCode;
-        default:
+        case TerminatorKind::Jump:
+        case TerminatorKind::Branch:
+        case TerminatorKind::Switch:
+        case TerminatorKind::SwitchString:
+        case TerminatorKind::Unreachable:
+        case TerminatorKind::SwitchOnShape:
+        case TerminatorKind::TryCallInline:
+        case TerminatorKind::TestAndBranch:
             return false;
         }
     }

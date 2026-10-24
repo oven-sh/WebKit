@@ -124,6 +124,11 @@ VirtualShape shapeAfterAppend(VirtualFamily&, const VirtualShape&, bool isHole, 
 
 enum class CastOutcome : uint8_t { Unknown, Passes, Throws };
 
+// A literal that is expected to get storage for numbers alone. Whether its elements fit is found when it runs, unless their types say so.
+enum class ListOfNumbers : uint8_t { No, FitsByType, MayNotFit };
+ListOfNumbers classifyListOfNumbers(const Program&, const VirtualObjectDescription&);
+Type typeOfNumbersIn(ArrayStorage);
+
 KnownBoolean evaluateTest(const ShapeContext&, const VirtualShape&, const Value& test, uint32_t operandIndex);
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);

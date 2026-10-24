@@ -67,10 +67,10 @@ const construction = [
   },
 ] satisfies b.FunctionField[];
 
-const constructedByReceiver = b.called({ times: "Once", constructs: true, args: [b.length], result: "Returned" });
+const constructedByReceiver = b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", constructs: true, args: [b.length], result: "Returned" });
 
 const mapperCall = (item: b.PlaceLike) =>
-  b.called({ times: "PerElement", this: b.operand("thisArg"), args: [item, b.length], result: "Escapes" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.operand("thisArg"), args: [item, b.length], result: "Escapes" });
 
 const storageGetter = (inlineBuiltin: string) =>
   ({
@@ -116,6 +116,7 @@ const traversal = (returns: b.TableType, result: b.CallbackResultUse, ...receive
       this: [readsElements, ...receiverUses],
       callback: [
         b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
           this: b.operand("thisArg"),
           args: [elementOrUndefined, bufferLength, self],
@@ -139,7 +140,7 @@ const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLoo
 };
 
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
-  b.called({ times, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
 
 const fold = [
   {
@@ -182,7 +183,7 @@ const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: reado
       runsOnlyOperandCode: true,
       uses: {
         this: receiverUses,
-        comparator: [b.called({ times: "Repeatedly", args: [element, element], result: convertedByNativeCode })],
+        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", args: [element, element], result: convertedByNativeCode })],
       },
       implementation: b.hostCall,
     },

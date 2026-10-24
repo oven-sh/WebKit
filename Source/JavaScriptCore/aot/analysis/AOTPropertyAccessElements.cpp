@@ -114,7 +114,11 @@ static std::optional<Opcode> elementOperationFor(ElementAccessForm form, Access 
             break;
         }
         break;
-    default:
+    case ElementAccessForm::ByKey:
+    case ElementAccessForm::NamedKey:
+    case ElementAccessForm::String:
+    case ElementAccessForm::ArgumentsElement:
+    case ElementAccessForm::Split:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -273,7 +277,16 @@ static bool mayHaveElementForm(UnionPartKind kind)
     case UnionPartKind::String:
     case UnionPartKind::BuiltinClass:
         return true;
-    default:
+    case UnionPartKind::OtherObjects:
+    case UnionPartKind::Nullish:
+    case UnionPartKind::Boolean:
+    case UnionPartKind::Number:
+    case UnionPartKind::Symbol:
+    case UnionPartKind::BigInt:
+    case UnionPartKind::Absent:
+    case UnionPartKind::Layouts:
+    case UnionPartKind::Functions:
+    case UnionPartKind::Builtins:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

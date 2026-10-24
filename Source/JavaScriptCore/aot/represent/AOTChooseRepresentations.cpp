@@ -71,6 +71,7 @@ static bool isMadeBoxed(FunctionPassContext& pass, const RepresentationInputs& i
     }
 
     ValueLocation location = pass.analyses.useLists().locationOf(id);
+    bool hasBoxedSource = false;
     for (Edge edge : pass.analyses.cfg().incomingEdges(location.block)) {
         if (edge.isHandlerEdge())
             return false;
@@ -82,10 +83,14 @@ static bool isMadeBoxed(FunctionPassContext& pass, const RepresentationInputs& i
                 return false;
             source = result.subject;
         }
+        // A constant comes in whatever form is asked for: `value ?? 0`.
+        if (constantsInFormOfUses.contains(function.at(source).opcode))
+            continue;
         if (!isMadeBoxed(pass, inputs, source, copiesFollowed + 1))
             return false;
+        hasBoxedSource = true;
     }
-    return true;
+    return hasBoxedSource;
 }
 
 namespace {

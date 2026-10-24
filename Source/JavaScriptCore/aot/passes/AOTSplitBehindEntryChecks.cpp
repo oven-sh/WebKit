@@ -140,7 +140,8 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         std::optional<unsigned> entryParameter = findEntryParameterBehindCasts(function, value.valueOperand());
         if (!entryParameter)
             break;
-        if (value.opcode != Opcode::Check)
+        // A test at the entrance would send ordinary calls into the generic version.
+        if (value.opcode != Opcode::Check || value.cause() == CheckCause::MayFail)
             continue;
         const Type& given = program.typeOf(function, value.valueOperand());
         const Type& checked = program.at(value.castType());
@@ -232,7 +233,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
             const Value& value = function.at(id);
             if (narrowsWithoutTest(value.opcode) && find(id))
                 continue;
-            if (EntryValue* checked = value.opcode == Opcode::Check ? find(value.valueOperand()) : nullptr) {
+            if (EntryValue* checked = value.opcode == Opcode::Check && value.cause() != CheckCause::MayFail ? find(value.valueOperand()) : nullptr) {
                 // Nobody wants what a check without a use lets through.
                 if (isUsed.quickGet(id.index()))
                     checked->checks.append(id);

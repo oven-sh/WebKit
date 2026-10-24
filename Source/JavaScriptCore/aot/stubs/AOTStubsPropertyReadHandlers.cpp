@@ -441,6 +441,10 @@ static void emitReadBySlot(ReadSlotBody& body)
         emitFarValueRead(body);
         return;
     case Slot::Kind::Absent:
+#if CPU(X86_64)
+        if (body.origin == SlotOrigin::ByVal)
+            rememberAbsenceOfKey(jit, body.operands.keyCell, body.slot.header(), body.T10, body.T11);
+#endif
         returnUndefined(body);
         return;
     case Slot::Kind::Getter:

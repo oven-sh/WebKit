@@ -34,7 +34,10 @@ static constexpr OptionSet<ObjectMutation> mutationsWithoutMark {
 static bool isAllocatedByOperations(LayoutKind kind)
 {
     switch (kind) {
-    default:
+    case LayoutKind::Record:
+    case LayoutKind::Instance:
+    case LayoutKind::Container:
+    case LayoutKind::Environment:
     // The code of a built-in makes its records as ordinary objects. Only an operation of compiled code makes an object with a layout of the table.
     case LayoutKind::BuiltinResult:
         return true;
@@ -162,7 +165,39 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
             return true;
         case ValueFlowNameKind::Property:
             return name.payload == prototypeKey;
-        default:
+        case ValueFlowNameKind::Getter:
+        case ValueFlowNameKind::Setter:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::SetterUnderUnknownKey:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             return false;
         }
     });
@@ -181,7 +216,39 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
                 if (inputs.sets().meet(node.objects, inputs.universe().callables()))
                     unite(m_functionsWithNonObjectPrototype, node.objects);
                 break;
-            default:
+            case ValueFlowNameKind::Getter:
+            case ValueFlowNameKind::Setter:
+            case ValueFlowNameKind::Elements:
+            case ValueFlowNameKind::GetterUnderUnknownKey:
+            case ValueFlowNameKind::SetterUnderUnknownKey:
+            case ValueFlowNameKind::EveryProperty:
+            case ValueFlowNameKind::EveryGetter:
+            case ValueFlowNameKind::EverySetter:
+            case ValueFlowNameKind::DeletedMember:
+            case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+            case ValueFlowNameKind::RedefinedMember:
+            case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+            case ValueFlowNameKind::PrivateField:
+            case ValueFlowNameKind::Slot:
+            case ValueFlowNameKind::HiddenSlot:
+            case ValueFlowNameKind::InternalFields:
+            case ValueFlowNameKind::SteppedValues:
+            case ValueFlowNameKind::ReturnedValue:
+            case ValueFlowNameKind::SentValues:
+            case ValueFlowNameKind::OpenedBy:
+            case ValueFlowNameKind::ResolvedPromises:
+            case ValueFlowNameKind::RejectedPromises:
+            case ValueFlowNameKind::AllocatedAs:
+            case ValueFlowNameKind::OpenedIterators:
+            case ValueFlowNameKind::IteratedValues:
+            case ValueFlowNameKind::IteratorResults:
+            case ValueFlowNameKind::AwaitedValue:
+            case ValueFlowNameKind::MemberWritten:
+            case ValueFlowNameKind::EveryMemberWritten:
+            case ValueFlowNameKind::EveryMemberRead:
+            case ValueFlowNameKind::RestArgument:
+            case ValueFlowNameKind::AddedNames:
+            case ValueFlowNameKind::FoundThroughEscapedInstances:
                 break;
             }
         }
@@ -354,7 +421,11 @@ static ValueFlowObjectID expectedPrototype(const ValueFlowResultInputs& inputs, 
     case LayoutKind::Record:
     case LayoutKind::Container:
         return inputs.universe().objectOf(Builtins::ObjectPrototype);
-    default:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -773,7 +844,38 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
         case ValueFlowNameKind::SetterUnderUnknownKey:
         case ValueFlowNameKind::CopiedFrom:
             return true;
-        default:
+        case ValueFlowNameKind::Property:
+        case ValueFlowNameKind::Getter:
+        case ValueFlowNameKind::Setter:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::PrototypeLink:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             return isListed(name.kind);
         }
     });

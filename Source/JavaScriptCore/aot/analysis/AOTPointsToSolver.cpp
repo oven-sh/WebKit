@@ -159,7 +159,10 @@ static DeclaredOperandFacts computeDeclaredOperandFacts(Opcode opcode, uint32_t 
     case EffectRule::Declared:
     case EffectRule::Operator:
         break;
-    default:
+    case EffectRule::Access:
+    case EffectRule::Call:
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
         return { };
     }
 

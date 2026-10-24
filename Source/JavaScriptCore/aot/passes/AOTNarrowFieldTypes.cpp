@@ -75,21 +75,9 @@ TypeID slotTypeOf(const Program& program, const Field& field)
     // The slot of an accessor holds its GetterSetter. Its type is that of the getter, which every writer of the slot tests.
     if (field.form.contains(FieldForm::IsAccessor))
         return field.slotType ? field.slotType : TypeTable::anything;
-    if (!field.declared.flags.contains(PositionFlags::IsExpected))
-        return field.slotType ? field.slotType : field.declared.type;
-
-    const Type& expected = program.at(field.declared.type);
-    if (!expected.isJavaScriptValue())
-        return field.declared.type;
-    if (!(expected.primitives & Primitive::Absent))
-        return TypeTable::anything;
-
-    // A location with a dead zone holds `absent` whatever else it holds.
-    Type anythingOrAbsent = Type::anything().withPrimitives(Primitive::Absent);
-    anythingOrAbsent.canonicalize();
-    std::optional<TypeID> id = program.types.find(anythingOrAbsent);
-    RELEASE_ASSERT(id);
-    return *id;
+    if (field.slotType && !field.declared.flags.contains(PositionFlags::IsExpected))
+        return field.slotType;
+    return program.provenTypeOf(field.declared);
 }
 
 bool slotHoldsUndefinedAndNull(const Program& program, FieldReference reference)

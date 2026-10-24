@@ -16,6 +16,7 @@ import { pathOfNativeBinding, pathOfNativeFunction } from "./paths.ts";
 import type {
   Bound,
   BuiltinPath,
+  CallbackAftermath,
   CallbackResultUse,
   CallbackTimes,
   CalledFunctionSpec,
@@ -64,7 +65,7 @@ import type {
   TypeSpec,
   UseSpec,
 } from "./vocabulary.ts";
-import { targetPlatforms } from "./vocabulary.ts";
+import { callbackAftermaths, targetPlatforms } from "./vocabulary.ts";
 
 export type { Declaration, HostReadUse } from "./declarations.ts";
 export type { TargetArchitecture } from "./model.ts";
@@ -539,6 +540,7 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
 
 export interface CallbackOptions {
   times: CallbackTimes;
+  afterwards: CallbackAftermath;
   constructs?: boolean;
   /** What the constructed function sees as new.target. Without it that is the function itself. */
   newTarget?: PlaceLike;
@@ -552,9 +554,11 @@ export interface CallbackOptions {
 export function called(options: CallbackOptions): UseSpec {
   assert((options.result === "Stored") === (options.resultTo !== undefined), 'resultTo goes with result: "Stored"');
   assert(options.newTarget === undefined || options.constructs === true, "newTarget goes with constructs: true");
+  assert(callbackAftermaths.includes(options.afterwards), "a called function says what native code does afterwards");
   return {
     use: "Calls",
     times: options.times,
+    afterwards: options.afterwards,
     constructs: options.constructs,
     newTarget: options.newTarget === undefined ? undefined : placeOf(options.newTarget),
     thisValue: options.this === undefined ? undefined : placeOf(options.this),

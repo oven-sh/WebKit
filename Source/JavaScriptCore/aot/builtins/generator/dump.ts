@@ -296,5 +296,4 @@ export function canonicalTextOf(value: unknown): string {
   return `{${members.map(([key, member]) => `${JSON.stringify(key)}:${canonicalTextOf(member)}`).join(",")}}`;
 }
 
-export const needsDifferentialTest = (overload: DumpedOverload): boolean =>
-  !overload.isProvenByConstruction && !overload.isUndeclared;
+export const needsDifferentialTest = (overload: DumpedOverload): boolean => !overload.isUndeclared;

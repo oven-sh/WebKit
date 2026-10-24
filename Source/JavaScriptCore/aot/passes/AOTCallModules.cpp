@@ -124,7 +124,16 @@ static bool returnsOnlyUndefined(const Function& body)
         }
         case TerminatorKind::ReturnCall:
             return false;
-        default:
+        case TerminatorKind::Jump:
+        case TerminatorKind::Branch:
+        case TerminatorKind::Switch:
+        case TerminatorKind::SwitchString:
+        case TerminatorKind::Throw:
+        case TerminatorKind::Rethrow:
+        case TerminatorKind::Unreachable:
+        case TerminatorKind::SwitchOnShape:
+        case TerminatorKind::TryCallInline:
+        case TerminatorKind::TestAndBranch:
             return true;
         }
     });

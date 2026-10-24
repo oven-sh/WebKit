@@ -222,7 +222,9 @@ static bool isDirectOrIndirectCall(Opcode opcode)
     case AccessClass::DirectCall:
     case AccessClass::IndirectCall:
         return true;
-    default:
+    case AccessClass::None:
+    case AccessClass::Slot:
+    case AccessClass::ByName:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -571,7 +573,14 @@ private:
         case TerminatorKind::Switch:
         case TerminatorKind::SwitchString:
             return false;
-        default:
+        case TerminatorKind::Jump:
+        case TerminatorKind::ReturnCall:
+        case TerminatorKind::Throw:
+        case TerminatorKind::Rethrow:
+        case TerminatorKind::Unreachable:
+        case TerminatorKind::SwitchOnShape:
+        case TerminatorKind::TryCallInline:
+        case TerminatorKind::TestAndBranch:
             return true;
         }
     }
@@ -1210,7 +1219,19 @@ private:
             }
             return std::nullopt;
         }
-        default:
+        case ValueFlowObjectKind::Primitive:
+        case ValueFlowObjectKind::UnknownObject:
+        case ValueFlowObjectKind::Builtin:
+        case ValueFlowObjectKind::ModuleBuiltin:
+        case ValueFlowObjectKind::Namespace:
+        case ValueFlowObjectKind::Closure:
+        case ValueFlowObjectKind::CoroutineResult:
+        case ValueFlowObjectKind::RestArray:
+        case ValueFlowObjectKind::FunctionPrototype:
+        case ValueFlowObjectKind::ConstructedObject:
+        case ValueFlowObjectKind::Prototype:
+        case ValueFlowObjectKind::ResultOfBuiltin:
+        case ValueFlowObjectKind::Key:
             return std::nullopt;
         }
     }
@@ -1689,7 +1710,9 @@ private:
         case ConstructionEventKind::Read:
             reaches = stateBeforeOperation.selfReferences.get(bitOf(event));
             break;
-        default:
+        case ConstructionEventKind::Leak:
+        case ConstructionEventKind::Call:
+        case ConstructionEventKind::Exit:
             break;
         }
         return reaches || std::ranges::any_of(resolved.callees, [&](uint32_t callee) {

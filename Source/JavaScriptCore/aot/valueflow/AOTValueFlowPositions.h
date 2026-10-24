@@ -170,6 +170,8 @@ public:
     bool isSurelyInside(ValueSetID, const Type&);
     bool isSurelyInside(ValueSetID, TypeID);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);
+    // Whether what a plain function without a layout constructs arrives and a test for the type turns it away. The program calls such an object by the type through a cast, and every one of them fails the test.
+    bool turnsAwayConstructedObject(ValueSetID, const Type&);
     // Whether a member that a proof takes on trust may fail a test for the type: the object that nobody follows, or an allocation that picks its layout and picks one outside.
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
 

@@ -171,7 +171,20 @@ private:
         case SlotRepresentation::Double:
         case SlotRepresentation::OptionalDouble:
             return type.primitiveSet().containsAll({ PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }) && !type.integerRange();
-        default:
+        case SlotRepresentation::Cell:
+        case SlotRepresentation::Cell32:
+        case SlotRepresentation::OptionalCell32:
+        case SlotRepresentation::Uint32:
+        case SlotRepresentation::Int64:
+        case SlotRepresentation::OptionalInt64:
+        case SlotRepresentation::Float:
+        case SlotRepresentation::Uint8:
+        case SlotRepresentation::Int8:
+        case SlotRepresentation::Uint16:
+        case SlotRepresentation::Int16:
+        case SlotRepresentation::LiteralString:
+        case SlotRepresentation::LiteralString32:
+        case SlotRepresentation::DeferredClosure:
             return false;
         }
     }

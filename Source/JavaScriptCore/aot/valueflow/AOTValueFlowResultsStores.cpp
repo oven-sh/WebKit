@@ -313,7 +313,7 @@ void StoresByLayout::followCopiedProperties()
                     unite(stored.value, value);
                     stored.uniteNumbers(numbers);
                     stored.isStoredAfterCreation = true;
-                    stored.isNamedByOperation = true;
+                    stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
                 }
             }
             hasChanged = true;
@@ -597,7 +597,35 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
     case ValueFlowNameKind::CopiedFrom:
         stores.getsCopiedProperties = true;
         return;
-    default:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return;
     }
 }
@@ -788,7 +816,39 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
     case ValueFlowNameKind::GetterUnderUnknownKey:
     case ValueFlowNameKind::SetterUnderUnknownKey:
         break;
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return 0;
     }
     const ValueFlowStatement& statement = writer.statement;
@@ -836,6 +896,13 @@ auto StoresByLayout::describeStore(ValueSetMaker& maker, const Writer& writer, V
     };
 }
 
+static bool leavesOutComputedKey(const Program& program, const ValueFlowStatement& statement, ValueFlowName name)
+{
+    if (name.kind != ValueFlowNameKind::CopiedFrom || statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::CopyDataProperties)
+        return false;
+    return !program.at(statement.function).at(statement.site).excludedOperands().empty();
+}
+
 auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, const Writer& writer, const ValueFlowNodeKey& key, ValueSetID value) const -> WritesThroughSet
 {
     ValueFlowName name = key.name();
@@ -862,6 +929,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .isStoredByConstructor = isNamedByOperation && store.isIntoThisOfConstructor,
         .isWrittenByOperation = writer.statement.kind == ValueFlowStatementKind::Operation,
         .givesValueItself = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode != Opcode::Call,
+        .leavesOutComputedKey = leavesOutComputedKey(m_inputs.program, writer.statement, name),
         .accessorForms = store.accessorForms,
         .value = value,
         .numbers = numbers,
@@ -881,6 +949,7 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.isStoredByConstructor |= write.isStoredByConstructor;
         merged.isWrittenByOperation |= write.isWrittenByOperation;
         merged.givesValueItself |= write.givesValueItself;
+        merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
         merged.numbers.unite(write.numbers);
     };
@@ -958,6 +1027,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
     if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).members.span(), layout))
         return;
     note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
+    stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
     noteNumbers(stores, name, writes.createsData ? numbersInData(layout, name) : writes.numbers);
     if (writes.isStoredByConstructor && name.kind == ValueFlowNameKind::Property)
         stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.isStoredByConstructor = true;

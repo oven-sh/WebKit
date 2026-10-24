@@ -79,7 +79,7 @@ public:
 
     VirtualObjectID objectOf(ValueID) const;
     VirtualObjectID guardedObjectOf(ValueID) const;
-    bool hasPositionFromAnsweredTest(ValueID access, VirtualObjectID) const;
+    bool reliesOnAnswerThatCellDoesNotKeep(ValueID access, VirtualObjectID) const;
     VirtualObjectID destructuredObjectOf(ValueID) const;
 
     void requireCell(ValueID, const BuildCause&);
@@ -92,6 +92,7 @@ public:
     void resolveOperands(Terminator& detachedTerminator);
     ValueID tagOf(VirtualObjectID, BlockID target);
     ValueID valueOfField(VirtualObjectID, uint32_t field);
+    ValueID valueOfField(VirtualObjectID, uint32_t field, TypeID typeInVariants);
     ValueID emitTagTest(VirtualObjectID, uint32_t tagBits);
 
     void returnParts(const Terminator&);
@@ -140,6 +141,7 @@ private:
     Execution executeTest(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
+    void noteListsThatMayNotFit(ValueID test);
     void replaceTest(ValueID test, const TestEntry&);
     void executeReturn(const Terminator&);
     void buildBeforeBranch(const Terminator&);

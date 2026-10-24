@@ -64,7 +64,11 @@ private:
         case KnownValue::Kind::Boolean:
         case KnownValue::Kind::Integer:
             return value;
-        default:
+        case KnownValue::Kind::Unknown:
+        case KnownValue::Kind::Double:
+        case KnownValue::Kind::String:
+        case KnownValue::Kind::Object:
+        case KnownValue::Kind::Function:
             return { };
         }
     }

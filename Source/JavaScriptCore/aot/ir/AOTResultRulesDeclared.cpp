@@ -24,16 +24,7 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    if (level == TypeLevel::Expected || !declared.flags.contains(PositionFlags::IsExpected))
-        return declared.type;
-
-    const Type& expected = types.at(declared.type);
-    if (!expected.isJavaScriptValue())
-        return declared.type;
-    // A location with a dead zone holds `absent` whatever else it holds.
-    if (uint16_t absent = expected.primitives & Primitive::Absent)
-        return types.withPrimitives(TypeTable::anything, absent);
-    return TypeTable::anything;
+    return level == TypeLevel::Expected ? declared.type : program.provenTypeOf(declared);
 }
 
 // Where the slot has a type of its own, that is what is proven of the field, and the type of the field is what is expected of it.

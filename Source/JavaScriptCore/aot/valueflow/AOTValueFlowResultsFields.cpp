@@ -282,9 +282,19 @@ static bool holdsOnlyWhatIsWrittenUnder(const ValueFlowResultInputs& inputs, Val
     }
     case ValueFlowObjectKind::Prototype:
         return key != universe.builtinTables().heap().constructorKey();
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::Namespace:
+    case ValueFlowObjectKind::Closure:
+    case ValueFlowObjectKind::CoroutineResult:
+    case ValueFlowObjectKind::RestArray:
+    case ValueFlowObjectKind::FunctionPrototype:
+    case ValueFlowObjectKind::ConstructedObject:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 namespace {
@@ -598,7 +608,12 @@ static bool canAppendFieldsTo(const FieldResults& results, LayoutID id)
     case LayoutKind::Record:
     case LayoutKind::Instance:
         break;
-    default:
+    case LayoutKind::Container:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
         return false;
     }
     // A derived layout has the fields of the layout it was derived from, and that one takes the names.
@@ -1128,7 +1143,12 @@ static FieldCreation ownFieldCreationOf(const FieldResults& results, const BitVe
         if (!results.constructions.createsFieldsOnlyInListedOrders(id))
             return FieldCreation::Unknown;
         break;
-    default:
+    case LayoutKind::Container:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
         return FieldCreation::Unknown;
     }
     if (results.possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !results.application.layouts[id.index()].appendedFields.isEmpty())
@@ -1382,7 +1402,12 @@ static void computeFieldsStoredOnceByConstructors(const FieldResults& results)
             return false;
         case FunctionKind::Plain:
             return program.at(candidate.layout).constructor != candidate.function || !isOnlyConstructed(candidate.function);
-        default:
+        case FunctionKind::Arrow:
+        case FunctionKind::Method:
+        case FunctionKind::Getter:
+        case FunctionKind::Setter:
+        case FunctionKind::Module:
+        case FunctionKind::CommonJsModule:
             return true;
         }
     });
@@ -1838,7 +1863,36 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
         case ValueFlowNameKind::CopiedFrom:
             mayBeAnyName = true;
             break;
-        default:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::PrototypeLink:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             return;
         }
         if (namesLocation(writer, name))

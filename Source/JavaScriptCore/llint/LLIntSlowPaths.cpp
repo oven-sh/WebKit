@@ -1833,17 +1833,6 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
     const AOT::Interpreter::ObjectLiteralPlan* plan = AOT::Interpreter::ObjectLiteralPlan::of(profile);
     if (!plan)
         LLINT_RETURN(constructEmptyObject(vm, profile.structure()));
-    if (plan->recordBuilder) {
-        EncodedJSValue values[AOT::Interpreter::ObjectLiteralPlan::maxNumberOfValues];
-        const JSInstruction* store = pc;
-        for (unsigned index = 0; index < plan->numberOfValues; ++index, store += store->size())
-            values[index] = JSValue::encode(getOperand(callFrame, store->as<OpPutById>().m_value));
-        if (JSObject* record = AOT::Interpreter::ObjectLiteralPlans::tryBuildRecord(vm, *plan, values)) {
-            pc = store;
-            LLINT_RETURN(record);
-        }
-        plan = plan->planForOrdinaryObject;
-    }
     uint8_t* cell = plan->allocateCell(vm);
     for (unsigned index = 0; index < plan->numberOfValues; ++index, pc += pc->size())
         *reinterpret_cast<EncodedJSValue*>(cell + plan->valueOffsets[index]) = JSValue::encode(getOperand(callFrame, pc->as<OpPutById>().m_value));

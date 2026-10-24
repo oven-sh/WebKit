@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinPristine.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -170,9 +171,52 @@ static bool isBaseProven(const Layout& holder)
     return holder.flow.baseState != BaseState::Unknown;
 }
 
-static FunctionID findParentTakingThis(const Program& program, const Value& superCall)
+static ValueID restParameterOf(const Function& function)
 {
-    if (superCall.opcode != Opcode::SuperConstruct)
+    if (!function.has(FunctionFlags::HasRestParameter))
+        return { };
+    const Block& entry = function.at(entryBlock);
+    unsigned index = function.firstParameterIndex() + function.numberOfPositionalParameters();
+    return index < entry.parameters.size() ? entry.parameters[index] : ValueID();
+}
+
+// The parent's rest array is this one, so nothing else may name it and both constructors have to know the same of it.
+static bool canHandOverRest(const Function& function, const ValueSite& superCall, const Function& parent)
+{
+    ValueID rest = restParameterOf(function);
+    if (!rest || parent.numberOfPositionalParameters() || parent.parameters.isEmpty() || function.parameters.isEmpty())
+        return false;
+    const DeclaredType& given = function.parameters.last();
+    const DeclaredType& taken = parent.parameters.last();
+    if (given.type != taken.type || given.flags != taken.flags)
+        return false;
+
+    CFG cfg(function);
+    UseLists useLists(function, cfg);
+    std::optional<Use> use = useLists.singleUse(rest);
+    while (use && use->kind == Use::Kind::Operand && castsWithoutTest.contains(function.at(use->user).opcode))
+        use = useLists.singleUse(use->user);
+    return use && use->kind == Use::Kind::Operand && use->user == superCall.value && use->operandIndex == OperandIndex::SuperConstructList::list;
+}
+
+// A constructor that cannot count its arguments sees no more of a list than its parameters name, and undefined past the end of the list.
+static bool canPassList(const Program& program, const Function& function, const ValueSite& superCall, const Function& parent)
+{
+    if (parent.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return false;
+    // The arguments of this frame were passed once already. Any other list may be too long to pass, which the operation reports.
+    if (sameObjectThroughCasts(function, function.at(superCall.value).listOperand()) != restParameterOf(function))
+        return false;
+    if (parent.has(FunctionFlags::HasRestParameter))
+        return canHandOverRest(function, superCall, parent);
+    PristineRequirement requirement { BuiltinClasses::Array, { PristineAspects::Names, PristineAspects::Storage } };
+    return pristineProofOf(PristineQuery { program, function }, function.at(superCall.value).listOperand(), requirement, superCall.point()) == PristineProof::Proven;
+}
+
+static FunctionID findParentTakingThis(const Program& program, const Function& function, const ValueSite& site)
+{
+    const Value& superCall = function.at(site.value);
+    if (superCall.opcode != Opcode::SuperConstruct && superCall.opcode != Opcode::SuperConstructList)
         return { };
 
     const Layout& holder = program.at(superCall.layout());
@@ -190,6 +234,8 @@ static FunctionID findParentTakingThis(const Program& program, const Value& supe
         return { };
     if (!program.at(parent).captures.isEmpty() || !canConstructDirectly(program, parent) || !canTakeAllocatedThis(program, entered))
         return { };
+    if (superCall.opcode == Opcode::SuperConstructList && !canPassList(program, function, site, program.at(entered)))
+        return { };
     return entered;
 }
 
@@ -199,7 +245,7 @@ static bool canPassThisToSuper(const Program& program, const Function& function)
     if (calls.isEmpty() || !runsAtMostOneCall(function, calls.span()))
         return false;
     return std::ranges::all_of(calls, [&](const ValueSite& call) {
-        return !!findParentTakingThis(program, function.at(call.value));
+        return !!findParentTakingThis(program, function, call);
     });
 }
 
@@ -305,12 +351,27 @@ static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs
     if (inputs.program.at(parentVersion).has(FunctionFlags::TakesCallee))
         calleeValue = convertTo(builder, superCall.parentOperand(), DeclaredType { .type = TypeTable::function });
 
+    Vector<ValueID, 8> arguments;
+    ValueID restArray;
+    if (superCall.opcode != Opcode::SuperConstructList)
+        arguments.append(superCall.variadicOperands());
+    else if (inputs.program.at(parentVersion).has(FunctionFlags::HasRestParameter))
+        restArray = superCall.listOperand();
+    else {
+        for (uint32_t position = 0; position < inputs.program.at(parentVersion).numberOfPositionalParameters(); ++position) {
+            Value read = IRBuilder::make(Opcode::ElemGet, { superCall.listOperand(), builder.appendInteger(position) });
+            read.setKeyIsIntegral(true);
+            arguments.append(builder.append(WTF::move(read)));
+        }
+    }
+
     return appendDirectCall(builder, {
         .callee = parentVersion,
         .thisValue = thisParameter,
         .calleeValue = calleeValue,
         .newTarget = superCall.newTargetOperand(),
-        .arguments = superCall.variadicOperands(),
+        .arguments = arguments.span(),
+        .restArray = restArray,
         .accessSite = superCall.accessSite(),
         .isConstruction = true,
     });
@@ -353,7 +414,7 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
     const Program& program = inputs.program;
     Function& version = builder.function();
     const Value original = version.at(site.value);
-    FunctionID parent = findParentTakingThis(program, original);
+    FunctionID parent = findParentTakingThis(program, version, site);
     if (!parent)
         return;
 

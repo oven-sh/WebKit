@@ -134,6 +134,9 @@ public:
     static constexpr TypeID absent { 12u };
     static constexpr TypeID guard { 13u };
     static constexpr TypeID length { 14u };
+    // `anything` is every value of the language. A location with a dead zone, and a slot that may be empty, holds this.
+    static constexpr TypeID anythingOrAbsent { 15u };
+    static constexpr TypeID valuesOf(TypeID held) { return held == anythingOrAbsent ? anything : held; }
 
     static constexpr uint32_t provisionalBit = 1u << 31;
     static constexpr uint32_t storageShift = 20;
@@ -160,6 +163,9 @@ public:
     // Flow makes keys of texts that calls pass. No operation of the program spells such a key: that it is a key at all is something an analysis found.
     void didInternKeysThatOperationsSpell() { m_numberOfKeysThatOperationsSpell = m_propertyKeys.size(); }
     bool isSpelledByOperations(PropertyKeyID key) const { return key.index() < m_numberOfKeysThatOperationsSpell; }
+
+    // What a read of the position is proven to give. Nothing checks what enters a position that is only expected to hold its type, and a location with a dead zone holds `absent` whatever else it holds.
+    TypeID provenTypeOf(const DeclaredType&) const;
 
     std::optional<TypeID> find(const Type& canonical) const;
     std::optional<PropertyKeyID> find(const PropertyKey&) const;

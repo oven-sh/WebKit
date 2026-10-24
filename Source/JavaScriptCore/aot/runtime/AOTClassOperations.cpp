@@ -112,14 +112,14 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
     OPERATION_RETURN(scope, realm->objectPrototype());
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (Instance* instance, JSCell* object, JSCell* prototype, uint32_t allocation))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (Instance* instance, JSCell* object, JSCell* prototype, uint32_t allocation, uint32_t holdsNoField))
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferGCForAWhile deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
     Object* allocated = cellArgument<Object>(object, entry);
-    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry));
+    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
     OPERATION_RETURN(scope, result);

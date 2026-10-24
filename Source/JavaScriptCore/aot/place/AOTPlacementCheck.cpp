@@ -710,8 +710,7 @@ static void checkVariable(const PlacementCheckContext& context, VariableID id, b
     if (!hasValidInitialWord(variable, placed))
         fail(PlacementRule::VariableLacksInitialValue);
     bool isStaticField = !!variable.owner;
-    // Nothing checks what arrives at an expected position.
-    const Type& stored = program.at(variable.declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : variable.declared.type);
+    const Type& stored = program.at(program.provenTypeOf(variable.declared));
     if (!canHold(program, placed.representation, stored) || (isStaticField && !canLeaveSlot(placed.representation)))
         fail(PlacementRule::RepresentationCannotHoldType);
 }

@@ -199,6 +199,8 @@ public:
     ValueSetID placeholdersAlone() const { return m_placeholdersAlone; }
     // What the constructors of base classes allocate.
     ValueSetID objectsThatPickTheirLayout() const { return m_objectsThatPickTheirLayout; }
+    // constructedObjectOf() of every function: ordinary objects, which pass no test for a layout.
+    ValueSetID constructedObjects() const { return m_constructedObjects; }
     // instanceOf() of the classes and constructor functions without a heritage. Such an instance has the layout of its class unless an operand passes the class as new.target.
     ValueSetID instancesOfRootClasses() const { return m_instancesOfRootClasses; }
     // instanceOf() of every class.
@@ -273,6 +275,7 @@ private:
     ValueSetID m_objectsWithAnyLayout;
     ValueSetID m_objectsWithLayoutOfProgram;
     ValueSetID m_objectsThatPickTheirLayout;
+    ValueSetID m_constructedObjects;
     ValueSetID m_instancesOfRootClasses;
     ValueSetID m_instancesOfClasses;
     ValueSetID m_constructorsAnsweringOnlyWhatTheyConstruct;

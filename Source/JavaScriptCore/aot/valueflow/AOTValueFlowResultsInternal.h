@@ -381,7 +381,11 @@ inline bool hasObjectsThatCodeAlters(LayoutKind kind)
     case LayoutKind::Instance:
     case LayoutKind::Container:
         return true;
-    default:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

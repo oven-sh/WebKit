@@ -81,11 +81,11 @@ static Vector<FunctionID> collectBodiesLargestFirst(const Program& program, size
     return functions;
 }
 
-static VariableID addMark(ProgramEditor& editor, ModuleID module, TypeID markType)
+static VariableID addMark(ProgramEditor& editor, ModuleID module)
 {
     Variable variable;
     variable.module = module;
-    variable.declared.type = markType;
+    variable.declared.type = TypeTable::anythingOrAbsent;
     return editor.addVariable(WTF::move(variable));
 }
 
@@ -97,11 +97,10 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
     if (!context.build.validates())
         return marks;
 
-    TypeID markType = editor.types().intern(Type::anything().withPrimitives(Primitive::Absent));
     for (uint32_t index = 0; index < marks.size(); ++index) {
         FunctionID id(index);
         if (program.at(id).hasBody() && context.results.runsAtMostOnce(id))
-            marks[index] = addMark(editor, program.at(id).module, markType);
+            marks[index] = addMark(editor, program.at(id).module);
     }
     return marks;
 }
@@ -116,7 +115,6 @@ static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, 
     const Program& program = context.program;
     marks.storesByVariable.grow(program.variables.size());
     marks.evaluationsByLayout.grow(program.layouts.size());
-    TypeID markType = editor.types().intern(Type::anything().withPrimitives(Primitive::Absent));
     for (uint32_t index = 0; index < context.application.bodies.size(); ++index) {
         FunctionID id(index);
         for (const Value& value : program.at(id).values) {
@@ -126,7 +124,7 @@ static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, 
             else if (value.opcode == Opcode::NewClass && program.at(value.layout()).classFlow.evaluations == ExecutionCount::AtMostOnce)
                 mark = &marks.evaluationsByLayout[value.layout().index()];
             if (mark && !*mark)
-                *mark = addMark(editor, program.at(id).module, markType);
+                *mark = addMark(editor, program.at(id).module);
         }
     }
     return marks;

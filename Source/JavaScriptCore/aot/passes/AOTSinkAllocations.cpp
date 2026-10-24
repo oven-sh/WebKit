@@ -231,6 +231,13 @@ void AllocationSinking::addEdgeNeedingCode(Edge edge)
     m_edgesNeedingCode.appendIfNotContains(edge);
 }
 
+bool AllocationSinking::mayBeListOfNumbers(VirtualObjectID object) const
+{
+    return std::ranges::any_of(familyOf(object).descriptions(), [&](const VirtualObjectDescription& description) {
+        return classifyListOfNumbers(m_program, description) != ListOfNumbers::No;
+    });
+}
+
 void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID mergeBlock)
 {
     Candidate& candidate = at(object);
@@ -268,7 +275,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
             context.numberOfBlocksWhenSinkingGaveUp = context.analyses.cfg().reversePostOrder().size();
 
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-        if (sinking.duplicateLiveRange(builder))
+        if (sinking.testElementsOfLists(builder) || sinking.duplicateLiveRange(builder))
             return PassOutcome::Changed;
         if (!sinking.hasCandidates()) {
             sinking.recordLosses();

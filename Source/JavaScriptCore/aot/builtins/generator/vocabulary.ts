@@ -173,6 +173,11 @@ export type CallbackTimes = (typeof callbackTimes)[number];
 export const callbackResultUses = ["Escapes", "Ignored", "Tested", "Returned", "Stored"] as const;
 export type CallbackResultUse = (typeof callbackResultUses)[number];
 
+// What native code does, between the calls and behind the last, to objects that it comes upon only because the function put them
+// where it looks. The first is what a table that says nothing means.
+export const callbackAftermaths = ["WritesIntoWhatItFinds", "TouchesOnlyWhatRowNames"] as const;
+export type CallbackAftermath = (typeof callbackAftermaths)[number];
+
 export const rangeRules = [
   "None",
   "MinimumOfArguments",
@@ -304,6 +309,7 @@ export type KeySpec =
 
 export interface CallbackSpec {
   times: CallbackTimes;
+  afterwards: CallbackAftermath;
   constructs?: boolean;
   newTarget?: PlaceSpec;
   thisValue?: PlaceSpec;

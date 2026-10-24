@@ -111,7 +111,7 @@ struct TypingContext {
     }
     TypeID typeIDOf(ValueID id) const { return typeIDOf(function.at(id)); }
     const Type& typeOf(ValueID id) const { return types.at(typeIDOf(id)); }
-    // What a read of the position gives. Nothing checks what enters a position that is only expected to hold its type, so nothing is proven about what it holds.
+    // What a read of the position gives.
     TypeID typeIDOf(const DeclaredType&) const;
     const Type& typeOf(const DeclaredType& declared) const { return types.at(typeIDOf(declared)); }
     TypingContext atLevel(TypeLevel newLevel) const { return { program, function, types, newLevel, memo, knownPositions, seesValuesExpectedNever }; }

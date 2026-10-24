@@ -242,7 +242,9 @@ static void countAccessStatistics(std::span<const Wire::AccessCountRecord> count
 static AllocationKind allocationKindOf(LayoutKind kind)
 {
     switch (kind) {
-    default:
+    case LayoutKind::Record:
+    case LayoutKind::Instance:
+    case LayoutKind::ModuleNamespace:
         return AllocationKind::Object;
     case LayoutKind::Environment:
         return AllocationKind::Environment;

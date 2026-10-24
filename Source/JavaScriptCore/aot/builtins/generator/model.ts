@@ -3,6 +3,7 @@ import type {
   BoxedStubName,
   BuiltinKind,
   BuiltinMark,
+  CallbackAftermath,
   CallbackResultUse,
   CallbackTimes,
   CalleeKind,
@@ -242,6 +243,7 @@ export interface ModelTransfer {
 export interface ModelCallback {
   callee: ModelOperand;
   times: CallbackTimes;
+  afterwards: CallbackAftermath;
   constructs: boolean;
   newTarget: ModelPlace;
   thisValue: ModelPlace;

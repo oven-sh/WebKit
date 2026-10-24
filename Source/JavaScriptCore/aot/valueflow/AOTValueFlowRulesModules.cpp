@@ -95,7 +95,9 @@ static ValueFlowUnknownSource sourceOfWhatLoaderMakes(const Module& module)
             return ValueFlowUnknownSource::UndescribedNativeResult;
         }
         RELEASE_ASSERT_NOT_REACHED();
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
         return ValueFlowUnknownSource::DataFromOutside;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -164,7 +166,10 @@ static bool hasExportTable(ModuleKind kind)
     case ModuleKind::SourceText:
     case ModuleKind::Data:
         return true;
-    default:
+    case ModuleKind::CommonJs:
+    case ModuleKind::RuntimeSource:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -300,7 +305,9 @@ static ValueFlowSources moduleExportsValueOf(ValueFlowRuleContext& context, Modu
         if (ModuleID captured = commonJsModuleCapturedBy(program, module))
             return moduleExportsValueOf(context, captured);
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
-    default:
+    case ModuleKind::Data:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -337,7 +344,10 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         return runtimeNamespaceOf(context, module.runtimeModule);
     case ModuleKind::External:
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
         break;
     }
 
@@ -369,7 +379,10 @@ ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, ModuleID id)
         return { };
     case ModuleKind::External:
         return unknownSources(context, module.externalKind == ExternalKind::UncompiledCode ? ValueFlowUnknownSource::UnseenCode : ValueFlowUnknownSource::ThrownByRunTime);
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
         break;
     }
 

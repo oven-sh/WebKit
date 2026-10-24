@@ -82,7 +82,10 @@ static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResult
 static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
     switch (kind) {
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:

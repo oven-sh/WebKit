@@ -103,9 +103,7 @@ struct LandedCall {
 struct StubEnvironment {
     static StubEnvironment& of(Instance* instance) { return *reinterpret_cast<StubEnvironment*>(reinterpret_cast<uint8_t*>(instance) - OBJECT_OFFSETOF(StubEnvironment, instance)); }
 
-#if defined(BUN_HARDENED)
-    std::array<uint8_t, -InstanceLayout::offsetOfBoxedCalls - sizeof(InstancePrefix)> boxedCallsAndUnusedBelowPrefix;
-#endif
+    std::array<uint8_t, -InstanceLayout::offsetOfKeyedValuePlaces - sizeof(InstancePrefix)> tablesAndUnusedBelowPrefix;
     InstancePrefix prefix;
     Instance instance;
     std::array<uint8_t, InstanceLayout::offsetOfStringCells - sizeof(Instance)> unusedBelowStringCells;
@@ -168,6 +166,7 @@ public:
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
     // Each run begins as if no pair had missed before, unless a test is about the count.
     void setCountsMissesAcrossRuns(bool counts) { m_countsMissesAcrossRuns = counts; }
+    void setKeepsKeyedValuePlacesAcrossRuns(bool keeps) { m_keepsKeyedValuePlacesAcrossRuns = keeps; }
     // The processor stops behind each instruction while a run lasts. Only where AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS.
     void setCountsInstructions(bool counts) { m_countsInstructions = counts; }
 
@@ -194,6 +193,7 @@ private:
     MacroAssemblerCodeRef<JSEntryPtrTag> m_landings;
     std::unique_ptr<StubEnvironment> m_environment;
     bool m_countsMissesAcrossRuns { false };
+    bool m_keepsKeyedValuePlacesAcrossRuns { false };
     bool m_countsInstructions { false };
 };
 
@@ -455,6 +455,8 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
     environment.numbers = markers;
     if (!m_countsMissesAcrossRuns)
         environment.missesOfPairs.fill(0);
+    if (!m_keepsKeyedValuePlacesAcrossRuns)
+        zeroSpan(environment.instance.keyedValuePlaces());
     std::ranges::copy(operands, environment.operands.begin());
 
     MacroAssemblerCodeRef<JSEntryPtrTag> caller = compileStubCaller(signature, immediate.has_value());

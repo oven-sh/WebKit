@@ -83,6 +83,7 @@ private:
     TypeID castTypeFor(Narrowing&, const Type& provenType);
     bool isReachedByCastIn(BlockID target, const Use&) const;
     void replace(const Use&, ValueID replacement);
+    void compareWithReplacedValue(const Use&, ValueID replacement);
 
     FunctionPassContext& m_context;
     Function& m_function;
@@ -93,6 +94,7 @@ private:
     Vector<PlannedCast> m_plannedCasts;
     Vector<Narrowing, 4> m_narrowings;
     BitVector m_isInUse;
+    bool m_hasComparisons { false };
 };
 
 ValueID GuardWrappers::wrap(ValueID guard, ProgramPoint pointAfter)
@@ -250,6 +252,8 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
         ValueID passed = representativeOf(requirementAt(narrowed.requirement).condition);
         ValueID operand = m_function.at(site.use).operand(narrowed.operandIndex);
         ValueID replacement = narrowToOperand(passed, operand, useIndex);
+        if (m_context.build.validates() && replacement != operand)
+            m_builder.insertBefore(m_usePoints[useIndex], IRBuilder::make(Opcode::ValidateSameValue, { replacement, operand }));
         m_function.edit(site.use, ValueEdit::Definition).setOperand(narrowed.operandIndex, replacement);
     }
 
@@ -409,8 +413,24 @@ bool DominatedUseReplacer::isReachedByCastIn(BlockID target, const Use& use) con
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// In a validating build: what takes the place of a value is that value.
+void DominatedUseReplacer::compareWithReplacedValue(const Use& use, ValueID replacement)
+{
+    if (!m_context.build.validates() || use.kind == Use::Kind::HandlerArgument || use.kind == Use::Kind::BlockSubject)
+        return;
+    ValueID replaced = usedValueOf(m_function, use);
+    if (!m_context.program.at(m_function.at(replaced).type).isJavaScriptValue())
+        return;
+    ProgramPoint point = pointBeforeTerminatorOf(m_function, use.block);
+    if (use.kind == Use::Kind::Operand)
+        point.index = m_context.analyses.useLists().locationOf(use.user).index;
+    m_builder.insertBefore(point, IRBuilder::make(Opcode::ValidateSameValue, { replacement, replaced }));
+    m_hasComparisons = true;
+}
+
 void DominatedUseReplacer::replace(const Use& use, ValueID replacement)
 {
+    compareWithReplacedValue(use, replacement);
     replaceUse(m_function, use, replacement);
     if (use.kind == Use::Kind::Operand)
         m_changedValues.append(use.user);
@@ -433,6 +453,8 @@ void DominatedUseReplacer::replaceUsesDominatedBy(Edge edge, ValueID subject, Va
         if (narrowable.alias == proven || narrowable.getsCast)
             continue;
         const Use& use = narrowable.use;
+        if (use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == Opcode::ValidateSameValue)
+            continue;
         ValueID current = usedValueOf(m_function, use);
         if (current == proven || !analyses.dominates(edge, use.block))
             continue;
@@ -479,7 +501,7 @@ void DominatedUseReplacer::insertCasts()
         }
         replace(m_uses[planned.use].use, castsOfProvenValue[found].second);
     }
-    if (!m_plannedCasts.isEmpty())
+    if (!m_plannedCasts.isEmpty() || m_hasComparisons)
         m_builder.applyInsertions();
 }
 

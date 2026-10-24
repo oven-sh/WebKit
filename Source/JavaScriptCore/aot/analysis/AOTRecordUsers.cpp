@@ -339,7 +339,9 @@ Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const au
 Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const Value& value) const
 {
     switch (effectRuleOf(value.opcode)) {
-    default:
+    case EffectRule::Declared:
+    case EffectRule::Operator:
+    case EffectRule::Access:
         return markOfOperandsWhoseCodeRuns(function, value, [&](uint32_t index) {
             return !protocolsOf(value.opcode, index).isEmpty();
         });

@@ -2940,6 +2940,19 @@ bool Heap::currentThreadIsDoingGCWork()
     return Thread::mayBeGCThread() || mutatorState() != MutatorState::Running;
 }
 
+void Heap::didChangeVisitedExtraMemory(size_t reported, size_t current)
+{
+    size_t* counter = &m_extraMemorySize;
+    for (;;) {
+        size_t oldSize = *counter;
+        CheckedSize checkedNewSize = oldSize - std::min(oldSize, reported);
+        checkedNewSize += current;
+        size_t newSize = checkedNewSize.hasOverflowed() ? std::numeric_limits<size_t>::max() : checkedNewSize.value();
+        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
+            return;
+    }
+}
+
 void Heap::reportExtraMemoryVisited(size_t size)
 {
     size_t* counter = &m_extraMemorySize;

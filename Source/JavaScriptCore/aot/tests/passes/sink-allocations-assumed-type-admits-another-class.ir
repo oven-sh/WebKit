@@ -8,8 +8,8 @@ module m0 path="main.js" displayPath="main.js"
 # A default value of a parameter that also takes an iterator, as inlining leaves it: the test for an array is answered while the literal is virtual.
 function f0 name="builtOnOneWay" parameters=[{type=fractional}, {type=boolean}] results=[{type=anything}] {
   b0(v0: fractional, v1: boolean):
-    v2 = NewArray v0, v0 contents=fractional
-    v3 = AssumeType v2 castType=Array<fractional, proven, pristine[Storage, Names, Dense]>|ArrayIterator<pristine[Storage, Names]>
+    v2 = NewArray v0 contents=fractional holes=[1]
+    v3 = AssumeType v2 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
     v4 = TypeTest v3 testedType=Array<fractional>
     Branch v4 -> taken b1(| 0), notTaken b5()
   b1(v5):
@@ -29,14 +29,14 @@ function f0 name="builtOnOneWay" parameters=[{type=fractional}, {type=boolean}] 
     Return
 }
 # CHECK-LABEL: function f0 name="builtOnOneWay"
-# CHECK: [[cell0]]: Array<fractional> = NewArray v0, v0 contents=fractional
-# CHECK: = HasArrayStorage [[cell0]] arrayStorage=Double
+# CHECK: [[cell0]]: Array<fractional> = NewArray v0 contents=fractional holes=[1]
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double
 
 # The cell goes around a loop in a parameter of its own.
 function f1 name="carriedIntoALoop" parameters=[{type=fractional}, {type=boolean}, {type=i32}] results=[{type=anything}] {
   b0(v0: fractional, v1: boolean, v2: i32):
-    v3 = NewArray v0, v0 contents=fractional
-    v4 = AssumeType v3 castType=Array<fractional, proven, pristine[Storage, Names, Dense]>|ArrayIterator<pristine[Storage, Names]>
+    v3 = NewArray v0 contents=fractional holes=[1]
+    v4 = AssumeType v3 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
     v5 = TypeTest v4 testedType=Array<fractional>
     Branch v5 -> taken b1(| 0), notTaken b7()
   b1(v6):
@@ -63,5 +63,5 @@ function f1 name="carriedIntoALoop" parameters=[{type=fractional}, {type=boolean
     Return
 }
 # CHECK-LABEL: function f1 name="carriedIntoALoop"
-# CHECK: [[cell1]]: Array<fractional> = NewArray v0, v0 contents=fractional
-# CHECK: = HasArrayStorage [[cell1]] arrayStorage=Double
+# CHECK: [[cell1]]: Array<fractional> = NewArray v0 contents=fractional holes=[1]
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double

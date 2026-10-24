@@ -422,6 +422,14 @@ std::optional<Type> ValueFlowPositions::typeWhereNothingPasses(ValueSetID set, c
     return withinLimits(typeOf(set));
 }
 
+bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& type)
+{
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    if (ValueSets::isComplement(set) || !type.isJavaScriptValue() || !m_inputs.sets().meet(set, universe.constructedObjects()))
+        return false;
+    return !m_inputs.sets().isSubset(maker().intersect(set, universe.constructedObjects()), universe.maskOf(maker(), m_inputs.program, type));
+}
+
 bool ValueFlowPositions::holdsObjectThatMayLieOutside(ValueSetID set, const Type& type)
 {
     if (type.anyObject)
@@ -445,7 +453,9 @@ void ValueFlowPositions::addObjectWithLayout(Type& type, Vector<LayoutID, 8>& la
 {
     if (const ValueFlowSite* site = m_inputs.universe().siteOf(member)) {
         switch (site->origin) {
-        default:
+        case ValueFlowSiteOrigin::Operation:
+        case ValueFlowSiteOrigin::DataNode:
+        case ValueFlowSiteOrigin::TypedResult:
             break;
         case ValueFlowSiteOrigin::BuiltinResult:
             // What the constructor of a built-in class makes for a class of the program is an object of the built-in class, without slots.

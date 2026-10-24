@@ -484,7 +484,9 @@ static void stampAccess(AccessesOfFunction& accesses, const ValueFlowStatement& 
     }
     if (std::optional<LayoutSet> receivers = receiversSeenToArrive(accesses, access, family, held))
         accesses.update.accesses.append(FlowAccessStamp { access.site, accesses.types.intern(WTF::move(*receivers)) });
-    accesses.sites.accessSiteLosses[accesses.accessSites.siteOfValue(accesses.id, access.site).index()] = lossOfAccess(accesses, access, family, receiver, held);
+    FlowSiteLoss loss = lossOfAccess(accesses, access, family, receiver, held);
+    loss.seesConstructedObject = !ValueSets::isComplement(held) && accesses.inputs.sets().meet(held, accesses.inputs.universe().constructedObjects());
+    accesses.sites.accessSiteLosses[accesses.accessSites.siteOfValue(accesses.id, access.site).index()] = loss;
 }
 
 void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)

@@ -1616,11 +1616,11 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
     }
 }
 
-// One value carries a field for every variant of a join.
+// One value carries a field for every variant of a join. What is read from a literal array is cast to what its variants hold.
 static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family)
 {
     std::span<const VirtualObjectDescription> descriptions = family.descriptions();
-    if (descriptions.size() < 2)
+    if (descriptions.size() < 2 || std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Array; }))
         return false;
 
     for (uint32_t field = 0; field < family.numberOfFields(); ++field) {

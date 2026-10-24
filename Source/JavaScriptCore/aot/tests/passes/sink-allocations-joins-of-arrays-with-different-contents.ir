@@ -1,5 +1,4 @@
 # Arrays whose contents differ meet at a block parameter: the join carries a tag, and one value carries the element under the union of the two types
-# TODO: nobody: a family that gives one field several types gets no join, so both arrays are allocated
 # FORM: Prepared
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsMergedAtJoins = 1
@@ -27,4 +26,4 @@ function f0 name="joinWithDifferentContents" parameters=[{type=number}, {type=st
 # CHECK: Jump -> next b3({{*}}, v1, 
 # CHECK: b3({{*}}: i32, [[element5]]: number|string, 
 # CHECK-NOT: ElemGet
-# CHECK: v7: anything = Upcast [[element5]] castType=anything
+# CHECK: v7: anything{{*}}= Upcast [[element5]] castType=anything

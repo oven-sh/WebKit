@@ -505,10 +505,23 @@ void fifthKeyOfSetEvicts()
     AOT_TEST_CHECK(!limitHitsOf(vm, LimitID::HashedTableEntries));
 }
 
-std::unique_ptr<Instance> createZeroedInstance()
+// With the tables that lie below an instance: the caches clear them.
+struct ZeroedInstanceDeleter {
+    void operator()(Instance* instance) const
+    {
+        instance->~Instance();
+        fastFree(reinterpret_cast<uint8_t*>(instance) + InstanceLayout::offsetOfKeyedValuePlaces);
+    }
+};
+using ZeroedInstance = std::unique_ptr<Instance, ZeroedInstanceDeleter>;
+
+ZeroedInstance createZeroedInstance()
 {
-    auto instance = makeUniqueWithoutFastMallocCheck<Instance>();
-    zeroBytes(*instance);
+    static_assert(!(-InstanceLayout::offsetOfKeyedValuePlaces % alignof(Instance)));
+    size_t size = -InstanceLayout::offsetOfKeyedValuePlaces + sizeof(Instance);
+    auto* memory = static_cast<uint8_t*>(fastAlignedMalloc(alignof(Instance), size));
+    ZeroedInstance instance { new (NotNull, memory - InstanceLayout::offsetOfKeyedValuePlaces) Instance };
+    zeroSpan(unsafeMakeSpan(memory, size));
     return instance;
 }
 
@@ -530,7 +543,7 @@ void growthKeepsEntriesAndPublishesWords()
     constexpr unsigned maxNumberOfFills = 16 * initialNumberOfEntries;
     TableFixture fixture;
     auto& table = fixture.hashedTable();
-    std::unique_ptr<Instance> instance = createZeroedInstance();
+    ZeroedInstance instance = createZeroedInstance();
     fixture.vm().aotState().instances.append(instance.get());
     fixture.caches().didCreateInstance(*instance);
     AOT_TEST_CHECK(table.numberOfEntries() == initialNumberOfEntries && hasPublishedWords(fixture, *instance));
@@ -726,7 +739,7 @@ void secondInstanceClearsOnce()
     Structure* structure = fixture.createStructure();
     StructureID id = structure->id();
     Slot slot = ownValueSlot(structure, 0);
-    std::array<std::unique_ptr<Instance>, 3> storage { createZeroedInstance(), createZeroedInstance(), createZeroedInstance() };
+    std::array<ZeroedInstance, 3> storage { createZeroedInstance(), createZeroedInstance(), createZeroedInstance() };
     auto fill = [&] {
         caches.set(structure, fixture.name(1), SlotAccess::Read, slot);
         caches.set(structure, fixture.nameWithoutNumber(2), SlotAccess::Read, slot);

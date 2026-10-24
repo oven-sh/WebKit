@@ -901,7 +901,24 @@ static MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentat
         return Kind::OptionalInt64;
     case SlotRepresentation::OptionalDouble:
         return Kind::OptionalDouble;
-    default:
+    case SlotRepresentation::JSValue:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+    case SlotRepresentation::Int32:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::OptionalBoolean:
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::LiteralString:
+    case SlotRepresentation::LiteralString32:
+    case SlotRepresentation::DeferredClosure:
         break;
     }
     const SlotTraits traits = traitsOf(from);

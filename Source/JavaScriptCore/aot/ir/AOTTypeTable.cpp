@@ -134,8 +134,17 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     internWellKnownType(absent, Type::fromPrimitives(Primitive::Absent));
     internWellKnownType(guard, Type::forOpaque(OpaqueKind::Guard));
     internWellKnownType(length, Type::integer(Range::length()));
-    // What a boxed location with a dead zone holds. slotTypeOf() finds it here, where it has no arena to intern in.
-    intern(Type::anything().withPrimitives(Primitive::Absent));
+    internWellKnownType(anythingOrAbsent, Type::anything().withPrimitives(Primitive::Absent));
+}
+
+TypeID TypeTable::provenTypeOf(const DeclaredType& declared) const
+{
+    if (!declared.flags.contains(PositionFlags::IsExpected))
+        return declared.type;
+    const Type& expected = at(declared.type);
+    if (!expected.isJavaScriptValue())
+        return declared.type;
+    return expected.primitives & Primitive::Absent ? anythingOrAbsent : anything;
 }
 
 std::optional<TypeID> TypeTable::find(const Type& canonical) const

@@ -269,6 +269,30 @@ static ArrayLiteralParts partsOfLiteral(const VirtualFamily& family, const Virtu
     return parts;
 }
 
+Type typeOfNumbersIn(ArrayStorage kind)
+{
+    return typeOfElementRead(kind).withoutPrimitives(Primitive::Undefined);
+}
+
+ListOfNumbers classifyListOfNumbers(const Program& program, const VirtualObjectDescription& description)
+{
+    if (description.kind != VirtualObjectKind::Array || !description.canBeBuilt)
+        return ListOfNumbers::No;
+    ArrayStorage expected = arrayStorageAtAllocation(program, program.at(description.type));
+    if (expected == ArrayStorage::Contiguous)
+        return ListOfNumbers::No;
+    return program.at(description.elementType).isSubsetOf(typeOfNumbersIn(expected), program) ? ListOfNumbers::FitsByType : ListOfNumbers::MayNotFit;
+}
+
+// Nobody sees the storage of an array that is not there, and what is read from it is what was stored, so the test goes the way it was expected to.
+// The answer says nothing of the array once it is built: a NaN among the numbers is found when the literal runs. ObjectInterpreter::reliesOnAnswerThatCellDoesNotKeep() sees to that.
+static KnownBoolean evaluateStorageTestOfNumbers(const Program& program, const VirtualObjectDescription& description, ArrayLiteralParts parts, const Value& test)
+{
+    if (!parts.hasElements || parts.hasHoles || parts.hasCapacity || classifyListOfNumbers(program, description) != ListOfNumbers::FitsByType)
+        return KnownBoolean::Unknown;
+    return knownBoolean(test.arrayStorage() == arrayStorageAtAllocation(program, program.at(description.type)));
+}
+
 static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
     const VirtualObjectDescription& description = context.family.descriptionOf(shape);
@@ -284,7 +308,7 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
     const Program& program = context.objects.program;
     const Type& array = program.at(description.type);
     if (arrayStorageAtAllocation(program, array) != ArrayStorage::Contiguous)
-        return KnownBoolean::Unknown;
+        return evaluateStorageTestOfNumbers(program, description, partsOfLiteral(context.family, shape), test);
     ArrayStorage kind = arrayStorageOfLiteral(program, array, partsOfLiteral(context.family, shape));
     return kind == ArrayStorage::Other ? KnownBoolean::Unknown : knownBoolean(kind == test.arrayStorage());
 }

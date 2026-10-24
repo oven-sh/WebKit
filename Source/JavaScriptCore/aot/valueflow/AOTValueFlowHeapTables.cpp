@@ -386,7 +386,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     }
                 } else {
                     switch (memberEntry.kind) {
-                    default:
+                    case BuiltinKind::Namespace:
+                    case BuiltinKind::Constructor:
+                    case BuiltinKind::Function:
+                    case BuiltinKind::Prototype:
+                    case BuiltinKind::Method:
                         values.append(object);
                         break;
                     case BuiltinKind::Accessor:
@@ -729,7 +733,15 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                         argumentsObjects.append(object);
                     return;
                 }
-                default:
+                case ValueFlowObjectKind::Primitive:
+                case ValueFlowObjectKind::UnknownObject:
+                case ValueFlowObjectKind::Builtin:
+                case ValueFlowObjectKind::ModuleBuiltin:
+                case ValueFlowObjectKind::Namespace:
+                case ValueFlowObjectKind::Closure:
+                case ValueFlowObjectKind::CoroutineResult:
+                case ValueFlowObjectKind::ResultOfBuiltin:
+                case ValueFlowObjectKind::Key:
                     return;
                 }
             });

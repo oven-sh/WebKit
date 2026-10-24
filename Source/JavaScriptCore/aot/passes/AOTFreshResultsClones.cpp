@@ -175,7 +175,7 @@ static CommittedVersions commitVersions(ProgramEditor& editor, const Vector<Func
         for (size_t index = 0; index < versions[task].size(); ++index) {
             auto& version = versions[task][index];
             auto& results = version.function.results;
-            TypeID singleResultType = results.size() == 1 ? provenResultTypeOf(results[0]) : TypeID();
+            TypeID singleResultType = results.size() == 1 ? editor.program().provenTypeOf(results[0]) : TypeID();
             FunctionID id = original;
             if (!index)
                 editor.replaceFunction(original, WTF::move(version.function));

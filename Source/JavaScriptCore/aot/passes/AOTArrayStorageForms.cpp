@@ -37,7 +37,12 @@ ArrayStorage arrayStorageHolding(const Type& elements)
 ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
 {
     const Type& elements = program.at(array.contentsAt(program.builtins(), ContentsSlot::Element));
-    return elements.isAnything() ? ArrayStorage::Other : arrayStorageHolding(elements);
+    if (elements.isAnything())
+        return ArrayStorage::Other;
+    // A declared type lists undefined and null whether or not anybody stores them. Flow lists what it saw stored.
+    if (array.contentsAreProven && elements.primitives & Primitive::UndefinedOrNull)
+        return ArrayStorage::Contiguous;
+    return arrayStorageHolding(elements);
 }
 
 ArrayStorage arrayStorageDeclaredBy(const Program& program, const Type& array)

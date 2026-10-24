@@ -403,11 +403,6 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
     return variable;
 }
 
-static TypeID provenTypeOf(const DeclaredType& declared)
-{
-    return declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : declared.type;
-}
-
 // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
 static DeclaredType declaredTypeOf(const Value& value)
 {
@@ -555,7 +550,7 @@ bool PromotionPlanner::isUnchangedValue(FunctionID closureFunction, uint32_t cap
 bool PromotionPlanner::fitsCapture(TypeID type, FunctionID closureFunction, uint32_t capture) const
 {
     auto fits = [&](FunctionID function) {
-        return m_program.at(type).isSubsetOf(m_program.at(provenTypeOf(m_program.at(function).captures[capture])), m_program);
+        return m_program.at(type).isSubsetOf(m_program.at(m_program.provenTypeOf(m_program.at(function).captures[capture])), m_program);
     };
     if (!fits(closureFunction))
         return false;
@@ -758,7 +753,7 @@ PromotedCaptureSource PromotionPlanner::findCommonSource(FunctionID closureFunct
 
 TypeID PromotionPlanner::typeOf(const PromotedCaptureSource& source) const
 {
-    return source.variable ? provenTypeOf(variableAt(source.variable).declared) : m_program.at(source.function).at(source.value).type;
+    return source.variable ? m_program.provenTypeOf(variableAt(source.variable).declared) : m_program.at(source.function).at(source.value).type;
 }
 
 VariableID PromotionPlanner::ensureVariable(const PromotedCaptureSource& source, const DeclaredType& capture)

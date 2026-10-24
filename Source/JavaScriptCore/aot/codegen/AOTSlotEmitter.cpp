@@ -131,7 +131,23 @@ Operand SlotEmitter::loadWithoutMarkers(TypedPointer pointer, SlotRepresentation
     case SlotRepresentation::OptionalBoolean:
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1) && !(JSValue::ValueFalse & 1));
         return Condition(m_out.bitAnd(m_out.load8ZeroExt32(pointer), m_out.constInt32(1)));
-    default:
+    case SlotRepresentation::JSValue:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::OptionalCell32:
+    case SlotRepresentation::Int32:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::LiteralString:
+    case SlotRepresentation::LiteralString32:
+    case SlotRepresentation::DeferredClosure:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -466,7 +482,20 @@ Condition SlotEmitter::isNoMarker(Operand loaded, SlotRepresentation slot)
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
         return Condition(m_out.testNonZero64(loaded.value, m_out.constInt64(~bitsOfBoxedMarkers)));
-    default:
+    case SlotRepresentation::Cell:
+    case SlotRepresentation::Cell32:
+    case SlotRepresentation::Int32:
+    case SlotRepresentation::Uint32:
+    case SlotRepresentation::Int64:
+    case SlotRepresentation::OptionalInt32:
+    case SlotRepresentation::Double:
+    case SlotRepresentation::Float:
+    case SlotRepresentation::Boolean:
+    case SlotRepresentation::Uint8:
+    case SlotRepresentation::Int8:
+    case SlotRepresentation::Uint16:
+    case SlotRepresentation::Int16:
+    case SlotRepresentation::DeferredClosure:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

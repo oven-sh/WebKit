@@ -24,6 +24,7 @@ import {
 } from "./model.ts";
 import {
   builtinKinds,
+  callbackAftermaths,
   callbackResultUses,
   callbackTimes,
   calleeKinds,
@@ -79,6 +80,7 @@ function collectWordLists(schema: Schema): WordList[] {
     dense("BuiltinFreshness", freshnesses),
     dense("BuiltinCallbackTimes", callbackTimes),
     dense("BuiltinCallbackResultUse", callbackResultUses),
+    dense("BuiltinCallbackAftermath", callbackAftermaths),
     dense("BuiltinIntegrityLevel", integrityLevels),
     dense("BuiltinRangeRule", rangeRules),
     dense("BuiltinCallee", calleeKinds),

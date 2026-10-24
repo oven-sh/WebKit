@@ -169,7 +169,7 @@ public:
         return prototype.isObject() ? asObject(prototype) : nullptr;
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
-    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype);
+    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false);
 
 private:
     using ByIndex = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -200,7 +200,7 @@ private:
 
     std::array<PlaceOfPrototypeProperty, numberOfPlacesOfPrototypeProperties> m_placesOfPrototypeProperties { };
     std::array<PrototypeOfClassObject, numberOfPrototypesOfClassObjects> m_prototypesOfClassObjects { };
-    // What instanceWithPrototype() last answered where the prototype object of a class below the allocated one selected that class: `super(..)` out of one subclass asks the same every time.
+    // What instanceWithPrototype() last answered where the prototype object of another class selected that class: `super(..)` out of one subclass asks the same every time.
     struct InstanceOfClassBelow {
         JSObject* prototype;
         const LayoutData* allocatedLayout;

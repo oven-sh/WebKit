@@ -456,6 +456,80 @@ static void testInheritedFields()
     AOT_TEST_CHECK(representationsRead > 4);
 }
 
+#if CPU(X86_64)
+// What the hashed table has answered once for the cell of a key and a Structure is answered again without it: an own value, and that nothing is found. The second holds until an object of some chain changes.
+static void testPlacesOfKeyedValues()
+{
+    PropertyReads reads;
+    reads.runner.setKeepsKeyedValuePlacesAcrossRuns(true);
+    Instance& instance = reads.runner.instance();
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = std::bit_cast<uintptr_t>(reads.uid());
+    FakeObject<sizeof(Symbol)> otherKey;
+    otherKey.setHeader(0, SymbolType);
+    otherKey.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = std::bit_cast<uintptr_t>(reads.uid());
+    constexpr PropertyOffset inlineOffset = 1;
+    FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
+    receiver.setHeader(PropertyReads::structureID, FinalObjectType);
+    receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(41));
+    std::array<uint64_t, 4> storage { bitsOf(jsNumber(1)), bitsOf(jsNumber(2)), bitsOf(jsNumber(3)), bitsOf(jsNumber(4)) };
+    receiver.at<uint64_t>(JSObject::butterflyOffset()) = std::bit_cast<uintptr_t>(storage.data() + storage.size());
+    auto numberOfPlaces = [&] {
+        return std::ranges::count_if(instance.keyedValuePlaces(), [](const KeyedValuePlace& place) { return !!place.key; });
+    };
+    auto read = [&](auto& keyCell) {
+        return reads.runner.run(getByValCached(), { receiver.address(), keyCell.address() });
+    };
+    auto forget = [&] {
+        zeroSpan(instance.keyedValuePlaces());
+    };
+
+    for (PropertyOffset offset : { inlineOffset, firstOutOfLineOffset, firstOutOfLineOffset + 1 }) {
+        forget();
+        uint64_t expected = isInlineOffset(offset) ? bitsOf(jsNumber(41)) : storage[storage.size() + Slot::wordIndexFor(offset)];
+        reads.file(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, offset));
+        StubRun first = read(key);
+        AOT_TEST_CHECK(!first.calledOperation && first.result == expected && numberOfPlaces() == 1);
+        reads.clear();
+        StubRun second = read(key);
+        AOT_TEST_CHECK(!second.calledOperation && second.result == expected && numberOfPlaces() == 1);
+        for (PresenceQuestion question : { PresenceQuestion::In, PresenceQuestion::HasOwn }) {
+            StubRun asked = reads.runner.run(inByValCached(question), { receiver.address(), key.address() });
+            AOT_TEST_CHECK(!asked.calledOperation && asked.result == 1);
+        }
+        // Another cell with the same name has no place, and an object of another Structure finds none.
+        AOT_TEST_CHECK(read(otherKey).calledOperation);
+        receiver.setHeader(PropertyReads::structureIDOfHolder, FinalObjectType);
+        AOT_TEST_CHECK(read(key).calledOperation);
+        receiver.setHeader(PropertyReads::structureID, FinalObjectType);
+    }
+
+    // A value of an object above gets no place.
+    forget();
+    FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> holder;
+    holder.setHeader(PropertyReads::structureIDOfHolder, FinalObjectType);
+    holder.at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(43));
+    reads.file(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::dependsOnChain, std::bit_cast<JSCell*>(holder.address()), inlineOffset));
+    StubRun inherited = read(key);
+    AOT_TEST_CHECK(!inherited.calledOperation && inherited.result == bitsOf(jsNumber(43)) && !numberOfPlaces());
+
+    reads.file(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
+    StubRun absent = read(key);
+    AOT_TEST_CHECK(!absent.calledOperation && absent.result == bitsOf(jsUndefined()) && numberOfPlaces() == 1);
+    reads.clear();
+    StubRun stillAbsent = read(key);
+    AOT_TEST_CHECK(!stillAbsent.calledOperation && stillAbsent.result == bitsOf(jsUndefined()));
+    for (PresenceQuestion question : { PresenceQuestion::In, PresenceQuestion::HasOwn }) {
+        StubRun asked = reads.runner.run(inByValCached(question), { receiver.address(), key.address() });
+        AOT_TEST_CHECK(!asked.calledOperation && !asked.result);
+    }
+    ++instance.propertyCaches.absenceFilterGeneration;
+    AOT_TEST_CHECK(read(key).calledOperation);
+}
+#endif
+
 // What the tables do not say of the holder is asked of the run time with the holder as the receiver.
 static void testInheritedFieldsOfHolderThatIsNotFiled()
 {
@@ -1353,6 +1427,9 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/fields-or-inherited-getters"_s, ImageTests::whenExecutable<testFieldsOrInheritedGetters> },
         { "stubs/get-by-id/inherited-fields"_s, ImageTests::whenExecutable<testInheritedFields> },
         { "stubs/get-by-id/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<testInheritedFieldsOfHolderThatIsNotFiled> },
+#if CPU(X86_64)
+        { "stubs/get-by-val/places-of-keyed-values"_s, ImageTests::whenExecutable<testPlacesOfKeyedValues> },
+#endif
         { "stubs/get-by-id/fields-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsOrInheritedFields> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedFields> },
         { "stubs/get-by-id/names-made-at-run-time"_s, ImageTests::whenExecutable<testNamesMadeAtRunTime> },

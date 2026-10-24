@@ -23,9 +23,9 @@ const requiresNew = {
 const otherReceiver = b.otherwiseBy(b.hostCall);
 
 const chainedReaction = (settled: b.TableType) => [
-  b.called({ times: "Later", args: [settled], result: "Stored", resultTo: b.resultSlot("value") }),
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", args: [settled], result: "Stored", resultTo: b.resultSlot("value") }),
 ];
-const escapingReaction = (settled: b.TableType) => [b.called({ times: "Later", args: [settled], result: "Escapes" })];
+const escapingReaction = (settled: b.TableType) => [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", args: [settled], result: "Escapes" })];
 
 const pristineThen = (onFulfilled: b.TableType, onRejected: b.TableType, contents: Contents) =>
   ({
@@ -77,7 +77,7 @@ const combinator = (feature: string, contents: Contents, ...iterableUses: readon
 
 const disposalOf = (...disposed: readonly b.TableType[]) => [
   b.retained,
-  b.called({ times: "Later", args: disposed, result: "Escapes" }),
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", args: disposed, result: "Escapes" }),
 ];
 const stackFunction = (name: string) => b.compiled("AsyncDisposableStackPrototype", name);
 
@@ -106,7 +106,7 @@ export default b.declarations(
       returns: newPromiseHolding({ value: b.any, reason: b.any }),
       capability: "js",
       runsOnlyOperandCode: true,
-      uses: { executor: [b.called({ times: "Once", args: [b.callable, b.callable], result: "Ignored" })] },
+      uses: { executor: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [b.callable, b.callable], result: "Ignored" })] },
       implementation: b.compiled("PromiseConstructor", "Promise"),
     },
     static: {
@@ -192,7 +192,7 @@ export default b.declarations(
           returns: b.instance("Promise"),
           uses: {
             this: b.inspected,
-            callback: [b.called({ times: "Once", spreadArgs: b.operand("passed"), result: "Escapes" })],
+            callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", spreadArgs: b.operand("passed"), result: "Escapes" })],
             passed: b.inspected,
           },
           requiresHolderAsThis: true,
@@ -249,7 +249,7 @@ export default b.declarations(
           returns: newPromiseHolding({ value: settledValue, reason: settledReason }),
           uses: {
             this: contentsUpdate,
-            onFinally: [b.called({ times: "Later", result: "Stored", resultTo: b.resultSlot("value") })],
+            onFinally: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", result: "Stored", resultTo: b.resultSlot("value") })],
           },
           implementation: b.hostCall,
         },
@@ -260,7 +260,7 @@ export default b.declarations(
           returns: b.any,
           uses: {
             this: [b.runs("Species", b.calls("then"))],
-            onFinally: [b.retained, b.called({ times: "Later", result: "Escapes" })],
+            onFinally: [b.retained, b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", result: "Escapes" })],
           },
           implementation: b.hostCall,
         },

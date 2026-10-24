@@ -84,7 +84,11 @@ static bool mayAnswerLikeOtherLayouts(const Layout& layout)
         return true;
     case LayoutKind::Instance:
         return layout.isDerived();
-    default:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::BuiltinResult:
+    case LayoutKind::ModuleNamespace:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -515,6 +515,8 @@ public:
             reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
     }
     JS_EXPORT_PRIVATE void reportExtraMemoryVisited(size_t);
+    // At the end of a collection, for a cell whose memory outside the heap is no longer what was reported for it.
+    JS_EXPORT_PRIVATE void didChangeVisitedExtraMemory(size_t reported, size_t current);
 
 #if ENABLE(RESOURCE_USAGE)
     // Use this API to report the subset of extra memory that lives outside this process.

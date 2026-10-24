@@ -1,10 +1,11 @@
 # A record type of dozens of fields that are all optional describes a bag of options: what arrives is mostly an ordinary object that was merged or copied name by name, and it would fail the test for the layout every time.
-# The read goes by name where it stands. A record with a required field, and a small one, are tested for as ever.
+# The read goes by name where it stands. A record with a required field, and a small one, are tested for as ever, and so is a record whose type requires its fields where the program may delete them.
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 
 layout L0 name="Options" fields=[{key="o0" declared={type=anything}}, {key="o1" declared={type=anything}}, {key="o2" declared={type=anything}}, {key="o3" declared={type=anything}}, {key="o4" declared={type=anything}}, {key="o5" declared={type=anything}}, {key="o6" declared={type=anything}}, {key="o7" declared={type=anything}}, {key="o8" declared={type=anything}}, {key="o9" declared={type=anything}}, {key="o10" declared={type=anything}}, {key="o11" declared={type=anything}}, {key="o12" declared={type=anything}}, {key="o13" declared={type=anything}}, {key="o14" declared={type=anything}}, {key="o15" declared={type=anything}}, {key="o16" declared={type=anything}}, {key="o17" declared={type=anything}}, {key="o18" declared={type=anything}}, {key="o19" declared={type=anything}}, {key="o20" declared={type=anything}}, {key="o21" declared={type=anything}}, {key="o22" declared={type=anything}}, {key="o23" declared={type=anything}}]
 layout L1 name="FewOptions" fields=[{key="o0" declared={type=anything}}, {key="o1" declared={type=anything}}]
+layout L2 name="Members" fields=[{key="m0" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m1" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m2" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m3" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m4" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m5" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m6" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m7" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m8" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m9" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m10" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m11" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m12" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m13" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m14" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m15" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m16" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m17" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m18" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m19" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m20" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m21" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m22" declared={type=anything} flags=[IsRequiredUntilDeleted]}, {key="m23" declared={type=anything} flags=[IsRequiredUntilDeleted]}]
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bag" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
@@ -22,3 +23,11 @@ function f1 name="few" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=
 }
 # CHECK-LABEL: name="few"
 # CHECK: = TypeTest v0 testedType=L1
+
+function f2 name="required until deleted" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L2):
+    v1 = PropGet v0 key="m3"
+    Return v1
+}
+# CHECK-LABEL: name="required until deleted"
+# CHECK: = TypeTest v0 testedType=L2

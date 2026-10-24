@@ -244,6 +244,7 @@ function formatCallback(callback: ModelCallback, pools: Pools): string {
     ["spreadArguments", formatPlace(callback.spreadArguments, pools)],
     ["resultUse", formatUnlessDefault("BuiltinCallbackResultUse", callback.resultUse, "Escapes")],
     ["resultTo", formatPlace(callback.resultTo, pools)],
+    ["afterwards", formatUnlessDefault("BuiltinCallbackAftermath", callback.afterwards, "WritesIntoWhatItFinds")],
   ]);
 }
 

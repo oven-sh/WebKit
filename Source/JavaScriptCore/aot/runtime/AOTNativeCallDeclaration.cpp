@@ -334,9 +334,14 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
         return declaration;
     }
 
-    // Nothing leads from the realm to a member of a module, so every member of that name may be the callee.
+    // Nothing leads from the realm to a member of a module, so every member of that name may be the callee. One whose native code the host has bound was looked for by that code.
+    auto isKnownByNativeCode = [&](BuiltinID candidate) {
+        return std::ranges::any_of(BuiltinBindings::nativeFunctionsOfHost(), [&](const BuiltinNativeFunctionBinding& binding) {
+            return binding.builtin == candidate;
+        });
+    };
     for (BuiltinID candidate : candidates->value) {
-        if (table.at(candidate).scope != BuiltinScope::Module)
+        if (table.at(candidate).scope != BuiltinScope::Module || isKnownByNativeCode(candidate))
             continue;
         declaration.source = NativeCallDeclarationSource::NameOfModuleMember;
         declaration.builtin = candidate;

@@ -457,9 +457,30 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::AllocatedThisVersion:
         description.addFunction(function.derivation.source);
         return true;
-    default:
+    case FunctionRole::Source:
+    case FunctionRole::Library:
+    case FunctionRole::Model:
+    case FunctionRole::Signature:
+    case FunctionRole::GenericEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
+    case FunctionRole::GenericVersion:
+    case FunctionRole::ConstructBody:
+    case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
+    case FunctionRole::CoroutineRamp:
+    case FunctionRole::CoroutineBody:
+    case FunctionRole::AsyncWorker:
+    case FunctionRole::ResultWrapper:
+    case FunctionRole::ResultWorker:
+    case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
+    case FunctionRole::OutlinedBody:
+    case FunctionRole::Validator:
+    case FunctionRole::StubBody:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // A built-in reads whatever its operand reaches, and the table need not say so: nothing moves a store across a call of it.

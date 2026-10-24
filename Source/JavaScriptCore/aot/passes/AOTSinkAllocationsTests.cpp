@@ -123,13 +123,31 @@ Execution ObjectInterpreter::executeTest(ValueID id)
         return executeOther(id);
 
     std::optional<TestEntry> entry = evaluateTestOn(id);
-    if (!entry)
+    if (!entry) {
+        noteListsThatMayNotFit(id);
         return executeOther(id);
+    }
 
     m_state.setTest(*entry);
     if (isRewriting())
         replaceTest(id, *entry);
     return Execution::Interpreted;
+}
+
+void ObjectInterpreter::noteListsThatMayNotFit(ValueID test)
+{
+    const Value& value = function().at(test);
+    VirtualObjectID object = value.opcode == Opcode::HasArrayStorage ? objectOf(value.arrayOperand()) : VirtualObjectID();
+    if (!object)
+        return;
+    for (const ObjectVariant& variant : stateOf(object)->variants) {
+        const VirtualShape& shape = shapeOf(object, variant);
+        if (shape.kind != VirtualShapeKind::Fields)
+            continue;
+        const VirtualObjectDescription& description = m_sinking.familyOf(object).descriptionOf(shape);
+        if (classifyListOfNumbers(program(), description) == ListOfNumbers::MayNotFit)
+            m_sinking.didTestListThatMayNotFit(description.allocation);
+    }
 }
 
 std::optional<TestEntry> ObjectInterpreter::evaluateTestOn(ValueID test) const

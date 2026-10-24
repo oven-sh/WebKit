@@ -110,7 +110,7 @@ Vector<ValueID, 8> ObjectInterpreter::listedElementsOf(VirtualObjectID object)
     ValueID valueOfHoles;
     for (uint32_t position = 0; position < length; ++position) {
         if (std::optional<uint32_t> field = findListedElement(object, position)) {
-            elements.append(valueOfField(object, *field));
+            elements.append(valueOfField(object, *field, singleDescriptionOf(object)->elementType));
             continue;
         }
         if (!valueOfHoles)
@@ -438,7 +438,7 @@ Execution ObjectInterpreter::executeResultRead(ValueID id)
         return Execution::Interpreted;
     }
     if (isRewriting())
-        replaceRead(id, field ? valueOfField(object, *field) : emitUndefined());
+        replaceRead(id, field ? valueOfField(object, *field, function().at(id).type) : emitUndefined());
     return Execution::Interpreted;
 }
 

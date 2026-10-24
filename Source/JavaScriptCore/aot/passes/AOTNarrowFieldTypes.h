@@ -27,6 +27,8 @@ void expectInt32ParametersWithRemainingChecks(Program&, std::span<const Int32Par
 
 // The slot of a field whose type is only expected is boxed.
 TypeID slotTypeOf(const Program&, const Field&);
+// FieldData::type: what the run time tests a value against that it stores into the slot.
+inline TypeID recordedTypeOf(const Program& program, const Field& field) { return TypeTable::valuesOf(slotTypeOf(program, field)); }
 
 // The slot of a number or a boolean keeps the markers for undefined and null whatever the type of its field says, until flow proves that nothing outside the type is stored.
 bool slotHoldsUndefinedAndNull(const Program&, FieldReference);

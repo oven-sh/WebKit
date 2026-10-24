@@ -48,6 +48,9 @@ struct FlowSiteLevel {
     Wire::KnowledgeLevel level { Wire::KnowledgeLevel::Proven };
     Wire::AccessCost cost { Wire::AccessCost::Free };
     uint32_t copies { 0 };
+    // How far from the hot code of the function itself the copies lie that decide the level and the cost. UINT8_MAX: there is no copy.
+    uint8_t distance { UINT8_MAX };
+    uint8_t distanceForCost { UINT8_MAX };
     LayoutID layout;
     PropertyKeyID key;
     // Of an operation that the passes left as it was: the receivers or the callees that flow lists for it, where the list is complete.

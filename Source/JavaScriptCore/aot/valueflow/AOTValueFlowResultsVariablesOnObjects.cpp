@@ -31,7 +31,10 @@ static constexpr OptionSet<ObjectMutation> reachingMutations { ObjectMutation::R
 static bool hasNamespaceOfProgram(ModuleKind kind)
 {
     switch (kind) {
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:
@@ -55,9 +58,42 @@ static bool namesValue(ValueFlowNameKind kind)
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::EveryProperty:
         return true;
-    default:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool namesAccessor(ValueFlowNameKind kind)
@@ -68,9 +104,42 @@ static bool namesAccessor(ValueFlowNameKind kind)
     case ValueFlowNameKind::GetterUnderUnknownKey:
     case ValueFlowNameKind::SetterUnderUnknownKey:
         return true;
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 namespace {
@@ -191,9 +260,42 @@ bool mayName(ValueFlowName name, const VariableOnObject& variable)
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::EveryProperty:
         return true;
-    default:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // Every read of a value goes through a node that is keyed by the objects it looks into: those that the lookup starts at and all that lies above them.
@@ -270,9 +372,43 @@ bool AccessCollector::isSharedLookup(ValueFlowStatementID id) const
     case ValueFlowNameKind::Elements:
     case ValueFlowNameKind::EveryProperty:
         return true;
-    default:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::Slot:
+    case ValueFlowNameKind::HiddenSlot:
+    case ValueFlowNameKind::InternalFields:
+    case ValueFlowNameKind::SteppedValues:
+    case ValueFlowNameKind::ReturnedValue:
+    case ValueFlowNameKind::SentValues:
+    case ValueFlowNameKind::OpenedBy:
+    case ValueFlowNameKind::ResolvedPromises:
+    case ValueFlowNameKind::RejectedPromises:
+    case ValueFlowNameKind::AllocatedAs:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
+    case ValueFlowNameKind::RestArgument:
+    case ValueFlowNameKind::AddedNames:
+    case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // A lookup that starts at a placeholder and at other receivers hands on to a lookup for each, which goes no further.
@@ -452,7 +588,14 @@ void AccessCollector::collectAccessesOf(ValueFlowStatementID id, Vector<ObjectAc
             if (isSharedLookup(made) && reachesFollowedObject(made))
                 noteLooksOf(made, origin, kindOfLook, found);
             return;
-        default:
+        case ValueFlowMadeNodeKind::Constant:
+        case ValueFlowMadeNodeKind::CallGroup:
+        case ValueFlowMadeNodeKind::Hub:
+        case ValueFlowMadeNodeKind::Masked:
+        case ValueFlowMadeNodeKind::Marked:
+        case ValueFlowMadeNodeKind::WrittenUnderKind:
+        case ValueFlowMadeNodeKind::ReadUnderKind:
+        case ValueFlowMadeNodeKind::Instance:
             return;
         }
     });
@@ -520,7 +663,21 @@ void AccessCollector::collectTestsOfBuiltins(ValueFlowHeapView& heap, Vector<Obj
                 case BuiltinPropertyActionKind::ReadsSetter:
                     noteTestBy(application, overload, action, heap, setsWithFollowedObjects, found);
                     break;
-                default:
+                case BuiltinPropertyActionKind::ReadsByKey:
+                case BuiltinPropertyActionKind::StoresByKey:
+                case BuiltinPropertyActionKind::DeletesByKey:
+                case BuiltinPropertyActionKind::AssignsFrom:
+                case BuiltinPropertyActionKind::DefinesName:
+                case BuiltinPropertyActionKind::TakesDescriptor:
+                case BuiltinPropertyActionKind::TakesDescriptorMap:
+                case BuiltinPropertyActionKind::ChangesIntegrity:
+                case BuiltinPropertyActionKind::ChangesPrototype:
+                case BuiltinPropertyActionKind::BecomesPrototype:
+                case BuiltinPropertyActionKind::DefinesGetter:
+                case BuiltinPropertyActionKind::DefinesSetter:
+                case BuiltinPropertyActionKind::DescribesOwnProperties:
+                case BuiltinPropertyActionKind::DescribesResult:
+                case BuiltinPropertyActionKind::DefinesFrom:
                     break;
                 }
             }

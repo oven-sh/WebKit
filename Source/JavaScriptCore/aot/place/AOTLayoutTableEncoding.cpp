@@ -170,16 +170,6 @@ static SlotData closureEnvironmentSlotOf(TableEncoder& encoder, LayoutID id)
     return slot.data();
 }
 
-static TypeID typeHeldBy(const Field& declaration)
-{
-    // Of an accessor: the type of its getter.
-    if (declaration.form.contains(FieldForm::IsAccessor))
-        return declaration.slotType ? declaration.slotType : TypeTable::anything;
-    if (declaration.declared.flags.contains(PositionFlags::IsExpected))
-        return TypeTable::anything;
-    return declaration.slotType ? declaration.slotType : declaration.declared.type;
-}
-
 static bool isPlainSlot(const FieldData& field)
 {
     constexpr uint16_t flagsOfOtherFields = fieldIsStoredOnce | fieldIsPrivate | fieldIsBrand | fieldAttributeFlags;
@@ -213,7 +203,7 @@ static void collectFields(TableEncoder& encoder, LayoutID id, ObjectLayoutParts&
         data.hasGuardOfStores = declaration.key && program.at(id).kind == LayoutKind::Instance && !!encoder.placement.guardBits().find(declaredLayoutOf(program, id), ClassSide::Prototype, MemberGuardKind::PassedByStores, declaration.key);
         data.flags = fieldFlagsOf(encoder, reference);
         data.slot = slot.data();
-        data.type = encoder.typeOffset(typeHeldBy(declaration));
+        data.type = encoder.typeOffset(recordedTypeOf(program, declaration));
         data.defersFlattenedObject = slot.defersFlattenedObject;
         if (slot.defersFlattenedObject) {
             data.operandIndex = static_cast<uint16_t>(parts.fieldOperands.size());
@@ -387,11 +377,6 @@ static ExtensionLayoutData extensionLayoutDataOf(TableEncoder& encoder, LayoutID
     };
 }
 
-static bool hasCheckedType(const Field& field)
-{
-    return typeHeldBy(field) != TypeTable::anything;
-}
-
 static bool isUntyped(const Program& program, const Layout& layout)
 {
     switch (layout.kind) {
@@ -400,7 +385,9 @@ static bool isUntyped(const Program& program, const Layout& layout)
             return isUntyped(program, program.at(layout.flow.base));
         return layout.constructor && !program.at(layout.constructor).flags.contains(FunctionFlags::IsChecked);
     case LayoutKind::Record:
-        return (!layout.name || program.string(layout.name).empty()) && std::ranges::none_of(layout.fields, hasCheckedType);
+        return (!layout.name || program.string(layout.name).empty()) && std::ranges::all_of(layout.fields, [&](const Field& field) {
+            return recordedTypeOf(program, field) == TypeTable::anything;
+        });
     case LayoutKind::Container:
     case LayoutKind::Environment:
     case LayoutKind::Closure:

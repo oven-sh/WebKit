@@ -120,7 +120,9 @@ ClimbingSet withWhatUntrackedObjectCovers(ValueFlowRuleContext& context, Climbin
 BuiltinCallMode modeOf(ValueFlowCallKind kind)
 {
     switch (kind) {
-    default:
+    case ValueFlowCallKind::Call:
+    case ValueFlowCallKind::CallByNativeCode:
+    case ValueFlowCallKind::CallByHost:
         return BuiltinCallMode::Call;
     case ValueFlowCallKind::Construct:
     case ValueFlowCallKind::ConstructByNativeCode:
@@ -136,7 +138,9 @@ BuiltinCallMode modeOf(ValueFlowCallKind kind)
 BuiltinUse builtinUseOf(ValueFlowCallKind kind)
 {
     switch (kind) {
-    default:
+    case ValueFlowCallKind::Call:
+    case ValueFlowCallKind::CallByNativeCode:
+    case ValueFlowCallKind::CallByHost:
         return BuiltinUse::Called;
     case ValueFlowCallKind::Construct:
     case ValueFlowCallKind::ConstructByNativeCode:
@@ -750,11 +754,11 @@ private:
             for (const BuiltinTransfer& transfer : overload.flow.transfers)
                 connect(transfer.from, transfer.to);
         }
-        for (const BuiltinCallback& callback : overload.flow.callbacks)
+        for (const BuiltinCallback& callback : overload.flow.callbacks) {
             applyCallback(callback);
-        // The walk goes into whatever the reviver has put into a holder in the meantime, and deletes and defines there.
-        if (m_builtins.canonicalID(m_builtin) == Builtins::JSONParse && !overload.flow.callbacks.empty())
-            letUnknownCodeWrite(m_context);
+            if (callback.afterwards == BuiltinCallbackAftermath::WritesIntoWhatItFinds)
+                letUnknownCodeWrite(m_context);
+        }
         for (const BuiltinHandlerCall& handlerCall : overload.flow.handlerCalls)
             applyHandlerCall(handlerCall);
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions)
@@ -1525,7 +1529,12 @@ private:
             case BuiltinTypePartKind::Prototype:
                 functor({ .kind = BuiltinPlaceKind::Prototype, .operand = part.operand });
                 break;
-            default:
+            case BuiltinTypePartKind::Instance:
+            case BuiltinTypePartKind::InstanceOfReceiverClass:
+            case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
+            case BuiltinTypePartKind::Layout:
+            case BuiltinTypePartKind::Builtin:
+            case BuiltinTypePartKind::CallbackResult:
                 break;
             }
         }
@@ -1659,7 +1668,11 @@ private:
         case BuiltinPlaceKind::NativeCell:
             functor(nodeWrittenToNativeCell(m_context, place.nativeCell));
             return;
-        default:
+        case BuiltinPlaceKind::Operand:
+        case BuiltinPlaceKind::IteratedValues:
+        case BuiltinPlaceKind::NewValue:
+        case BuiltinPlaceKind::NativeMemory:
+        case BuiltinPlaceKind::Member:
             functor(escaped());
             return;
         }
@@ -1783,7 +1796,11 @@ private:
                 value = maker.unite(value, maker.of(fresh));
                 break;
             // Native code makes none of these. A transfer or a callback brings them to a result, and whoever reads the place of a new value takes them from where they lie.
-            default:
+            case BuiltinTypePartKind::Operand:
+            case BuiltinTypePartKind::Slot:
+            case BuiltinTypePartKind::IteratedValues:
+            case BuiltinTypePartKind::CallbackResult:
+            case BuiltinTypePartKind::Prototype:
                 break;
             }
         }

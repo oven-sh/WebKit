@@ -2356,7 +2356,9 @@ void DirectCodeGenerator::noteUse(const B3::Value* child, Reg hint)
         return;
     case ValueForm::Plain:
         break;
-    default:
+    case ValueForm::Dead:
+    case ValueForm::Alias:
+    case ValueForm::Folded:
         refuse();
         return;
     }
@@ -3781,7 +3783,9 @@ void DirectCodeGenerator::materialize(const B3::Value* value, Reg destination)
         }
         loadFromFrame(destination, state, state.home);
         return;
-    default:
+    case ValueForm::Dead:
+    case ValueForm::Alias:
+    case ValueForm::Folded:
         fail();
         return;
     }
@@ -4427,7 +4431,9 @@ MacroAssembler::Jump DirectCodeGenerator::branchOnTest(const B3::Value* left, co
 #else
         RELEASE_ASSERT_NOT_REACHED();
 #endif
-    default:
+    case OperandShape::Register:
+    case OperandShape::Load:
+    case OperandShape::ScaledIndex:
         break;
     }
     GPRReg rightRegister = gprFor(plan.right);
@@ -4501,7 +4507,10 @@ MacroAssembler::Jump DirectCodeGenerator::branchOnComparison(const B3::Value* co
         return jit.branch64(condition, leftRegister, plan.pinned.reg.gpr());
     case OperandShape::PinnedMemory:
         return jit.branch64(condition, leftRegister, Address(plan.pinned.reg.gpr(), *plan.pinned.offset));
-    default:
+    case OperandShape::Register:
+    case OperandShape::Load:
+    case OperandShape::ScaledIndex:
+    case OperandShape::BitTest:
         break;
     }
     GPRReg rightRegister = gprFor(plan.right);
@@ -4580,7 +4589,10 @@ std::optional<MacroAssembler::RelationalCondition> DirectCodeGenerator::setFlags
 #else
             RELEASE_ASSERT_NOT_REACHED();
 #endif
-        default: {
+        case OperandShape::Register:
+        case OperandShape::Load:
+        case OperandShape::ScaledIndex:
+        case OperandShape::BitTest: {
             GPRReg rightRegister = gprFor(plan.right);
             isWide ? jit.testOnFlags64(leftRegister, rightRegister) : jit.testOnFlags32(leftRegister, rightRegister);
             break;
@@ -4618,7 +4630,10 @@ std::optional<MacroAssembler::RelationalCondition> DirectCodeGenerator::setFlags
 #else
         RELEASE_ASSERT_NOT_REACHED();
 #endif
-    default: {
+    case OperandShape::Register:
+    case OperandShape::Load:
+    case OperandShape::ScaledIndex:
+    case OperandShape::BitTest: {
         GPRReg rightRegister = gprFor(plan.right);
         isWide ? jit.compareOnFlags64(leftRegister, rightRegister) : jit.compareOnFlags32(leftRegister, rightRegister);
         break;

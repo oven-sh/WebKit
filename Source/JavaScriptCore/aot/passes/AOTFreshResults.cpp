@@ -279,8 +279,7 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     if (hasVariantOfKind(shape, VirtualShapeKind::Cell)) {
         shape.cellPart = 0;
         shape.fieldOfPart.append(VirtualField { });
-        const DeclaredType& result = sinking.function().result();
-        shape.partTypes.append(result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type);
+        shape.partTypes.append(sinking.program().provenTypeOf(sinking.function().result()));
     }
 
     for (FreshResultVariant& variant : shape.variants) {

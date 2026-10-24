@@ -200,7 +200,8 @@ struct ObjectLookupRegisters {
 };
 
 // Asks the receiver and then the objects above it, each for what it has at this moment.
-void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown);
+// willReturnValue: what to do in front of the return of a plain value that the property table of object has listed. structure has the offset above the eight bits of the attributes and is kept. size, vector and index are free.
+void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown, const ScopedLambda<void()>* willReturnValue = nullptr);
 // Takes the Structure of an ordinary object in structure and leaves there what its property table has for uid: the offset, above the eight bits of the attributes. Writes size, vector and index.
 void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList& isAbsent, JumpList& isUnknown);
 // object is a compiled object. Leaves in index where the row of its shape has the entry of the field with the name. Writes name, where the name is given by its uid, and vector.

@@ -53,12 +53,6 @@ struct RetargetedCallSite {
 
 void retargetResultCallSites(Function& caller, std::span<const RetargetedCallSite>);
 
-// What a call of the version is proven to give. Nothing checks what arrives at an expected position.
-inline TypeID provenResultTypeOf(const DeclaredType& result)
-{
-    return result.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : result.type;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

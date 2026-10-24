@@ -62,6 +62,8 @@ struct FlowSiteLoss {
     UnprovenCause cause { UnprovenCause::Unknown };
     LimitID limit { LimitID::None };
     Witness witness { noWitness };
+    // Of an access: what a plain function without a layout constructs arrives as the receiver.
+    bool seesConstructedObject { false };
 
     friend bool operator==(const FlowSiteLoss&, const FlowSiteLoss&) = default;
 };

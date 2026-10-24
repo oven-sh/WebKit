@@ -94,6 +94,7 @@ public:
     const ExpectedResult& at(ExpectedResultID id) const { return expectedResults[id.index()]; }
     const Data& at(DataID id) const { return data[id.index()]; }
     const Type& at(TypeID id) const { return types.at(id); }
+    TypeID provenTypeOf(const DeclaredType& declared) const { return types.provenTypeOf(declared); }
     const LayoutSet& at(LayoutSetID id) const { return types.at(id); }
     const CalleeSet& at(CalleeSetID id) const { return types.at(id); }
     const PropertyKey& at(PropertyKeyID id) const { return types.at(id); }

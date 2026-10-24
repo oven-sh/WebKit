@@ -297,10 +297,10 @@ static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSe
         const Layout& layout = program.at(id);
         if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
             return;
-        bool everyFieldHasName = std::ranges::all_of(layout.fields, [](const Field& field) {
-            return !!field.key;
+        bool acceptsEveryValue = std::ranges::all_of(layout.fields, [&](const Field& field) {
+            return field.key && program.at(field.declared.type).isAnything();
         });
-        if (everyFieldHasName)
+        if (acceptsEveryValue)
             records.append(universe.instanceOf(id));
     });
     if (records.isEmpty())
@@ -540,7 +540,38 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::FoundThroughEscapedInstances:
             runLookupThroughInstances(statement, context);
             return;
-        default:
+        case ValueFlowNameKind::Property:
+        case ValueFlowNameKind::Getter:
+        case ValueFlowNameKind::Setter:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::UnknownKey:
+        case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::SetterUnderUnknownKey:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::PrototypeLink:
+        case ValueFlowNameKind::CopiedFrom:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
             runLookup(statement, context);
             return;
         }

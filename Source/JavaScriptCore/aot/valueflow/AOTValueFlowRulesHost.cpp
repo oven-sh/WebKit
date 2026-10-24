@@ -778,7 +778,9 @@ void noteRequest(ValueFlowRuleContext& context, FunctionID requester, ModuleID m
 static bool isWrittenByProgram(const Program& program, const Module& module)
 {
     switch (module.kind) {
-    default:
+    case ModuleKind::SourceText:
+    case ModuleKind::CommonJs:
+    case ModuleKind::Data:
         return !module.flags.contains(ModuleFlags::IsLibrary) && !isBundlerHelperModule(program, module);
     case ModuleKind::External:
         return true;

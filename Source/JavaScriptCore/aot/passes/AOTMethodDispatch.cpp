@@ -82,7 +82,27 @@ Value makeObjectTest(Proof proof, ValueID object, const SlotStamp& stamp)
         return IRBuilder::make(Opcode::BelongsToInstance, { object });
     case Proof::PrototypeLinkUnchanged:
         return IRBuilder::make(Opcode::HasLayoutPrototype, { object });
-    default:
+    case Proof::None:
+    case Proof::TestedType:
+    case Proof::Truthiness:
+    case Proof::Equality:
+    case Proof::IntegerBound:
+    case Proof::ExactFunction:
+    case Proof::CaseValue:
+    case Proof::NotNullish:
+    case Proof::Shape:
+    case Proof::Pristine:
+    case Proof::ArrayStorage:
+    case Proof::InBounds:
+    case Proof::NotThenable:
+    case Proof::MemberUnchanged:
+    case Proof::EvaluatedOnce:
+    case Proof::KeyOrder:
+    case Proof::UnmodifiedGenerator:
+    case Proof::EnumeratorCurrent:
+    case Proof::PlainData:
+    case Proof::SourceOpen:
+    case Proof::TextMatches:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

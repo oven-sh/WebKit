@@ -68,6 +68,7 @@ export default b.declarations(
         uses: {
           this: [
             b.called({
+              afterwards: "TouchesOnlyWhatRowNames",
               times: "Once",
               this: b.operand("thisArg"),
               spreadArgs: b.ownValues("argumentList"),
@@ -88,7 +89,7 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: {
           this: [
-            b.called({ times: "Once", this: b.operand("thisArg"), args: [b.operand("passed")], result: "Returned" }),
+            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", this: b.operand("thisArg"), args: [b.operand("passed")], result: "Returned" }),
           ],
           thisArg: b.inspected,
           passed: b.inspected,

@@ -605,6 +605,8 @@ static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<c
 
     // Where the generic version has the only stamped copy, the typed version has an operation without a stamp or none at all. Such a site costs what a site without any copy costs.
     for (size_t index = 0; index < levels.size(); ++index) {
+        levels[index].distance = nearestCopies[index].distance;
+        levels[index].distanceForCost = nearestCopies[index].distanceForCost;
         uint8_t distance = nearestCopies[index].distanceForCost;
         if (distance >= numberOfDistances && distance != UINT8_MAX && levels[index].cost == AccessCost::ByName)
             levels[index].cost = AccessCost::Free;
@@ -690,7 +692,9 @@ Vector<FlowSiteLevel> gradeAccessSites(const FlowResults& flow, AccessSiteObserv
 static Access memberAccessOf(AccessKind kind)
 {
     switch (kind) {
-    default:
+    case AccessKind::Read:
+    case AccessKind::Call:
+    case AccessKind::Construct:
         return Access::Read;
     case AccessKind::Store:
         return Access::Store;
@@ -797,7 +801,12 @@ static IllTypedCause illTypedCauseOf(UnprovenCause cause)
         return IllTypedCause::UnprovenCallee;
     case UnprovenCause::UnprovenContents:
         return IllTypedCause::ContainerWriterUnseen;
-    default:
+    case UnprovenCause::FieldDeleted:
+    case UnprovenCause::UnknownKeyDelete:
+    case UnprovenCause::PropertyRedefined:
+    case UnprovenCause::PropertyAdded:
+    case UnprovenCause::IntegrityChanged:
+    case UnprovenCause::PrototypeChanged:
         return IllTypedCause::StateChanged;
     case UnprovenCause::UnknownKeyStore:
         return IllTypedCause::ComputedKeyStore;
@@ -824,6 +833,7 @@ static Wire::AccessRecord siteRecordOf(const Program& program, const FlowResults
         .limit = loss.limit,
         .layout = findLayoutAsRead(&program, level.layout).index(),
         .copies = level.copies,
+        .distance = access.kind == AccessKind::Call || access.kind == AccessKind::Construct ? level.distance : level.distanceForCost,
         .witness = loss.witness,
         .function = findFunctionAsRead(&program, access.function).index(),
         .illTypedCause = illTypedCauseOf(loss.cause),
@@ -868,8 +878,10 @@ static Vector<Wire::AccessRecord> foldDuplicateRecords(std::span<const SiteRecor
         record.copies = saturatingSum<uint32_t>(record.copies, site.record.copies);
         if (site.isInGenericVersion && !costIsOfGenericVersion)
             continue;
-        if (costIsOfGenericVersion != site.isInGenericVersion || rankOf(site.record.cost) < rankOf(record.cost))
+        if (costIsOfGenericVersion != site.isInGenericVersion || rankOf(site.record.cost) < rankOf(record.cost)) {
             record.cost = site.record.cost;
+            record.distance = site.record.distance;
+        }
         costIsOfGenericVersion = site.isInGenericVersion;
     }
     return records;
@@ -901,7 +913,11 @@ static std::array<uint32_t, numberOfEnumerators<KnowledgeLevel>>& countersOf(Wir
     switch (kind) {
     case AccessKind::Unknown:
         break;
-    default:
+    case AccessKind::Read:
+    case AccessKind::Store:
+    case AccessKind::Define:
+    case AccessKind::Has:
+    case AccessKind::Delete:
         return record.accesses;
     case AccessKind::Call:
     case AccessKind::Construct:

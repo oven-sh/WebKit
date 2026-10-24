@@ -169,7 +169,14 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     case ValueFlowStatementKind::Behavior:
     case ValueFlowStatementKind::Escape:
         return true;
-    default:
+    case ValueFlowStatementKind::Operation:
+    case ValueFlowStatementKind::ModuleEvaluation:
+    case ValueFlowStatementKind::Coroutine:
+    case ValueFlowStatementKind::EntryChecks:
+    case ValueFlowStatementKind::HostRoots:
+    case ValueFlowStatementKind::UsedBuiltins:
+    case ValueFlowStatementKind::UnseenCode:
+    case ValueFlowStatementKind::ModulesLoadedByName:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -386,7 +393,11 @@ FlowIndirectCallKind EntriesFromFunction::kindOf(const ValueFlowStatement& state
     case ValueFlowCallKind::Get:
     case ValueFlowCallKind::Set:
         return FlowIndirectCallKind::Accessor;
-    default:
+    case ValueFlowCallKind::Call:
+    case ValueFlowCallKind::Construct:
+    case ValueFlowCallKind::CallByNativeCode:
+    case ValueFlowCallKind::ConstructByNativeCode:
+    case ValueFlowCallKind::CallByHost:
         return hasCalleeStamp(statement) ? FlowIndirectCallKind::BuiltinCallback : FlowIndirectCallKind::Protocol;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -617,7 +628,30 @@ static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& i
 static constexpr bool looksIntoObject(ValueFlowNameKind kind)
 {
     switch (kind) {
-    default:
+    case ValueFlowNameKind::Property:
+    case ValueFlowNameKind::Getter:
+    case ValueFlowNameKind::Setter:
+    case ValueFlowNameKind::Elements:
+    case ValueFlowNameKind::UnknownKey:
+    case ValueFlowNameKind::GetterUnderUnknownKey:
+    case ValueFlowNameKind::SetterUnderUnknownKey:
+    case ValueFlowNameKind::EveryProperty:
+    case ValueFlowNameKind::EveryGetter:
+    case ValueFlowNameKind::EverySetter:
+    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameKind::DeletedMember:
+    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameKind::RedefinedMember:
+    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+    case ValueFlowNameKind::PrivateField:
+    case ValueFlowNameKind::OpenedIterators:
+    case ValueFlowNameKind::IteratedValues:
+    case ValueFlowNameKind::IteratorResults:
+    case ValueFlowNameKind::AwaitedValue:
+    case ValueFlowNameKind::MemberWritten:
+    case ValueFlowNameKind::EveryMemberWritten:
+    case ValueFlowNameKind::EveryMemberRead:
         return true;
     case ValueFlowNameKind::Slot:
     case ValueFlowNameKind::HiddenSlot:
@@ -664,7 +698,14 @@ static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, V
             case ValueFlowMadeNodeKind::Lookup:
             case ValueFlowMadeNodeKind::ReadUnderKind:
                 break;
-            default:
+            case ValueFlowMadeNodeKind::Constant:
+            case ValueFlowMadeNodeKind::Written:
+            case ValueFlowMadeNodeKind::CallGroup:
+            case ValueFlowMadeNodeKind::Hub:
+            case ValueFlowMadeNodeKind::Masked:
+            case ValueFlowMadeNodeKind::Marked:
+            case ValueFlowMadeNodeKind::WrittenUnderKind:
+            case ValueFlowMadeNodeKind::Instance:
                 continue;
             }
             // A read through the untracked object is answered by name, out of all that anybody has written under the name. It looks into what is lost and into nothing else.

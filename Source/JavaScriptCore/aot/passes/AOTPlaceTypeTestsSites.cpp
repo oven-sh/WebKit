@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCodeShapes.h"
+#include "AOTFlowResults.h"
 #include "AOTHeat.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
@@ -362,6 +363,10 @@ TestSites collectTestSites(FunctionPassContext& context)
     // A test buys a fast path and costs a copy of what stands behind it.
     bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
     sites.sites.removeAllMatching([&](const TestSite& site) {
+        // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
+        const Value& use = context.function.at(site.use);
+        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject)
+            return true;
         HeatClass heatClass = heatClassOf(context, site.point.block);
         return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode(site.rule)));
     });

@@ -372,7 +372,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     for (const PlannedProperty& property : planProperties(m_sinking, m_state, object, variant)) {
         const VirtualField& field = family.fieldAt(property.field);
         if (property.initialization == PropertyInitialization::Listed) {
-            properties.append(FieldValue { field, valueOfField(object, property.field) });
+            properties.append(FieldValue { field, valueOfField(object, property.field, typeOfField(m_sinking.objectContext(), variant.description, field)) });
             continue;
         }
         if (property.initialization == PropertyInitialization::ListedWithFiller) {

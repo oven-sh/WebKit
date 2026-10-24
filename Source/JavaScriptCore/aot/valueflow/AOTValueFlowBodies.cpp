@@ -508,7 +508,9 @@ private:
     static ValueFlowMaskKind kindOfResultMask(Opcode opcode)
     {
         switch (flowOf(opcode)) {
-        default:
+        case ValueFlowEdgeClass::Allocates:
+        case ValueFlowEdgeClass::TableProves:
+        case ValueFlowEdgeClass::Checks:
             return ValueFlowMaskKind::Checked;
         case ValueFlowEdgeClass::Copies:
         case ValueFlowEdgeClass::Unsound:
@@ -651,7 +653,11 @@ private:
             return true;
         case ResultRule::Natural:
             return answersByKindsOfOperands(opcode);
-        default:
+        case ResultRule::None:
+        case ResultRule::Constant:
+        case ResultRule::Allocation:
+        case ResultRule::Declared:
+        case ResultRule::Results:
             return false;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -785,7 +791,10 @@ private:
 
         // What holds for an operation without a rule of its own depends on no set, so it needs no statement. The schema says of each operation how its result comes about, and it takes no operation that leaves that out.
         switch (flowOf(value.opcode)) {
-        default:
+        case ValueFlowEdgeClass::Allocates:
+        case ValueFlowEdgeClass::Copies:
+        case ValueFlowEdgeClass::TableProves:
+        case ValueFlowEdgeClass::Checks:
             describeBySchema(block, id, value);
             return;
         case ValueFlowEdgeClass::Unsound:

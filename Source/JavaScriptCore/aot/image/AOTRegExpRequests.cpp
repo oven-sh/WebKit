@@ -1418,7 +1418,15 @@ private:
                 case BuiltinPlaceKind::IteratedValues:
                     isWithinLimits = addAll(values, elementsOf(evaluate(activation, operand), std::nullopt));
                     break;
-                default:
+                case BuiltinPlaceKind::None:
+                case BuiltinPlaceKind::Result:
+                case BuiltinPlaceKind::ResultSlot:
+                case BuiltinPlaceKind::ResultField:
+                case BuiltinPlaceKind::NewValue:
+                case BuiltinPlaceKind::NativeMemory:
+                case BuiltinPlaceKind::Prototype:
+                case BuiltinPlaceKind::Member:
+                case BuiltinPlaceKind::NativeCell:
                     m_sawEverything = false;
                     break;
                 }
@@ -1496,7 +1504,16 @@ private:
             case Typed::TerminatorKind::ReturnCall:
                 result = block.terminator.callOperand();
                 break;
-            default:
+            case Typed::TerminatorKind::Jump:
+            case Typed::TerminatorKind::Branch:
+            case Typed::TerminatorKind::Switch:
+            case Typed::TerminatorKind::SwitchString:
+            case Typed::TerminatorKind::Throw:
+            case Typed::TerminatorKind::Rethrow:
+            case Typed::TerminatorKind::Unreachable:
+            case Typed::TerminatorKind::SwitchOnShape:
+            case Typed::TerminatorKind::TryCallInline:
+            case Typed::TerminatorKind::TestAndBranch:
                 continue;
             }
             if (result && !addAll(values, evaluate(inCallee, result)))

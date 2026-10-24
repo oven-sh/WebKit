@@ -225,7 +225,9 @@ static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function
     case EffectInputs::Row:
     case EffectInputs::Function:
         return 0;
-    default:
+    case EffectInputs::Payload:
+    case EffectInputs::Operands:
+    case EffectInputs::DefinitionsBehindCasts:
         break;
     }
     addPayload(hasher, instruction);
@@ -371,7 +373,10 @@ OperandSummary EffectsCache::summaryOfOperand(ValueID id, uint32_t operandIndex)
     case EffectRule::Declared:
     case EffectRule::Operator:
         return summarizeOperand(m_context, m_function, user, operandIndex);
-    default:
+    case EffectRule::Access:
+    case EffectRule::Call:
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
         break;
     }
 

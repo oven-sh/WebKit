@@ -167,12 +167,14 @@ VirtualObjectID ObjectInterpreter::guardedObjectOf(ValueID value) const
     return objectOf(value);
 }
 
-// The guard of a cell is its allocation, which proves nothing about a position.
-bool ObjectInterpreter::hasPositionFromAnsweredTest(ValueID access, VirtualObjectID object) const
+// The guard of a cell is its allocation, which proves nothing about a position, and nothing about the storage of a list of numbers.
+bool ObjectInterpreter::reliesOnAnswerThatCellDoesNotKeep(ValueID access, VirtualObjectID object) const
 {
     const Value& value = function().at(access);
+    if (!OperandPosition::guard(value.opcode) || !value.guardOperand() || guardedObjectOf(value.guardOperand()) != object)
+        return false;
     bool reliesOnPosition = (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) || (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent());
-    return reliesOnPosition && value.guardOperand() && guardedObjectOf(value.guardOperand()) == object;
+    return reliesOnPosition || m_sinking.mayBeListOfNumbers(object);
 }
 
 VirtualObjectID ObjectInterpreter::destructuredObjectOf(ValueID value) const
@@ -382,7 +384,7 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id)
     for (auto [operand, index] : operands) {
         bool isGuard = operandKindOf(opcode, index) == OperandKind::Guard;
         if (VirtualObjectID object = isGuard ? guardedObjectOf(operand) : objectOf(operand)) {
-            if (isGuard && hasPositionFromAnsweredTest(id, object))
+            if (isGuard && (reliesOnAnswerThatCellDoesNotKeep(id, object) || m_sinking.mayBeListOfNumbers(object)))
                 m_sinking.abandon(object);
             if (isGuard && m_mode == SinkingMode::Count)
                 m_sinking.at(object).needsGuard = true;

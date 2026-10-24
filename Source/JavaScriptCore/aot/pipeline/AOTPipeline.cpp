@@ -346,6 +346,9 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ExpandIteration),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
+    // Below a bound that has just been tested.
+    ScheduleStep::run(ConvertCountersToIntegers),
+    ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RemoveDeadCountedLoops),
     ScheduleStep::run(HoistLoopInvariantReads),
     ScheduleStep::run(EliminateRedundantReads),

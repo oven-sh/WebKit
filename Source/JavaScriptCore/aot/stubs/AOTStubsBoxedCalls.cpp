@@ -652,9 +652,33 @@ static bool readsReceiver(BoxedCallForm form)
     case BoxedCallForm::ObjectIs:
     case BoxedCallForm::ObjectSetPrototypeOf:
         return false;
-    default:
+    case BoxedCallForm::ArrayIncludes:
+    case BoxedCallForm::ArrayIndexOf:
+    case BoxedCallForm::ArrayPush:
+    case BoxedCallForm::ArraySlice:
+    case BoxedCallForm::FunctionBind:
+    case BoxedCallForm::MapDelete:
+    case BoxedCallForm::MapGet:
+    case BoxedCallForm::MapHas:
+    case BoxedCallForm::MapSet:
+    case BoxedCallForm::MapSize:
+    case BoxedCallForm::SetAdd:
+    case BoxedCallForm::SetDelete:
+    case BoxedCallForm::SetHas:
+    case BoxedCallForm::SetSize:
+    case BoxedCallForm::StringIndexOf:
+    case BoxedCallForm::StringSlice:
+    case BoxedCallForm::StringStartsWith:
+    case BoxedCallForm::StringToLowerCase:
+    case BoxedCallForm::StringTrim:
+    case BoxedCallForm::TypedArrayLength:
+    case BoxedCallForm::WeakMapGet:
+    case BoxedCallForm::WeakMapHas:
+    case BoxedCallForm::WeakMapSet:
+    case BoxedCallForm::WeakSetHas:
         return true;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void generateCallBoxedBuiltin(StubAssembler& jit)

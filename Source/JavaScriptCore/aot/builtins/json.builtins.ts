@@ -27,7 +27,9 @@ export default b.declarations(
           uses: {
             text: [b.readAsCharacters],
             reviver: [
+              // The walk goes into whatever the reviver has put into a holder in the meantime, and deletes and defines there.
               b.called({
+                afterwards: "WritesIntoWhatItFinds",
                 times: "Repeatedly",
                 this: b.object,
                 args: [b.string, b.any, b.object.fresh],
@@ -57,7 +59,7 @@ export default b.declarations(
           runsOnlyOperandCode: true,
           uses: {
             value: [serialized, b.retained, b.reachableValuesStoredIn(b.nativeMemory)],
-            replacer: [b.called({ times: "Repeatedly", this: b.object, args: [b.string, b.any], result: "Escapes" })],
+            replacer: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.object, args: [b.string, b.any], result: "Escapes" })],
             space: [b.runs("ToPrimitive")],
           },
           implementation: b.hostCall,

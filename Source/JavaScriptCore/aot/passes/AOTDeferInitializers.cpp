@@ -2434,8 +2434,8 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             continue;
         unit.type = TypeTable::undefined;
         if (unit.variables.size() == 1) {
-            const DeclaredType& declared = program.at(unit.variables.first()).declared;
-            unit.type = declared.flags.contains(PositionFlags::IsExpected) ? TypeTable::anything : editor.types().intern(program.at(declared.type).withoutPrimitives(Primitive::Absent));
+            TypeID held = program.provenTypeOf(program.at(unit.variables.first()).declared);
+            unit.type = editor.types().intern(program.at(held).withoutPrimitives(Primitive::Absent));
         }
         unit.function = editor.addFunctionLike(unit.body, createHead(program, unit));
         created.append(unit.function);

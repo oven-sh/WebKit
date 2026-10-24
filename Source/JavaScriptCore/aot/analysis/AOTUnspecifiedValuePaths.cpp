@@ -697,7 +697,15 @@ void MergingWalker::walkBlock(BlockID blockID, Facts&& facts, MarkedValues&& mar
             follow(Edge { blockID, numberOfCases }, WTF::move(facts), marked);
         return;
     }
-    default:
+    case TerminatorKind::Jump:
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::Return:
+    case TerminatorKind::ReturnCall:
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::Unreachable:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::TryCallInline:
         break;
     }
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex)

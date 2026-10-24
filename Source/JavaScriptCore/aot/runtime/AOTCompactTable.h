@@ -471,6 +471,7 @@ private:
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     CompactTable* copyWithAbsentKey(VM&, JSString* key, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
+    void skipObsoleteSuccessors();
     void removeAllEntries();
 
     JSCell*& successor()
@@ -530,6 +531,8 @@ ALWAYS_INLINE void CompactTable::visitFields(CompactTable* table, Visitor& visit
 {
     Locker locker { table->cellLock() };
     if (!table->isLive()) {
+        // A word left on the stack may name a table that was replaced long ago. It keeps the table that the owner has now, and none between the two.
+        table->skipObsoleteSuccessors();
         if (JSCell* next = table->successor())
             visitor.appendUnbarriered(next);
         return;

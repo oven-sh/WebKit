@@ -336,6 +336,12 @@ enum class BuiltinCallbackResultUse : uint8_t {
     Stored,
 };
 
+// What native code does, between the calls and behind the last, to objects that it comes upon only because the function put them where it looks.
+enum class BuiltinCallbackAftermath : uint8_t {
+    WritesIntoWhatItFinds,
+    TouchesOnlyWhatRowNames,
+};
+
 enum class BuiltinPropertyActionKind : uint8_t {
     ReadsByKey,
     StoresByKey,
@@ -588,6 +594,7 @@ struct BuiltinCallback {
     BuiltinPlace spreadArguments { };
     BuiltinCallbackResultUse resultUse { BuiltinCallbackResultUse::Escapes };
     BuiltinPlace resultTo { };
+    BuiltinCallbackAftermath afterwards { BuiltinCallbackAftermath::WritesIntoWhatItFinds };
 };
 
 // A function that is not itself an operand: a member of an options object, or what an earlier call left in a native cell.

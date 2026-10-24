@@ -124,6 +124,7 @@ private:
     bool isReliedOn(ValueID check, Vector<ValueID, 8>& casts);
     bool isOnlyComparedByBits(ValueID check) const;
     bool dropChecksNobodyReliesOn();
+    bool dropChecksThatTurnAwayWhatArrives();
     bool keepsMoreAliveOverAwaitThanFrameMapHolds();
 
     bool tryCreateGenericVersion();
@@ -137,7 +138,7 @@ private:
     void lowerCheck(GenericCopy&, const CheckSite&);
 
     Value createMismatchReport(ValueID, TypeID expectedType, TypeSiteID) const;
-    void replaceChecksWithGuards(std::span<const ValueID> checks);
+    void replaceChecksWithGuards(std::span<const ValueID> checks, ExpectedTypes = ExpectedTypes::Kept);
     CalleeSetID withCalleesNobodyHasSeen(CalleeSetID);
     void fallBackToGuards();
     bool assumeOperandKinds();
@@ -355,6 +356,7 @@ PassOutcome GenericVersionBuilder::run()
     collectChecks();
     changed |= removeRedundantChecks();
     bool hasDroppedChecks = dropChecksNobodyReliesOn();
+    hasDroppedChecks |= dropChecksThatTurnAwayWhatArrives();
     if (m_sites.isEmpty()) {
         if (hasDroppedChecks)
             finishTyping();
@@ -417,7 +419,30 @@ bool GenericVersionBuilder::isReliedOn(ValueID check, Vector<ValueID, 8>& casts)
             TypeID required = requiredTypeOfOperand(typing, user, operandIndex);
             return !required || required == TypeTable::anything;
         }
-        default:
+        case OperandKind::Boolean:
+        case OperandKind::Integer:
+        case OperandKind::Number:
+        case OperandKind::String:
+        case OperandKind::PropertyKey:
+        case OperandKind::Object:
+        case OperandKind::Callable:
+        case OperandKind::Array:
+        case OperandKind::Layout:
+        case OperandKind::Environment:
+        case OperandKind::EvalOperand:
+        case OperandKind::Results:
+        case OperandKind::IteratorState:
+        case OperandKind::Enumerator:
+        case OperandKind::Exception:
+        case OperandKind::ClassToken:
+        case OperandKind::Guard:
+        case OperandKind::Convertible:
+        case OperandKind::StringBuilder:
+        case OperandKind::Cursor:
+        case OperandKind::KeyOrder:
+        case OperandKind::FlatString:
+        case OperandKind::CodeAddress:
+        case OperandKind::BuilderCursor:
             return false;
         }
     };
@@ -518,6 +543,29 @@ bool GenericVersionBuilder::dropChecksNobodyReliesOn()
     m_sites.removeAllMatching([&](const CheckSite& site) {
         return dropped.contains(site.check);
     });
+    return true;
+}
+
+// Flow has seen an ordinary object arrive that the program only calls by the type. The test would fail in ordinary runs and send them into the generic version, so the value goes on as one that has no type.
+bool GenericVersionBuilder::dropChecksThatTurnAwayWhatArrives()
+{
+    Vector<ValueID, 8> dropped;
+    for (const CheckSite& site : m_sites) {
+        if (m_function.at(site.check).cause() == CheckCause::MayFail)
+            dropped.append(site.check);
+    }
+    if (dropped.isEmpty())
+        return false;
+    // What is read from such an object has its type from the type that does not hold.
+    BitVector isTainted = computeTaintedValues(m_function, m_analyses.useLists(), dropped.span());
+    for (const CheckSite& site : m_sites) {
+        if (isTainted.get(site.check.index()) && !dropped.contains(site.check))
+            dropped.append(site.check);
+    }
+    replaceChecksWithGuards(dropped.span(), ExpectedTypes::Dropped);
+    // A report that was put in front of a check has moved what stands behind it.
+    m_sites.shrink(0);
+    collectChecks();
     return true;
 }
 
@@ -806,7 +854,7 @@ CalleeSetID GenericVersionBuilder::withCalleesNobodyHasSeen(CalleeSetID stamp)
     return m_context.types.intern(CalleeSet { .functions = callees.functions, .builtins = callees.builtins, .isComplete = false });
 }
 
-void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> checks)
+void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> checks, ExpectedTypes expectedTypes)
 {
     if (checks.empty())
         return;
@@ -833,7 +881,7 @@ void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> che
     for (size_t index : isTainted) {
         if (m_function.values[index].opcode != Opcode::Check || isReplaced.get(index)) {
             hasErasedValidation |= typeValidations.contains(m_function.values[index].opcode);
-            eraseProof(ValueID(index), ExpectedTypes::Kept);
+            eraseProof(ValueID(index), expectedTypes);
         }
     }
     for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {

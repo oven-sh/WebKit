@@ -287,7 +287,39 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
             for (const ValueFlowNameReadByNativeCode& read : listed->names)
                 letNativeCodeRead(ClimbingSet(listed->entries), read);
             return;
-        default:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::UnknownKey:
+        case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::SetterUnderUnknownKey:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::CopiedFrom:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::OpenedIterators:
+        case ValueFlowNameKind::IteratedValues:
+        case ValueFlowNameKind::IteratorResults:
+        case ValueFlowNameKind::AwaitedValue:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
             writesIntoRealm = true;
             return;
         }

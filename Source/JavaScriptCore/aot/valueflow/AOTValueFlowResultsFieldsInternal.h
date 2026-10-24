@@ -427,6 +427,8 @@ struct StoresIntoObjects {
     bool isStoredUnderIndex { false };
     bool getsAccessorUnderUnknownKey { false };
     bool getsCopiedProperties { false };
+    // `const { [key]: taken, ...rest } = source`: which names arrive is decided when the copy runs.
+    bool getsCopyWithoutComputedKey { false };
     // What the operations of the program do under a key nobody knows: as StoredUnderKey has it.
     ValueSetID valueFromOperationsUnderUnknownKey { ValueSets::nothing };
     bool isGivenValueByOperationUnderUnknownKey { false };
@@ -543,6 +545,7 @@ private:
         bool isStoredByConstructor;
         bool isWrittenByOperation;
         bool givesValueItself;
+        bool leavesOutComputedKey;
         uint8_t accessorForms;
         ValueSetID value;
         ValueFlowNumbers numbers;

@@ -53,7 +53,9 @@ FunctionID MemberAnswer::accessorFor(Access access) const
         return getter;
     case Access::Store:
         return setter;
-    default:
+    case Access::None:
+    case Access::Define:
+    case Access::Has:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -113,7 +115,16 @@ KeyLookup keyLookupOf(const Program& program, PropertyKeyID key)
     case NameClass::CanonicalNumericString:
     case NameClass::Proto:
         return KeyLookup::ByKey;
-    default:
+    case NameClass::Ordinary:
+    case NameClass::Constructor:
+    case NameClass::ObjectPrototypeMember:
+    case NameClass::Length:
+    case NameClass::Prototype:
+    case NameClass::CallOrApply:
+    case NameClass::Bind:
+    case NameClass::LastIndex:
+    case NameClass::Then:
+    case NameClass::ToJSON:
         return KeyLookup::Ordinary;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -183,7 +194,10 @@ static bool isPrivateName(const Program& program, PropertyKeyID key)
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
         return true;
-    default:
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -522,7 +536,9 @@ static MemberAnswer findInheritedMember(const PropertyAccessContext& context, co
         return findMemberFromPrototypeOf(context, BuiltinClasses::Object, query.key, query.access);
     case LayoutKind::BuiltinResult:
         return findMemberFromPrototypeOf(context, isTupleLayout(context.program, query.layout) ? BuiltinClasses::Array : BuiltinClasses::Object, query.key, query.access);
-    default:
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
         return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
     case LayoutKind::ModuleNamespace:
         break;

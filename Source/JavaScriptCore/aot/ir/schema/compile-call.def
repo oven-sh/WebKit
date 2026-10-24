@@ -81,7 +81,7 @@ record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record AccessRecord abi {
-    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 witness: Witness
+    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 distance: UInt32 witness: Witness
     function: Function? illTypedCause: IllTypedCause cost: AccessCost
 }
 record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }

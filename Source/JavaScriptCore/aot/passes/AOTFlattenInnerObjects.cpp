@@ -1512,7 +1512,27 @@ static BitVector findBodiesLeftToUnseenCallers(const Program& program, const Bui
         case FunctionRole::StubBody:
         case FunctionRole::Model:
             return true;
-        default:
+        case FunctionRole::Source:
+        case FunctionRole::Library:
+        case FunctionRole::Signature:
+        case FunctionRole::GenericVersion:
+        case FunctionRole::AllocatedThisVersion:
+        case FunctionRole::ConstructBody:
+        case FunctionRole::CallSiteVersion:
+        case FunctionRole::CalleeVersion:
+        case FunctionRole::CoroutineRamp:
+        case FunctionRole::AsyncWorker:
+        case FunctionRole::BoundFunction:
+        case FunctionRole::ResultWrapper:
+        case FunctionRole::ResultWorker:
+        case FunctionRole::ParameterWrapper:
+        case FunctionRole::EntryChecks:
+        case FunctionRole::OutlinedBody:
+        case FunctionRole::Serializer:
+        case FunctionRole::Parser:
+        case FunctionRole::ValidatingParser:
+        case FunctionRole::Validator:
+        case FunctionRole::ChainStep:
             return false;
         }
     };

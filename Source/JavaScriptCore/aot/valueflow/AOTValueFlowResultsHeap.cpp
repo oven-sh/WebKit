@@ -87,7 +87,14 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             case ValueFlowMadeNodeKind::Marked:
                 found.nodesOfMarks.append(node);
                 break;
-            default:
+            case ValueFlowMadeNodeKind::Constant:
+            case ValueFlowMadeNodeKind::Read:
+            case ValueFlowMadeNodeKind::Lookup:
+            case ValueFlowMadeNodeKind::Hub:
+            case ValueFlowMadeNodeKind::Masked:
+            case ValueFlowMadeNodeKind::WrittenUnderKind:
+            case ValueFlowMadeNodeKind::ReadUnderKind:
+            case ValueFlowMadeNodeKind::Instance:
                 break;
             }
         }
@@ -362,14 +369,20 @@ void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vec
         case LayoutKind::Instance:
             prototypes.append(universe.prototypeOf(site.layout));
             return;
-        default:
+        case LayoutKind::Environment:
+        case LayoutKind::Closure:
+        case LayoutKind::CoroutineFrame:
+        case LayoutKind::ModuleNamespace:
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
     case ValueFlowObjectKind::Namespace:
         return;
-    default:
+    case ValueFlowObjectKind::Primitive:
+    case ValueFlowObjectKind::UnknownObject:
+    case ValueFlowObjectKind::ResultOfBuiltin:
+    case ValueFlowObjectKind::Key:
         prototypes.append(ValueFlowUniverse::unknownObject());
         return;
     }
@@ -589,7 +602,9 @@ ValueSetID ValueFlowBuiltinApplication::valueAt(BuiltinOperand position, ValueSe
 BuiltinCallMode ValueFlowBuiltinApplication::mode() const
 {
     switch (kind) {
-    default:
+    case ValueFlowCallKind::Call:
+    case ValueFlowCallKind::CallByNativeCode:
+    case ValueFlowCallKind::CallByHost:
         return BuiltinCallMode::Call;
     case ValueFlowCallKind::Construct:
     case ValueFlowCallKind::ConstructByNativeCode:

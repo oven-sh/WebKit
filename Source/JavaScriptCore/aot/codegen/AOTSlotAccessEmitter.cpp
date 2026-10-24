@@ -544,9 +544,19 @@ Operand SlotAccessEmitter::decodeWordOfDeferringSlot(const ValueContext& value, 
     case Representation::Cell32:
     case Representation::JSValue:
         return conversions.decode(held, typeOf(value.id()), value.representation());
-    default:
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Int64:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+    case Representation::LiteralString:
+    case Representation::RawWord:
         return inResultRepresentation(value, conversions.decode(held, typeOf(value.id()), Representation::JSValue));
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void SlotAccessEmitter::writeSlot(const ValueContext& value, CellPointer cell, CellPointer cellWithSlots, const FieldAccess& access, ValueID stored)

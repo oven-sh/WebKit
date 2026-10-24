@@ -41,6 +41,9 @@ struct InstanceLayout {
     static constexpr ptrdiff_t offsetOfBoxedCalls = -static_cast<ptrdiff_t>(32 * KB);
     static constexpr size_t bytesReservedForBoxedCalls = 16 * KB;
 #endif
+    // KeyedValuePlace. A stub reaches a place by its distance from the instance.
+    static constexpr ptrdiff_t offsetOfKeyedValuePlaces = -static_cast<ptrdiff_t>(64 * KB);
+    static constexpr size_t bytesReservedForKeyedValuePlaces = 16 * KB;
     // Between the instance and the string cells.
     static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
     // Small tables of which compiled code reads one word at a time.
@@ -88,6 +91,8 @@ static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granu
 static_assert(!(InstanceLayout::offsetOfBoxedCalls % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForBoxedCalls % InstanceLayout::granuleAboveInstance));
 static_assert(InstanceLayout::offsetOfLoopPollPage() + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfBoxedCalls);
 #endif
+static_assert(InstanceLayout::offsetOfLoopPollPage() + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfKeyedValuePlaces);
+static_assert(InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForKeyedValuePlaces) <= -static_cast<ptrdiff_t>(32 * KB));
 static_assert(InstanceLayout::offsetOfStringCells - InstanceLayout::offsetOfBuiltinValues == InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells);
 static_assert(!(InstanceLayout::granuleAboveInstance % InstanceLayout::sizeOfSiteCache));
 static_assert(InstanceLayout::offsetOfSiteCaches({ 0, 1, 0, 0 }) == InstanceLayout::offsetOfStringCells + InstanceLayout::granuleAboveInstance);

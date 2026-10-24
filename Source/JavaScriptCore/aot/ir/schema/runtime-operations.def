@@ -41,7 +41,7 @@ runtime ResolveHeritage : EncodedJSValue (EncodedJSValue heritage) ; unknownCode
 runtime NewClass : JSCell* (uint32_t request, EncodedJSValue constructor, EncodedJSValue heritage, EncodedJSValue prototypeParent) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, AllocatorState, RuntimeState) throws collects
 runtime GetClassPrototype : JSCell* (JSCell* classObject) ; RuntimeCreatesConstant
 runtime GetConstructPrototype : JSCell* (EncodedJSValue newTarget) ; unknownCode
-runtime SetConstructPrototype : JSCell* (JSCell* object, JSCell* prototype, uint32_t allocation) ; reads(all) writes(AllocatorState, RuntimeState)
+runtime SetConstructPrototype : JSCell* (JSCell* object, JSCell* prototype, uint32_t allocation, uint32_t holdsNoField) ; reads(all) writes(AllocatorState, RuntimeState)
 
 runtime AllocateSlow : JSCell* (uint32_t allocation) ; RuntimeAllocates
 runtime GetHeaderOfAllocation : uint64_t (uint32_t allocation) ; RuntimeAllocates
