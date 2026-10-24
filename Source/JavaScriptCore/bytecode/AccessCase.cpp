@@ -1290,7 +1290,7 @@ bool AccessCase::canReplace(const AccessCase& other) const
         if (other.type() != type())
             return false;
         auto& thisCase = this->as<ModuleNamespaceAccessCase>();
-        auto& otherCase = this->as<ModuleNamespaceAccessCase>();
+        auto& otherCase = other.as<ModuleNamespaceAccessCase>();
         return thisCase.moduleNamespaceObject() == otherCase.moduleNamespaceObject();
     }
 
