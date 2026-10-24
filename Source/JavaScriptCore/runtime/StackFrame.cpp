@@ -31,6 +31,7 @@
 #include "FunctionExecutable.h"
 #include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
+#include "JSModuleRecord.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -161,6 +162,9 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
             if (isAsyncFrameWithoutCodeBlock()) {
                 ASSERT(jsFrame.callee);
                 ASSERT(!jsFrame.codeBlock);
+                // The frame of a module that is suspended at a top-level await has the module record as its callee.
+                if (auto* moduleRecord = dynamicDowncast<JSModuleRecord>(jsFrame.callee.get()))
+                    return processSourceURL(vm, *this, moduleRecord->sourceCode().provider()->sourceURL(), allowOverride);
                 JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL(), allowOverride);
             }
@@ -185,6 +189,8 @@ String StackFrame::sourceURLStripped(VM& vm) const
             if (isAsyncFrameWithoutCodeBlock()) {
                 ASSERT(jsFrame.callee);
                 ASSERT(!jsFrame.codeBlock);
+                if (auto* moduleRecord = dynamicDowncast<JSModuleRecord>(jsFrame.callee.get()))
+                    return processSourceURL(vm, *this, moduleRecord->sourceCode().provider()->sourceURLStripped());
                 JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURLStripped());
             }
@@ -211,13 +217,16 @@ String StackFrame::functionName(VM& vm) const
                 case EvalCode:
                     return "eval code"_s;
                 case ModuleCode:
-                    return "module code"_s;
+                    return jsFrame.m_isAsyncFrame ? "async module code"_s : "module code"_s;
                 case GlobalCode:
                     return "global code"_s;
                 case FunctionCode:
                     break;
                 }
             }
+            // A module that is suspended at a top-level await and has lost its CodeBlock.
+            if (jsFrame.m_isAsyncFrame && jsFrame.callee && jsFrame.callee->inherits<JSModuleRecord>())
+                return "async module code"_s;
             String name;
             if (jsFrame.callee && jsFrame.callee->isObject())
                 name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();

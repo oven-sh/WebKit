@@ -1268,11 +1268,20 @@ JSObject* JSPromise::then(JSGlobalObject* globalObject, JSValue onFulfilled, JSV
         auto* constructor = promiseSpeciesConstructor(globalObject, this);
         RETURN_IF_EXCEPTION(scope, { });
 
-        auto [promise, resolve, reject] = JSPromise::newPromiseCapability(globalObject, constructor);
-        RETURN_IF_EXCEPTION(scope, { });
+        if (constructor == globalObject->promiseConstructor()) {
+            // The species is the Promise of this realm after all (then() was replaced, or the prototype is
+            // frozen). Its capability would be a promise and two functions that nothing else sees, so the job
+            // settles the promise itself, as above. The promise is then also the entry context of the job,
+            // which says what the job settles (Interpreter::getStackTrace).
+            resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+            resultPromiseCapability = resultPromise;
+        } else {
+            auto [promise, resolve, reject] = JSPromise::newPromiseCapability(globalObject, constructor);
+            RETURN_IF_EXCEPTION(scope, { });
 
-        resultPromise = promise;
-        resultPromiseCapability = JSPromise::createPromiseCapability(vm, globalObject, promise, resolve, reject);
+            resultPromise = promise;
+            resultPromiseCapability = JSPromise::createPromiseCapability(vm, globalObject, promise, resolve, reject);
+        }
     }
 
     scope.release();
