@@ -41,6 +41,8 @@ public:
     };
 
     static ReservedRangeHeap* tryCreate(const Request&);
+    // Null where none of the multiples of the alignment that were drawn is free.
+    static void* tryReserveRandomWindow(size_t, size_t alignment, OSAllocator::Usage, bool isWritable);
 
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }

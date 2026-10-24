@@ -9,9 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCreateEntrypointsInternal.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
+#include "AOTRepresentation.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
@@ -110,9 +113,18 @@ Function createBoundFunction(const Program& program, const FlowResults& flow, Ty
     ValueID boundThis;
     if (target.has(FunctionFlags::HasThis))
         boundThis = addCapture(target.thisType);
+    // `new` on the bound function is answered by the run time, which hands the bound arguments on as values: there the closure holds each as a value. Whoever binds has seen that it is of the parameter's type.
+    bool isConstructedByRunTime = target.constructorForm() != ConstructorForm::NotConstructor;
     Vector<ValueID, 8> arguments;
-    for (uint32_t i = 0; i < record.numberOfCapturedArguments; ++i)
+    Vector<uint32_t, 4> argumentsHeldAsValues;
+    for (uint32_t i = 0; i < record.numberOfCapturedArguments; ++i) {
+        if (isConstructedByRunTime && !holdsCells(declaredRepresentationOf(program, target.parameters[i]))) {
+            argumentsHeldAsValues.append(i);
+            arguments.append(addCapture(DeclaredType { .type = TypeTable::anything }));
+            continue;
+        }
         arguments.append(addCapture(target.parameters[i]));
+    }
     // The body does not use the target closure. The run time reads it for instanceof.
     if (record.capturesTargetClosure)
         addCapture(DeclaredType { .type = TypeTable::function });
@@ -122,6 +134,8 @@ Function createBoundFunction(const Program& program, const FlowResults& flow, Ty
     }
 
     builder.moveToEndOf(block);
+    for (uint32_t i : argumentsHeldAsValues)
+        arguments[i] = builder.append(makeAssumeType(arguments[i], TypingContext { program, bound, types }.typeIDOf(target.parameters[i])));
     ValueID result = appendDirectCall(builder, {
         .callee = targetID,
         .captures = targetCaptures.span(),

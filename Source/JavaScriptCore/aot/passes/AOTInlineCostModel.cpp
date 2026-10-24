@@ -438,6 +438,16 @@ static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID fun
     return isEnteredThroughCallerAlone(context, function, heat);
 }
 
+// The frame of the built-in that a traversal stands for holds the step of the traversal and nothing else: the two are one level.
+static bool isLevelOfCopies(const Program& program, const Function& caller, uint32_t frame)
+{
+    const InlineFrame& inlineFrame = caller.inlineFrames[frame];
+    const Function& callee = program.at(inlineFrame.callee);
+    if (isWrapperCreatedByEngine(callee))
+        return false;
+    return callee.role != FunctionRole::ChainStep || !inlineFrame.parent || !program.at(caller.inlineFrames[inlineFrame.parent].callee).enclosingRuntimeFunction;
+}
+
 // A body with one call site moves into its caller and is no copy. So what is called from it has the depth that it had there.
 static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlineFrame, HeatClass heat)
 {
@@ -451,7 +461,7 @@ static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlin
         FunctionID callee = caller.inlineFrames[frame].callee;
         if (!hasSingleCallSite(context, callee, caller.inlineFrames[frame].parent, heat))
             break;
-        depth -= !isWrapperCreatedByEngine(program.at(callee));
+        depth -= isLevelOfCopies(program, caller, frame);
     }
     return depth;
 }
@@ -633,7 +643,7 @@ unsigned inlineDepthOf(const Program& program, const Function& caller, uint32_t 
 {
     unsigned depth = 0;
     for (uint32_t frame = inlineFrame; frame; frame = caller.inlineFrames[frame].parent)
-        depth += !isWrapperCreatedByEngine(program.at(caller.inlineFrames[frame].callee));
+        depth += isLevelOfCopies(program, caller, frame);
     return depth;
 }
 

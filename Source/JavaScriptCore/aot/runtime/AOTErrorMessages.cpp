@@ -645,9 +645,12 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
     return createError(globalObject, withAOTErrorNote(makeString("Cannot "_s, describe(change, changed), ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
 }
 
-JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer)
+JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
 {
-    return createError(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s));
+    VM& vm = globalObject->vm();
+    JSObject* error = createError(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s));
+    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
+    return error;
 }
 
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)

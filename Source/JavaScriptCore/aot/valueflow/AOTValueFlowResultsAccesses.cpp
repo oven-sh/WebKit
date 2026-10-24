@@ -468,7 +468,7 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         ValueFlowUnknownSource source;
     };
     Vector<Beginning> beginningsAtOperationsOnUnknownValues;
-    // What an operation does because it reads from, calls or hands something to a value that nobody knows begins where that value began, and at the operation where no line can be named for that value: the global object was never handed to anybody.
+    // What an operation does because it reads from, calls or hands something to a value that nobody knows begins where that value began.
     auto beginAt = [&](ValueFlowStatementID beginning, ValueFlowNodeID node, ValueFlowUnknownSource source) {
         if (!beginning)
             return;

@@ -190,8 +190,14 @@ static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& lo
     unsigned numberOfHoistedReads = 0;
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    BlockFrequency frequencyOfPreheader = frequencies.classOf(loop.preheader);
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
-        if (!loop.body.get(blockID.index()) || context.analyses.blockFrequencies().classOf(blockID) == BlockFrequency::Rare)
+        if (!loop.body.get(blockID.index()))
+            continue;
+        // In front of the loop a read runs each time the loop is entered, and what it read is kept all the way round. A block that seldom runs pays for its own reads.
+        BlockFrequency frequency = frequencies.classOf(blockID);
+        if (frequency == BlockFrequency::Rare || frequency > frequencyOfPreheader)
             continue;
         LoopClobbers clobbersInHeader;
         unsigned numberOfReadsBefore = numberOfHoistedReads;

@@ -467,13 +467,14 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);
     setSlotOperation(plan, Opcode::PutSlot);
-    if (query.isPrivate || !mayFindSlotEmpty(context, query, state)) {
-        if (!state.isAlwaysFilled)
-            requireFilledSlotForStore(state, plan);
+    if (!mayFindSlotEmpty(context, query, state) || (query.isPrivate && state.isAlwaysFilled))
         return;
-    }
     if (isAnsweredByTestOfCell(context, query, state)) {
         plan.requiredProofs.add(Proof::BirthFieldsFilled);
+        return;
+    }
+    if (query.isPrivate) {
+        requireFilledSlotForStore(state, plan);
         return;
     }
     // The allocation has filled the slot and listed the key, so the store creates nothing.

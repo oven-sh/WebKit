@@ -30,10 +30,10 @@
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
+#include "ReservedRangeHeap.h"
 #include "StructureID.h"
 #include <bmalloc/bmalloc.h>
 #include <wtf/BitVector.h>
-#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/RAMSize.h>
 #include <wtf/Vector.h>
 
@@ -115,40 +115,21 @@ public:
         uintptr_t mappedHeapSize = preferredStructureHeapSize;
         if (Options::runsCompiledImage() && !Options::structureHeapSizeInKB())
             mappedHeapSize = structureHeapSizeWithinBudget(mappedHeapSize);
+#if OS(LINUX) && defined(BUN_HARDENED)
+        bool drawsWindow = true;
+#else
+        bool drawsWindow = Options::runsCompiledImage();
+#endif
         for (unsigned i = 0; i < 8; ++i) {
             // We need to align the address range to mappedHeapSize to ensure that the range does not span
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
             // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
             // order to encode StructureIDs.
-#if (OS(LINUX) && defined(BUN_HARDENED)) || OS(DARWIN)
-            static constexpr uintptr_t lowestRandomAddress = 64 * GB;
-            static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
-            uintptr_t firstWindow = (lowestRandomAddress + mappedHeapSize - 1) / mappedHeapSize;
-            uintptr_t endWindow = highestRandomAddress / mappedHeapSize;
-#if OS(DARWIN)
-            unsigned maxRandomPlacements = Options::runsCompiledImage() ? 16 : 0;
-#else
-            unsigned maxRandomPlacements = 16;
-#endif
-            for (unsigned attempt = 0; attempt < maxRandomPlacements && !g_jscConfig.startOfStructureHeap; ++attempt) {
-                void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * mappedHeapSize);
-#if OS(DARWIN)
-                void* reserved = OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages, requestedAddress);
-                if (!reserved)
-                    continue;
-#else
-                void* reserved = OSAllocator::tryReserveUncommitted(mappedHeapSize, OSAllocator::StructureAllocatorPages, requestedAddress);
-                if (!reserved)
+            if (drawsWindow) {
+                g_jscConfig.startOfStructureHeap = std::bit_cast<uintptr_t>(ReservedRangeHeap::tryReserveRandomWindow(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages, true));
+                if (g_jscConfig.startOfStructureHeap)
                     break;
-#endif
-                if (reserved == requestedAddress)
-                    g_jscConfig.startOfStructureHeap = std::bit_cast<uintptr_t>(reserved);
-                else
-                    OSAllocator::releaseDecommitted(reserved, mappedHeapSize, 0);
             }
-            if (g_jscConfig.startOfStructureHeap)
-                break;
-#endif
             g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages));
             if (g_jscConfig.startOfStructureHeap)
                 break;

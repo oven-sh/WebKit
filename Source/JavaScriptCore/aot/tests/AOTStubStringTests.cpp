@@ -198,7 +198,9 @@ private:
         Answer equality = runWithoutOperation(stringsAreEqual(), m_first.address(), m_second.address());
         AOT_TEST_CHECK(equality.result == static_cast<uint64_t>(!order));
         bool comparesCharacters = first.size() == second.size() && m_first.impl() != m_second.impl();
-        AOT_TEST_CHECK(equality.numberOfLeafCalls == (comparesCharacters && (!haveSameWidth || first.size() > maxLengthComparedWithoutCall)));
+        const size_t unitsInWord = sizeof(uint64_t) / (areBoth8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
+        bool endsAreSame = first.size() >= unitsInWord && first.size() == second.size() && std::ranges::equal(first.span().first(unitsInWord), second.span().first(unitsInWord)) && std::ranges::equal(first.span().last(unitsInWord), second.span().last(unitsInWord));
+        AOT_TEST_CHECK(equality.numberOfLeafCalls == (comparesCharacters && (!haveSameWidth || (first.size() > maxLengthComparedWithoutCall && endsAreSame))));
         Answer equalityOfDistinctCells = runWithoutOperation(distinctStringsAreEqual(), m_first.address(), m_second.address());
         AOT_TEST_CHECK(equalityOfDistinctCells.result == equality.result && equalityOfDistinctCells.numberOfLeafCalls == equality.numberOfLeafCalls);
         for (bool isStrict : { false, true }) {
@@ -273,6 +275,22 @@ static void testDifferenceInLastUnitOnly()
     }
 }
 
+static void testDifferenceInOneUnitOnly()
+{
+    ComparisonStubs stubs;
+    for (unsigned length = 1; length <= maxTestedLength; ++length) {
+        for (char16_t highBits : { 0, 0x300 }) {
+            Units text = textOfLength(length, highBits);
+            for (unsigned position = 0; position < length; ++position) {
+                Units other = text;
+                ++other[position];
+                stubs.checkFlatStrings(text, other);
+                stubs.checkFlatStrings(other, text);
+            }
+        }
+    }
+}
+
 static void testCommonPrefixes()
 {
     ComparisonStubs stubs;
@@ -318,7 +336,7 @@ static void testAtoms()
 {
     ComparisonStubs stubs;
     constexpr ASCIILiteral text = "an atom that is longer than what a stub compares by itself: a"_s;
-    constexpr ASCIILiteral otherText = "an atom that is longer than what a stub compares by itself: b"_s;
+    constexpr ASCIILiteral otherText = "an atom that is longer than what a stub compared by itself: a"_s;
     static_assert(text.length() == otherText.length() && text.length() > maxLengthComparedWithoutCall);
     AtomString atom(text);
     AtomString otherAtom(otherText);
@@ -670,6 +688,7 @@ std::span<const NativeTest> stubStringTests()
         { "stubs/string-case-conversions-remembered"_s, ImageTests::whenExecutable<testCaseConversionsRemembered> },
         { "stubs/string-comparison-difference-at-every-position"_s, ImageTests::whenExecutable<testDifferenceAtEveryPosition> },
         { "stubs/string-comparison-difference-in-last-unit-only"_s, ImageTests::whenExecutable<testDifferenceInLastUnitOnly> },
+        { "stubs/string-comparison-difference-in-one-unit-only"_s, ImageTests::whenExecutable<testDifferenceInOneUnitOnly> },
         { "stubs/string-comparison-common-prefixes"_s, ImageTests::whenExecutable<testCommonPrefixes> },
         { "stubs/string-comparison-order-of-wide-units"_s, ImageTests::whenExecutable<testOrderOfWideUnits> },
         { "stubs/string-comparison-same-cells-and-impls"_s, ImageTests::whenExecutable<testSameCellsAndImpls> },

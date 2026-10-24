@@ -1572,8 +1572,12 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         getters = maker.unite(getters, found->value.getters);
         setters = found->value.setters;
         forms |= found->value.accessorForms;
-        values = maker.unite(values, found->value.valueFromOperations);
-        isGivenValue |= found->value.isGivenValueByOperation;
+        // `object.name = value` runs the setter where there is one: what it stores is no value of the property.
+        if (setters == ValueSets::nothing) {
+            values = maker.unite(values, found->value.valueFromOperations);
+            isGivenValue |= found->value.isGivenValueByOperation;
+        } else
+            isGivenValue |= found->value.isGivenValueByDefinition;
     }
     // A descriptor without `value` defines none.
     if (isGivenValue || getters == ValueSets::nothing || !sets.isSubset(values, m_inputs.universe().undefinedValue()))

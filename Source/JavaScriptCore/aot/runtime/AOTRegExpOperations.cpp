@@ -18,6 +18,7 @@
 #include "AOTState.h"
 #include "AOTStringBuiltinOperationData.h"
 #include "AOTStubsRegExp.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
@@ -193,7 +194,7 @@ static bool advancesLastIndex(RegExpMatchForm form, RegExp* regExp)
 static JSValue collectMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject, MatchResult match)
 {
     // Beyond this RegExpObject::matchGlobal() counts the matches before it creates them.
-    constexpr unsigned maxMatchesCreatedUncounted = 100000;
+    AOT_THRESHOLD(unsigned, maxMatchesCreatedUncounted, 100000);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RegExp* regExp = object->regExp();
     object->setLastIndex(globalObject, 0);

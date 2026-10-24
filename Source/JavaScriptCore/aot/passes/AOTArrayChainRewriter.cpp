@@ -153,6 +153,29 @@ static StepArguments createStepArguments(FunctionPassContext& context, const Arr
     return arguments;
 }
 
+// The traversal stands for one call of a built-in that is written in JavaScript: a trace that is taken in the callback names the built-in between the callback and the caller, as it does where the text of the built-in takes the place of the call.
+// `flatMap` ends in a tail call of the helper that calls the callback, and a trace names neither.
+static std::optional<Origin> enterFrameOfOnlyCall(const Program& program, Function& function, const ArrayChain& chain)
+{
+    const Value& call = function.at(chain.lastCall);
+    if (chain.firstCall() != chain.lastCall || chain.shape.end != ChainEndKind::Array || call.opcode != Opcode::CallDirect)
+        return std::nullopt;
+
+    const Function& builtin = program.at(call.function());
+    InlineFrame frame {
+        .callee = call.function(),
+        .callPosition = call.position,
+        .parent = call.inlineFrame,
+        .isTailCall = call.isDemotedTailCall(),
+        .module = builtin.module,
+    };
+    Vector<InlineFrame>& frames = function.inlineFrames;
+    if (frames.isEmpty())
+        frames.append(InlineFrame { });
+    frames.append(frame);
+    return Origin { builtin.position, static_cast<uint32_t>(frames.size() - 1) };
+}
+
 void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const ArrayChain& chain)
 {
     Function& function = context.function;
@@ -160,7 +183,8 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
 
     ErasedIndexes erased = findErasedIndexes(context, chain);
     ProgramPoint point { chain.block, erased.lastCall };
-    Origin origin = function.at(chain.lastCall).origin();
+    std::optional<Origin> originInBuiltin = enterFrameOfOnlyCall(context.program, function, chain);
+    Origin origin = originInBuiltin ? *originInBuiltin : function.at(chain.lastCall).origin();
     TypeID resultType = function.at(chain.lastCall).type;
     size_t numberOfValuesBeforeInsertions = function.at(chain.block).values.size();
 
@@ -175,7 +199,7 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
     StepArguments arguments = createStepArguments(context, chain, insert);
     Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
     const Value& lastCall = function.at(chain.lastCall);
-    call.setIsDemotedTailCall(FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
+    call.setIsDemotedTailCall(!originInBuiltin && FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
     ValueID fused = insert(WTF::move(call));
     ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
     builder.applyInsertions();

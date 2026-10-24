@@ -424,14 +424,36 @@ void branchIfCharactersDiffer(StubAssembler& jit, const ComparedImpls& impls, Ju
     auto [first, second, length, flagsOfBoth, word] = impls;
     RELEASE_ASSERT(noOverlap(first, second, length, flagsOfBoth, word));
 
-    needsLeaf.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
-    Jump areBoth8Bit = jit.branchTest32(CCallHelpers::NonZero, flagsOfBoth, TrustedImm32(StringImpl::flagIs8Bit()));
-    needsLeaf.append(jit.branchTest32(CCallHelpers::NonZero, Address(first, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    needsLeaf.append(jit.branchTest32(CCallHelpers::NonZero, Address(second, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    jit.lshift32(TrustedImm32(1), length);
-    areBoth8Bit.link(&jit);
+    Jump isLong = jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall));
+    auto countBytes = [&] {
+        Jump areBoth8Bit = jit.branchTest32(CCallHelpers::NonZero, flagsOfBoth, TrustedImm32(StringImpl::flagIs8Bit()));
+        needsLeaf.append(jit.branchTest32(CCallHelpers::NonZero, Address(first, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        needsLeaf.append(jit.branchTest32(CCallHelpers::NonZero, Address(second, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        jit.lshift32(TrustedImm32(1), length);
+        areBoth8Bit.link(&jit);
+    };
+    countBytes();
     loadCharacters(jit, first, second);
     branchIfBytesDiffer(jit, { first, second, length, flagsOfBoth, word }, differ, DifferingWords::MayBeUnloaded);
+    Jump areSame = jit.jump();
+
+    isLong.link(&jit);
+    static_assert(maxLengthComparedWithoutCall >= static_cast<int32_t>(sizeof(uint64_t)));
+    countBytes();
+    const GPRReg otherWord = flagsOfBoth;
+    jit.loadPtr(Address(first, StringImpl::dataOffset()), word);
+    jit.load64(Address(word), word);
+    jit.loadPtr(Address(second, StringImpl::dataOffset()), otherWord);
+    jit.load64(Address(otherWord), otherWord);
+    differ.append(jit.branch64(CCallHelpers::NotEqual, word, otherWord));
+    jit.loadPtr(Address(first, StringImpl::dataOffset()), word);
+    jit.load64(BaseIndex(word, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), word);
+    jit.loadPtr(Address(second, StringImpl::dataOffset()), otherWord);
+    jit.load64(BaseIndex(otherWord, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), otherWord);
+    differ.append(jit.branch64(CCallHelpers::NotEqual, word, otherWord));
+    needsLeaf.append(jit.jump());
+
+    areSame.link(&jit);
 }
 
 void generateStringsAreEqual(StubAssembler& jit)

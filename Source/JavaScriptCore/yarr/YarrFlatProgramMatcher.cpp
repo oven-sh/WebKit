@@ -269,7 +269,8 @@ static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const 
     if (program.requiredTexts.isEmpty())
         return findStartByTables(program, input, length, from, search.candidates);
     for (;;) {
-        from = nextStartWithRequiredTexts(program.requiredTexts, std::span { input, length }, from, search.requiredTextPlaces);
+        if (!search.requiredTextPlaces[0] || !canBeginByKnownPlaces(program.requiredTexts, length, from, search.requiredTextPlaces))
+            from = nextStartWithRequiredTexts(program.requiredTexts, std::span { input, length }, from, search.requiredTextPlaces);
         if (from > length || program.startScan == FlatStartScan::RequiredTextsAlone)
             return from;
         unsigned next = findStartByTables(program, input, length, from, search.candidates);

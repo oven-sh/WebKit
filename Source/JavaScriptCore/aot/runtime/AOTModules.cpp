@@ -646,7 +646,7 @@ const SourceOrigin& Modules::sourceOrigin(ModuleID module)
     return *loaded.sourceOrigin;
 }
 
-void Modules::throwFailure(ModuleFailureID id)
+void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* globalObject = m_instance.globalObject;
@@ -663,7 +663,7 @@ void Modules::throwFailure(ModuleFailureID id)
         loader()->resolve(globalObject, m_state.strings->string(vm, specifier), pathString(importer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, void());
-    throwException(globalObject, scope, createModuleMissingAtBuildError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer)));
+    throwException(globalObject, scope, createModuleMissingAtBuildError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer), isForRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s));
 }
 
 } } // namespace JSC::AOT

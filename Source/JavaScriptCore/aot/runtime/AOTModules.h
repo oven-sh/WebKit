@@ -108,7 +108,7 @@ public:
     JSString* pathString(ModuleID);
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
-    void throwFailure(ModuleFailureID);
+    void throwFailure(ModuleFailureID, bool isForRequire);
     void throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier);
     void throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier);
     void didRequestFromHost(ModuleID);

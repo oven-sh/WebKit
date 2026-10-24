@@ -154,7 +154,7 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
     Vector<uint32_t, 4> stackIndices;
     for (uint32_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex]) {
-            patchpoint->append(B3::ConstrainedValue(argument, B3::ValueRep::WarmAny));
+            patchpoint->append(B3::ConstrainedValue(argument, B3::ValueRep::ColdAny));
             stackIndices.append(stackIndex);
         }
     }

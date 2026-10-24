@@ -73,7 +73,7 @@ JSObject* createModuleInShadowRealmError(JSGlobalObject*, StringView path);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 #endif
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
-JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer);
+JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
 String functionNotCompiledMessage(const String& functionName, ASCIILiteral adviceToKeepFunctionSource);
 String functionNotCompiledMessage(const String& path, unsigned line, ASCIILiteral adviceToKeepFunctionSource);

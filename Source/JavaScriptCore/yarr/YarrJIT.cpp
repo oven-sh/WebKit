@@ -11106,16 +11106,27 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.popToRestore(m_regs.regT0);
         generateFailReturn();
         done.link(&m_jit);
+        if (required.knowsUnitsInFront) {
+            loadFromFrame(frameLocation, m_regs.regT0);
+            m_jit.sub32(MacroAssembler::TrustedImm32(static_cast<int32_t>(claimed) - static_cast<int32_t>(required.leastDistance)), m_regs.regT0);
+            generateWalkBackOver(required.asciiMembersInFront, required.allNonASCIICanStandInFront);
+        }
     }
 
     // With the place of an attempt in index: moves it behind the last unit of the subject that no match holds. Once a call.
     void generateSearchFromEnd(const RequiredText& required, unsigned frameLocation)
     {
-        auto [low, high] = required.asciiMembers;
         JIT_COMMENT(m_jit, "units of matches at the end");
         m_jit.move(MacroAssembler::TrustedImm32(std::numeric_limits<int32_t>::max()), m_regs.regT0);
         storeToFrame(m_regs.regT0, frameLocation);
         m_jit.move(m_regs.length, m_regs.regT0);
+        generateWalkBackOver(required.asciiMembers, required.matchesAllNonASCII);
+    }
+
+    // With a place behind index in regT0: moves index behind the last unit between the two that is none of these.
+    void generateWalkBackOver(const std::array<uint64_t, 2>& asciiMembers, bool matchesAllNonASCII)
+    {
+        auto [low, high] = asciiMembers;
         if (low)
             moveConstant(low, m_regs.regT2);
         if (high)
@@ -11141,7 +11152,7 @@ class YarrGenerator final : public YarrJITInfo {
             verifySubjectRead(address, 2, __LINE__);
             m_jit.load16Unaligned(address, m_regs.regT1);
         }
-        (required.matchesAllNonASCII ? isMember : isNoMember).append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT1, MacroAssembler::TrustedImm32(128)));
+        (matchesAllNonASCII ? isMember : isNoMember).append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT1, MacroAssembler::TrustedImm32(128)));
         MacroAssembler::Jump isInHighWord = m_jit.branchTest32(MacroAssembler::NonZero, m_regs.regT1, MacroAssembler::TrustedImm32(64));
         if (low)
             testBit(m_regs.regT2);

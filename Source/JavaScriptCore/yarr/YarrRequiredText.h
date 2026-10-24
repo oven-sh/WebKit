@@ -21,6 +21,7 @@ struct RequiredText {
     static constexpr unsigned maxLength = 32;
 
     bool isMember(unsigned unit) const { return unit < 128 ? asciiMembers[unit >> 6] >> (unit & 63) & 1 : matchesAllNonASCII; }
+    bool canStandInFront(unsigned unit) const { return unit < 128 ? asciiMembersInFront[unit >> 6] >> (unit & 63) & 1 : allNonASCIICanStandInFront; }
 
     // Every match holds one of these code units. With matchesAllNonASCII every unit from 128 up counts as one.
     std::array<uint64_t, 2> asciiMembers { };
@@ -30,6 +31,10 @@ struct RequiredText {
     // How many code units lie between the start of a match and that unit.
     unsigned leastDistance { 0 };
     unsigned greatestDistance { unbounded };
+    // With knowsUnitsInFront: between the start of a match and that unit lie none but these, so no match begins in front of the last other unit in front of it.
+    std::array<uint64_t, 2> asciiMembersInFront { };
+    bool allNonASCIICanStandInFront { false };
+    bool knowsUnitsInFront { false };
     // That unit is text[indexInText], and the rest of the text stands around it. A letter that matches in both cases is in lower case and has 0x20 in caseMask. Empty: the unit is all that is known.
     Vector<Latin1Character, 16> text;
     Vector<Latin1Character, 16> caseMask;
@@ -58,6 +63,23 @@ inline constexpr unsigned leastRarityWorthSearchingFor = 5;
 
 // For one search through one subject: one more than the place where each text was last found. 0: it has not been looked for.
 using RequiredTextPlaces = std::array<unsigned, maxRequiredTexts>;
+
+// Whether the places where the texts were last found say that a match can begin at `start`. Where they do not, nextStartWithRequiredTexts() answers.
+ALWAYS_INLINE bool canBeginByKnownPlaces(const RequiredTexts& texts, unsigned length, unsigned start, const RequiredTextPlaces& places)
+{
+    for (unsigned i = 0; i < texts.size(); ++i) {
+        const RequiredText& required = texts[i];
+        if (required.isAllThatMatchesAtEndHold) {
+            if (start + 1 < places[i] || !places[i])
+                return false;
+            continue;
+        }
+        uint64_t earliest = static_cast<uint64_t>(start) + required.leastDistance;
+        if (earliest >= places[i] || places[i] > length || places[i] - 1 - start > required.greatestDistance)
+            return false;
+    }
+    return true;
+}
 
 // The first place from `start` on where a match can begin. Past the end: none.
 unsigned nextStartWithRequiredTexts(const RequiredTexts&, std::span<const Latin1Character> subject, unsigned start, RequiredTextPlaces&);

@@ -138,7 +138,7 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
             inRegisters.append(B3::ConstrainedValue(value, B3::ValueRep::reg(results[i].reg)));
             break;
         case ArgumentLocation::Kind::Stack:
-            onStack.append(B3::ConstrainedValue(value->type() == B3::Int32 ? m_out.zeroExt(value, B3::Int64) : value, B3::ValueRep::WarmAny));
+            onStack.append(B3::ConstrainedValue(value->type() == B3::Int32 ? m_out.zeroExt(value, B3::Int64) : value, B3::ValueRep::ColdAny));
             stackIndices.append(results[i].stackIndex);
             break;
         }

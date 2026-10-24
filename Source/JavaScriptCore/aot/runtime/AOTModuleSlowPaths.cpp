@@ -82,11 +82,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(modules.resolve(ModuleID(module), specifierFormOf(isURL))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instance, uint32_t failure))
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instance, uint32_t failure, uint32_t isForRequire))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowModuleFailure);
     Modules& modules = modulesOf(*instance);
-    modules.throwFailure(ModuleFailureID(failure));
+    modules.throwFailure(ModuleFailureID(failure), isForRequire);
     OPERATION_RETURN(scope);
 }
 

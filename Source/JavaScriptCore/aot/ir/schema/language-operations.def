@@ -41,7 +41,7 @@ operation RequireModule (module: Module(Target), referrer: Module(Referrer), spe
 operation EvaluateModule (module: Module(Target), referrer: Module(Referrer)) [isBare] -> none ; unknownCode ; AsRead..Prepared ; removedBy = CallModules ; flow = Copies
 operation RecordRequire (module: Module(Target), referrer: Module(Referrer)) -> none ; writes(ExternalState) ; runtime = RecordRequire ; flow = Copies
 operation ResolveModule (module: Module(Referrer), referrer: Module(Referrer), specifier: String) [isURL] -> unknown ; unknownCode ; runtime = ResolveModule ; flow = Unsound
-operation ThrowModuleFailure (failure: ModuleFailure) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowModuleFailure ; flow = TableProves
+operation ThrowModuleFailure (failure: ModuleFailure) [isForRequire] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowModuleFailure ; flow = TableProves
 operation ImportDynamic (specifier: Any/Converted, options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; raises = LoadsModule ; runtime = ImportDynamic ; flow = Allocates
 operation RequireDynamic (specifier: Any/Converted, referrer: Module(Referrer)) -> unknown ; unknownCode ; raises = LoadsModule ; runtime = RequireDynamic ; flow = Copies
 operation ResolveDynamic (specifier: Any/Converted, referrer: Module(Referrer)) [isURL isForRequire] -> unknown ; unknownCode ; runtime = ResolveDynamic ; flow = Unsound

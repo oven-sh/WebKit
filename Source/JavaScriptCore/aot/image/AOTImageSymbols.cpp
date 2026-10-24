@@ -28,8 +28,11 @@
 #include <wtf/DataLog.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/StringView.h>
 
@@ -522,7 +525,15 @@ static void printConstantsAndFFICode(PrintStream& out, std::span<const ImageSymb
 
 void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols, const ImageSymbolInputs& inputs, std::span<const uint8_t> image, const BuildContext& context)
 {
-    std::unique_ptr<FilePrintStream> map = FilePrintStream::open(path, "wb"_s);
+    // A build with several entry points compiles an image for each: the first map has the name that was asked for, the next ones that name and ".1", ".2" ..
+    String name = String::fromUTF8(path.span());
+    unsigned number = [&] {
+        static Lock lock;
+        static NeverDestroyed<HashMap<String, unsigned>> mapsWritten;
+        Locker locker { lock };
+        return mapsWritten->add(name, 0).iterator->value++;
+    }();
+    std::unique_ptr<FilePrintStream> map = FilePrintStream::open((number ? makeString(name, '.', number) : name).utf8(), "wb"_s);
     if (!map) {
         dataLogLn("AOT: cannot write the map file ", path);
         return;

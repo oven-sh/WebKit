@@ -89,6 +89,9 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
 {
     if (effectRuleOf(value.opcode) != EffectRule::Declared)
         return { };
+    // The slot of an accessor holds two functions. What stands for the value of the location is the getter: whoever has read it has not read the setter.
+    if (value.opcode == Opcode::GetSlotSetter)
+        return { };
 
     SingleAccessCollector collector;
     forEachDeclaredEffect(value, collector);

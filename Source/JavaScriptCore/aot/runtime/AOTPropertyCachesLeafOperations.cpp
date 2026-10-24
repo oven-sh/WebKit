@@ -431,6 +431,12 @@ static void cacheStore(Instance* instance, JSObject* object, Structure* structur
     caches.cache({ structureBefore, { uid, std::nullopt }, SlotAccess::Store }, classifyStore({ instance->globalObject, object, structureBefore, uid, slot, PutMode::Strict }));
 }
 
+static bool hasStructureAtHand(VM& vm)
+{
+    Allocator allocator = vm.structureSpace().allocatorFor(sizeof(Structure), AllocatorForMode::AllocatorIfExists);
+    return !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
+}
+
 static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, UniquedStringImpl* uid, JSValue value)
 {
     VM& vm = *instance->vm;
@@ -463,6 +469,8 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     if (canOnlyReplace || !structure->isStructureExtensible())
         return LeafAnswer::TakeSlowPath;
     bool repeatsAddition = repeatsPropertyAddition(structure, uid);
+    if (!repeatsAddition && !hasStructureAtHand(vm))
+        return LeafAnswer::TakeSlowPath;
     bool makesStructure = !repeatsAddition && instance->state->propertyCaches->shouldMakeStructureForAdditionByKey(structure, uid);
     if (!repeatsAddition && !makesStructure)
         object->convertToDictionary(vm);

@@ -172,36 +172,45 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
     return nullptr;
 }
 
+void* ReservedRangeHeap::tryReserveRandomWindow(size_t size, size_t alignment, OSAllocator::Usage usage, bool isWritable)
+{
+    uintptr_t firstWindow = (lowestRandomAddress + alignment - 1) / alignment;
+    uintptr_t endWindow = highestRandomAddress / alignment;
+    for (unsigned attempt = 0; attempt < maxRandomPlacements && firstWindow < endWindow; ++attempt) {
+        void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * alignment);
+#if OS(DARWIN)
+        void* reserved = OSAllocator::tryReserveUncommittedAligned(size, alignment, usage, requestedAddress, isWritable);
+#elif OS(FREEBSD)
+        // Without these flags the system adds a distance of its own to the address it is asked for.
+        UNUSED_PARAM(usage);
+        void* reserved = mmap(requestedAddress, size, isWritable ? PROT_READ | PROT_WRITE : PROT_READ, MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_EXCL, -1, 0);
+        if (reserved == MAP_FAILED)
+            reserved = nullptr;
+#else
+        void* reserved = OSAllocator::tryReserveUncommitted(size, usage, requestedAddress, isWritable);
+#endif
+        if (!reserved) {
+            if (refusalMeansNoRoomAnywhere)
+                return nullptr;
+            continue;
+        }
+        if (reserved == requestedAddress)
+            return reserved;
+        OSAllocator::releaseDecommitted(reserved, size, 0);
+        // A system that fills its address space from the top answers below the wish where the wish lies beyond the end.
+        if (reserved < requestedAddress)
+            endWindow = std::min(endWindow, std::bit_cast<uintptr_t>(reserved) / alignment + 1);
+    }
+    return nullptr;
+}
+
 uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
 {
     size_t alignment = std::max(request.alignment, roundUpToPowerOfTwo(size));
     bool isWritable = !reservesWithoutAccess(request);
     void* address = nullptr;
-    if (request.placement == Placement::RandomWindow) {
-        uintptr_t firstWindow = (lowestRandomAddress + alignment - 1) / alignment;
-        uintptr_t endWindow = highestRandomAddress / alignment;
-        for (unsigned attempt = 0; attempt < maxRandomPlacements && firstWindow < endWindow && !address; ++attempt) {
-            void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * alignment);
-#if OS(DARWIN)
-            void* reserved = OSAllocator::tryReserveUncommittedAligned(size, alignment, request.usage, requestedAddress, isWritable);
-#else
-            void* reserved = OSAllocator::tryReserveUncommitted(size, request.usage, requestedAddress, isWritable);
-#endif
-            if (!reserved) {
-                if (refusalMeansNoRoomAnywhere)
-                    return 0;
-                continue;
-            }
-            if (reserved == requestedAddress) {
-                address = reserved;
-                break;
-            }
-            OSAllocator::releaseDecommitted(reserved, size, 0);
-            // A system that fills its address space from the top answers below the wish where the wish lies beyond the end.
-            if (reserved < requestedAddress)
-                endWindow = std::min(endWindow, std::bit_cast<uintptr_t>(reserved) / alignment + 1);
-        }
-    }
+    if (request.placement == Placement::RandomWindow)
+        address = tryReserveRandomWindow(size, alignment, request.usage, isWritable);
     if (!address)
         address = OSAllocator::tryReserveUncommittedAligned(size, alignment, request.usage, nullptr, isWritable);
     if (!address)

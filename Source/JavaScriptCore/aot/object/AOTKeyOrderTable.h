@@ -11,6 +11,7 @@
 #include "AOTObject.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramTables.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "RememberedSlot.h"
 #include <array>
@@ -34,7 +35,7 @@ struct State;
 // Where the keys end that the entries of an object's key order count, in the table of its extra properties. A removed key keeps its number in that table until the table is rehashed,
 // so an entry counts a key exactly if the key stands no further back than the last one that the entry counts. All zero: nothing is remembered.
 struct PlacesOfPositionedKeys {
-    static constexpr uint32_t maxNumberOfCounts = 4;
+    AOT_CLASS_THRESHOLD(uint32_t, maxNumberOfCounts, 4);
 
     const Object* object;
     const PropertyTable* table;

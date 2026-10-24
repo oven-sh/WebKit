@@ -120,7 +120,7 @@ void ModuleEmitter::generateResolveModule(const ValueContext& value)
 
 void ModuleEmitter::generateThrowModuleFailure(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::ThrowModuleFailure, { word32(static_cast<int32_t>(value->failure().index())) });
+    callVoidOperation(value, RuntimeOperation::ThrowModuleFailure, { word32(static_cast<int32_t>(value->failure().index())), word32(value->isForRequire()) });
     m_out.unreachable();
 }
 

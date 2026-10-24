@@ -205,7 +205,7 @@ runtime ImportModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unk
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode
-runtime ThrowModuleFailure : void (uint32_t failure) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime ThrowModuleFailure : void (uint32_t failure, uint32_t isForRequire) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime BeginModuleEvaluation : size_t (uint32_t module) ; unknownCode
 runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects
 runtime ImportDynamic : EncodedJSValue (EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer) ; unknownCode

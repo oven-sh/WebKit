@@ -560,7 +560,7 @@ struct TypeInterningPhase::ParallelMerge {
         return true;
     }
 
-    static constexpr unsigned maxNestingDepth = 254;
+    AOT_CLASS_THRESHOLD(unsigned, maxNestingDepth, 254);
 
     Merge& merge;
     TypeInterningPhase& phase;

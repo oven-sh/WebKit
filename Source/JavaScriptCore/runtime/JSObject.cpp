@@ -4305,8 +4305,11 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
     if (!isCurrentDefined) {
         // unless extensions are prevented!
         // Step 2.a
-        if (!isExtensible)
+        if (!isExtensible) {
+            if (object && object->structure()->hasImmutableProperties()) [[unlikely]]
+                return refuseChangeOfImmutableProperty(globalObject, scope, throwException, RefusalIs::Answered, object, propertyName, NonExtensibleObjectPropertyDefineError);
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+        }
         if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
             return refuseChangeOfImmutableProperty(globalObject, scope, throwException, RefusalIs::Answered, object, propertyName, ImmutablePropertyDefineError);
 

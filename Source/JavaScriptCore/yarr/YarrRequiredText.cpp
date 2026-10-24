@@ -13,6 +13,7 @@
 #include <unicode/utf16.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/SIMDHelpers.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -79,14 +80,16 @@ struct Place {
 struct Run {
     Vector<Place, 8> places;
     Extent distance;
+    // What a match can hold between its start and the first place. Without a value: anything.
+    std::optional<Place> inFront;
 };
 
 struct Runs {
     void close() { lastIsOpen = false; }
-    void append(const Place& place, Extent distance)
+    void append(const Place& place, Extent distance, const std::optional<Place>& inFront = std::nullopt)
     {
         if (!lastIsOpen || list.last().places.size() >= RequiredText::maxLength) {
-            list.append(Run { { }, distance });
+            list.append(Run { { }, distance, inFront });
             lastIsOpen = true;
         }
         list.last().places.append(place);
@@ -195,10 +198,12 @@ public:
         if (depth > maxNestingDepth || alternatives.isEmpty())
             return { 0, unbounded };
         if (alternatives.size() == 1) {
+            SetForScope inFront(m_inFront, depth ? std::nullopt : std::optional<Place> { Place { } });
             Extent end = walk(*alternatives[0], { }, runs, depth);
             runs.close();
             return end;
         }
+        SetForScope inFront(m_inFront, std::nullopt);
 
         // A match goes through one of them: it holds what one place of each can hold.
         Extent whole { unbounded, 0 };
@@ -313,6 +318,11 @@ private:
         auto passUnknown = [&] {
             runs.close();
             position.greatest = unbounded;
+            m_inFront = std::nullopt;
+        };
+        auto pass = [&](const Place& place) {
+            if (m_inFront)
+                m_inFront->add(place);
         };
         for (auto& term : alternative.m_terms) {
             switch (term.type) {
@@ -333,21 +343,25 @@ private:
                 if (term.quantityType != QuantifierType::FixedCount) {
                     runs.close();
                     position = position + extent.times(0, most);
+                    pass(place);
                     break;
                 }
                 if (extent.least != 1 || extent.greatest != 1) {
                     runs.close();
                     if (most) {
-                        runs.append(place, position);
+                        runs.append(place, position, m_inFront);
                         runs.close();
                     }
                 } else {
-                    for (unsigned i = 0; i < std::min(most, RequiredText::maxLength); ++i)
-                        runs.append(place, position + Extent { i, i });
+                    for (unsigned i = 0; i < std::min(most, RequiredText::maxLength); ++i) {
+                        runs.append(place, position + Extent { i, i }, m_inFront);
+                        pass(place);
+                    }
                     if (most > RequiredText::maxLength)
                         runs.close();
                 }
                 position = position + extent.times(most, most);
+                pass(place);
                 break;
             }
             case PatternTerm::Type::ParenthesesSubpattern: {
@@ -366,6 +380,14 @@ private:
                 runs.close();
                 Runs ofFirstTurn;
                 Extent turn = walk(nested, ofFirstTurn, depth + 1);
+                Place unitsOfGroup;
+                bool knowsUnitsOfGroup = m_inFront && std::ranges::all_of(nested.m_alternatives, [&](auto& inner) {
+                    return collectUnits(*inner, unitsOfGroup, depth + 1);
+                });
+                if (knowsUnitsOfGroup)
+                    pass(unitsOfGroup);
+                else
+                    m_inFront = std::nullopt;
                 if (fewest) {
                     for (auto& run : ofFirstTurn.list) {
                         run.distance = position + run.distance;
@@ -390,6 +412,8 @@ private:
     }
 
     const YarrPattern& m_pattern;
+    // What the match can hold between its start and the term that is walked. Without a value: anything.
+    std::optional<Place> m_inFront;
     bool m_hasFailed { false };
 };
 
@@ -399,6 +423,23 @@ struct Candidate {
     unsigned end;
     unsigned rarity;
 };
+
+Place unitsInFrontOf(const Candidate& candidate, unsigned place)
+{
+    Place inFront = *candidate.run->inFront;
+    for (unsigned i = 0; i < place; ++i)
+        inFront.add(candidate.run->places[i]);
+    return inFront;
+}
+
+// Whether a walk back from the text, over what can stand between the start of a match and it, is short: it stops at one unit in ten or so.
+bool endsWalkSoon(const Candidate& candidate)
+{
+    if (!candidate.run->inFront)
+        return false;
+    Place inFront = unitsInFrontOf(candidate, candidate.end);
+    return commonnessOf(Place { { ~inFront.asciiMembers[0], ~inFront.asciiMembers[1] }, !inFront.matchesAllNonASCII }) >= leastCommonnessOfWhatEndsWalk;
+}
 
 RequiredText makeRequiredText(const Candidate& candidate)
 {
@@ -414,6 +455,12 @@ RequiredText makeRequiredText(const Candidate& candidate)
     result.matchesAllNonASCII = places[rarest].matchesAllNonASCII;
     result.leastDistance = distance.least;
     result.greatestDistance = distance.greatest;
+    if (endsWalkSoon(candidate)) {
+        Place inFront = unitsInFrontOf(candidate, candidate.begin + rarest);
+        result.asciiMembersInFront = inFront.asciiMembers;
+        result.allNonASCIICanStandInFront = inFront.matchesAllNonASCII;
+        result.knowsUnitsInFront = true;
+    }
     if (places.size() > 1) {
         result.indexInText = rarest;
         for (auto& place : places) {
@@ -498,17 +545,29 @@ ALWAYS_INLINE unsigned nextStartOfRepeatedAlternatives(const RequiredTexts& text
             start = std::max(start, places[i] - 1);
             continue;
         }
-        size_t earliest = static_cast<size_t>(start) + required.leastDistance;
-        if (earliest >= places[i])
-            places[i] = (earliest < length ? findText(required, subject, earliest) : length) + 1;
-        size_t found = places[i] - 1;
-        if (found >= length)
-            return length + 1;
-        if (found - start <= required.greatestDistance)
-            continue;
-        start = found - required.greatestDistance;
-        if (sizeof(CharType) > 1 && required.decodesSurrogatePairs && U16_IS_TRAIL(subject[start]) && U16_IS_LEAD(subject[start - 1]))
-            --start;
+        // Each turn looks for the text farther behind.
+        for (;;) {
+            size_t earliest = static_cast<size_t>(start) + required.leastDistance;
+            bool isNewPlace = earliest >= places[i];
+            if (isNewPlace)
+                places[i] = (earliest < length ? findText(required, subject, earliest) : length) + 1;
+            size_t found = places[i] - 1;
+            if (found >= length)
+                return length + 1;
+            if (found - start > required.greatestDistance) {
+                start = found - required.greatestDistance;
+                if (sizeof(CharType) > 1 && required.decodesSurrogatePairs && U16_IS_TRAIL(subject[start]) && U16_IS_LEAD(subject[start - 1]))
+                    --start;
+            }
+            if (!isNewPlace || !required.knowsUnitsInFront)
+                break;
+            size_t first = found;
+            while (first > start && required.canStandInFront(subject[first - 1]))
+                --first;
+            start = first;
+            if (start + required.leastDistance <= found)
+                break;
+        }
     }
     return start;
 }
@@ -553,7 +612,7 @@ RequiredTexts find(const YarrPattern& pattern)
             return;
         if (!rarest || candidate.rarity > rarest->rarity)
             rarest = candidate;
-        if (candidate.run->distance.greatest != unbounded && (!nearest || candidate.rarity > nearest->rarity))
+        if ((candidate.run->distance.greatest != unbounded || endsWalkSoon(candidate)) && (!nearest || candidate.rarity > nearest->rarity))
             nearest = candidate;
     };
     for (auto& run : runs.list) {
@@ -574,7 +633,7 @@ RequiredTexts find(const YarrPattern& pattern)
     RequiredTexts result;
     if (rarest)
         result.append(makeRequiredText(*rarest));
-    if (nearest && rarest->run->distance.greatest == unbounded)
+    if (nearest && rarest->run->distance.greatest == unbounded && !endsWalkSoon(*rarest))
         result.append(makeRequiredText(*nearest));
     return result;
 }

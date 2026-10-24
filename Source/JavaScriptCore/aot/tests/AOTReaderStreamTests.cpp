@@ -173,8 +173,8 @@ void testStreamScopeReferences()
     expectEach(fixture, {
         { "DirectEval.evalScope"_s, wordAfter(fixture.offsetOfHeadAt(f0, 10), 2), fixture.countOf(List::EvalScopes), Kind::IdOutOfRange },
         { "DirectEval.evalScope absent"_s, wordAfter(fixture.offsetOfHeadAt(f0, 10), 2), Wire::none, Kind::IdOutOfRange },
-        { "ThrowModuleFailure.failure"_s, wordAfter(fixture.offsetOfHeadAt(f0, 11), 2), fixture.countOf(List::ModuleFailures), Kind::IdOutOfRange },
-        { "ThrowModuleFailure.failure absent"_s, wordAfter(fixture.offsetOfHeadAt(f0, 11), 2), Wire::none, Kind::IdOutOfRange },
+        { "ThrowModuleFailure.failure"_s, wordAfter(fixture.offsetOfHeadAt(f0, 11), 3), fixture.countOf(List::ModuleFailures), Kind::IdOutOfRange },
+        { "ThrowModuleFailure.failure absent"_s, wordAfter(fixture.offsetOfHeadAt(f0, 11), 3), Wire::none, Kind::IdOutOfRange },
     });
 }
 

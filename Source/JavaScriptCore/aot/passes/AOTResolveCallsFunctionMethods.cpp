@@ -59,9 +59,6 @@ static bool canBind(FunctionPassContext& context, const BuiltinCall& bind, Funct
     for (unsigned index = 0; index < capturedArgumentCount; ++index) {
         if (!isWithin(context.function.at(bind.arguments[index + 1]).type, target.parameters[index]))
             return false;
-        // `new` on the bound function is answered by the run time, which hands the bound arguments on as values.
-        if (target.constructorForm() != ConstructorForm::NotConstructor && !holdsCells(declaredRepresentationOf(program, target.parameters[index])))
-            return false;
     }
     return !context.exceeds(LimitID::MaxCaptures, target.captures.size() + numberOfBoundThisAndTargetCaptures + capturedArgumentCount, site);
 }

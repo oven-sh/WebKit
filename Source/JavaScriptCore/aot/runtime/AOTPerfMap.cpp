@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HexNumber.h>
+#include <wtf/Lock.h>
 #include <wtf/ProcessID.h>
 #include <wtf/text/MakeString.h>
 
@@ -54,7 +55,11 @@ void writePerfMap()
     const Image* image = Image::current();
     if (!image)
         return;
-    auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), "w"_s);
+    // Each entry point of an executable has an image of its own, and a thread that starts one adds its functions to the file.
+    static Lock lock;
+    static bool hasWrittenInThisProcess;
+    Locker locker { lock };
+    auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
     if (!file)
         return;
     auto& header = image->header();
