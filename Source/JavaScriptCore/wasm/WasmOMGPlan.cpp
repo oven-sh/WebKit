@@ -124,6 +124,8 @@ void OMGPlan::work()
 {
     ASSERT(m_calleeGroup->runnable());
     ASSERT(m_calleeGroup.ptr() == m_module->calleeGroupFor(mode()));
+    if (hasBeenCancelled())
+        return;
     const FunctionData& function = m_moduleInformation->functions[m_functionIndex];
 
     const FunctionSpaceIndex functionIndexSpace = m_moduleInformation->toSpaceIndex(m_functionIndex);
@@ -136,6 +138,7 @@ void OMGPlan::work()
     beginCompilerSignpost(callee.get());
     Vector<UnlinkedWasmToWasmCall> unlinkedCalls;
     CompilationContext context;
+    context.cancellationFlag = cancellationFlag();
     auto parseAndCompileResult = parseAndCompileOMG(context, profiledCallee.get(), callee.get(), function, signature, unlinkedCalls, m_module.get(), m_calleeGroup.get(), m_moduleInformation.get(), m_mode, CompilationMode::OMGMode, m_functionIndex, UINT32_MAX);
     endCompilerSignpost(callee.get());
 

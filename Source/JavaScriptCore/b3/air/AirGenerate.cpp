@@ -107,10 +107,14 @@ void prepareForGeneration(Code& code)
     // https://bugs.webkit.org/show_bug.cgi?id=150456
 
     eliminateDeadCode(code);
+    if (code.hasBeenCancelled())
+        return;
 
     // Register allocation for all the Tmps that do not have a corresponding machine
     // register. After this phase, every Tmp has a reg.
     allocateRegistersByGreedy(code);
+    if (code.hasBeenCancelled())
+        return;
 
     if (Options::logAirRegisterPressure()) {
         dataLog("Register pressure after register allocation:\n");
@@ -123,10 +127,14 @@ void prepareForGeneration(Code& code)
     // does this by minimizing the amount that we perturb the already-chosen register
     // allocation. It may extend the live ranges of registers though.
     fixObviousSpills(code);
+    if (code.hasBeenCancelled())
+        return;
 
     // This does first-fit allocation of stack slots using an interference graph plus a
     // bunch of other optimizations.
     allocateStackByGraphColoring(code);
+    if (code.hasBeenCancelled())
+        return;
 
     // This turns all Stack and CallArg Args into Addr args that use the frame pointer.
     lowerStackArgs(code);

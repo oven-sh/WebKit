@@ -261,6 +261,8 @@ public:
 
     void prepareToCompute() { }
 
+    bool hasBeenCancelled() const { return actions.code().hasBeenCancelled(); }
+
     unsigned numIndices() const { return actions.numIndices(); }
     unsigned blockSize(BasicBlock* block) const { return block->size(); }
     static unsigned valueToIndex(StackSlot* slot) { return slot->index(); }
@@ -370,7 +372,11 @@ public:
 
         StackSlotActions actions(m_code, coalesceSpillSlots);
         StackSlotLiveness liveness(m_code, actions);
+        if (m_code.hasBeenCancelled())
+            return;
         buildInterferenceGraph(liveness);
+        if (m_code.hasBeenCancelled())
+            return;
 
         coalesceSlots(coalesceSpillSlots, actions.sawUselessMove());
         assignStackLocations(assignedEscapedStackSlots);
@@ -388,6 +394,8 @@ private:
         auto workset = liveness.makeWorkset();
 
         for (BasicBlock* block : m_code) {
+            if (m_code.hasBeenCancelled())
+                return;
             auto blockActions = actions.actionsFor(block);
             auto killCandidates = actions.killCandidatesFor(block);
             auto moveSites = actions.moveSitesFor(block);

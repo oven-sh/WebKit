@@ -7124,6 +7124,7 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     Procedure& procedure = *compilationContext.procedure;
     procedure.setIsWasm(true);
     procedure.setName(callee.nameWithHash());
+    procedure.setCancellationFlag(compilationContext.cancellationFlag);
     if (shouldDumpIRFor(functionIndex + info.importFunctionCount()))
         procedure.setShouldDumpIR();
 
@@ -7145,6 +7146,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     OMGIRGenerator irGenerator(procedure.heaps(), compilationContext, module, calleeGroup, info, profiledCallee, inliningDecision.root(), callee, procedure, unlinkedWasmToWasmCalls, result->outgoingJITDirectCallees, result->osrEntryScratchBufferSize, mode, compilationMode, functionIndex, loopIndexForOSREntry);
     FunctionParser<OMGIRGenerator> parser(irGenerator, function.data, signature, info);
     WASM_FAIL_IF_HELPER_FAILS(parser.parse());
+    if (procedure.hasBeenCancelled()) [[unlikely]]
+        return makeUnexpected("compilation was cancelled "_s);
 
     irGenerator.insertEntrySwitch();
     irGenerator.insertConstants();
@@ -7162,6 +7165,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     estimateStaticExecutionCounts(procedure);
 
     dataLogIf(WasmOMGIRGeneratorInternal::verbose, "Pre SSA: ", procedure);
+    if (procedure.hasBeenCancelled()) [[unlikely]]
+        return makeUnexpected("compilation was cancelled "_s);
     fixSSA(procedure);
     dataLogIf(WasmOMGIRGeneratorInternal::verbose, "Post SSA: ", procedure);
 
@@ -7169,6 +7174,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
         if (shouldDumpDisassemblyFor(compilationMode))
             procedure.code().setDisassembler(makeUniqueWithoutFastMallocCheck<B3::Air::Disassembler>());
         B3::prepareForGeneration(procedure);
+        if (procedure.hasBeenCancelled()) [[unlikely]]
+            return makeUnexpected("compilation was cancelled "_s);
         B3::generate(procedure, *compilationContext.wasmEntrypointJIT);
         compilationContext.wasmEntrypointByproducts = procedure.releaseByproducts();
         result->entrypoint.calleeSaveRegisters = procedure.calleeSaveRegisterAtOffsetList();

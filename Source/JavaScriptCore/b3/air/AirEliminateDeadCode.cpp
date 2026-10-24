@@ -141,6 +141,9 @@ bool eliminateDeadCode(Code& code)
     };
 
     for (;;) {
+        // Nothing is mutated before the fixpoint ends, so a cancelled compile can stop here.
+        if (code.hasBeenCancelled())
+            return false;
         // Propagating backward is most likely to be profitable.
         if (!runBackward())
             break;

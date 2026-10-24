@@ -217,6 +217,8 @@ public:
 
         // Perform CSE. This edits code.
         performCSE(nullptr);
+        if (m_proc.hasBeenCancelled())
+            return false;
 
         // Re-sweep loop blocks once to catch some additional cases. In reverse-post-order the loop body hasn't been
         // processed when we visit the header, so back-edge queries from the header miss matches that show up after the body is processed.
@@ -230,6 +232,8 @@ public:
                     loopBlocks.add(loop.at(j));
             }
             performCSE(&loopBlocks);
+            if (m_proc.hasBeenCancelled())
+                return false;
         }
 
         finalize();
@@ -243,6 +247,10 @@ private:
     void performCSE(const IndexSet<BasicBlock*>* filter)
     {
         for (auto* block : m_proc.blocksInPostOrder() | std::views::reverse) {
+            // A cancelled compile leaves the placeholders of the matched values unresolved. The
+            // caller skips finalize() and the Procedure is abandoned.
+            if (m_proc.hasBeenCancelled())
+                return;
             m_block = block;
             if (filter && !filter->contains(m_block))
                 continue;
@@ -271,7 +279,12 @@ private:
                 return m_proc.add<Value>(Phi, resolution.placeholder->type(), resolution.placeholder->origin());
             });
 
+        if (m_proc.hasBeenCancelled())
+            return;
+
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
+            if (m_proc.hasBeenCancelled())
+                return;
             for (SSACalculator::Def* phiDef : m_ssa->phisForBlock(block))
                 m_insertionSet.insertValue(0, phiDef->value());
 

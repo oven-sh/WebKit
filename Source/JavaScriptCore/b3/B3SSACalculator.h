@@ -47,6 +47,7 @@ public:
 
     CFG& cfg() const { return m_proc.cfg(); }
     Dominators& dominators() { return m_proc.dominators(); }
+    bool hasBeenCancelled() const { return m_proc.hasBeenCancelled(); }
 
     static void dumpValue(PrintStream& out, Value value) { out.print(pointerDump(value)); }
 

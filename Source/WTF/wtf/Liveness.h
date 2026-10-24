@@ -449,6 +449,17 @@ protected:
             return false;
     }
 
+    // An adapter whose client can abandon the compile (JSC's B3::Procedure::hasBeenCancelled()) reports
+    // it here. The fixpoint then returns early and the live sets are incomplete: the client checks the
+    // same flag right after compute() and must not read them.
+    bool adapterHasBeenCancelled() const
+    {
+        if constexpr (requires (const Adapter& adapter) { adapter.hasBeenCancelled(); })
+            return Adapter::hasBeenCancelled();
+        else
+            return false;
+    }
+
     void compute()
     {
         uint64_t denseMatrixBits = static_cast<uint64_t>(m_cfg.numNodes()) * Adapter::numIndices();
@@ -504,6 +515,8 @@ protected:
             auto block = m_cfg.node(blockIndex);
             if (!block)
                 continue;
+            if (adapterHasBeenCancelled())
+                return;
 
             auto killSet = setFor(killMatrix, blockIndex);
             auto genSet = setFor(genMatrix, blockIndex);
@@ -558,6 +571,8 @@ protected:
         }
 
         while (!worklist.isEmpty()) {
+            if (adapterHasBeenCancelled())
+                return;
             unsigned blockIndex = worklist.takeLast();
             bool cleared = dirtyBlocks.quickClear(blockIndex);
             ASSERT_UNUSED(cleared, cleared);
@@ -634,6 +649,8 @@ protected:
 
         Vector<unsigned, 64> delta;
         while (!worklist.isEmpty()) {
+            if (adapterHasBeenCancelled())
+                return;
             unsigned blockIndex = worklist.takeLast();
             bool cleared = dirtyBlocks.quickClear(blockIndex);
             ASSERT_UNUSED(cleared, cleared);

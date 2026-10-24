@@ -242,6 +242,17 @@ public:
     // If a non-null Value is returned, a new Def is created, so that nonLocalReachingDef() will
     // find it later. Note that it is generally always sound to not prune any Phis (that is, to
     // always have the functor insert a Phi and never return a null Value).
+    // An adapter whose client can abandon the compile (JSC's B3::Procedure::hasBeenCancelled()) reports
+    // it here. computePhis then returns with the Phis of the remaining variables missing: the client
+    // checks the same flag afterwards and must not use them.
+    bool adapterHasBeenCancelled() const
+    {
+        if constexpr (requires (const Adapter& adapter) { adapter.hasBeenCancelled(); })
+            return Adapter::hasBeenCancelled();
+        else
+            return false;
+    }
+
     template<typename Functor>
     void computePhis(NOESCAPE const Functor& functor)
     {
@@ -255,6 +266,8 @@ public:
         Vector<Node, 16> worklist;
         IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
         for (Variable& variable : m_variables) {
+            if (adapterHasBeenCancelled())
+                return;
             unsigned epoch = variable.index() + 1;
             worklist.shrink(0);
             worklist.appendVector(variable.m_blocksWithDefs);
