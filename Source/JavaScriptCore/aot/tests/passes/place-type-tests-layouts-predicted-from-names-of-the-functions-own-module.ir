@@ -1,0 +1,39 @@
+# `store.getSnapshot`, asked in a library of an object that nobody could follow. Six kinds of objects have a member of that name, more than a test is made for, and five of them belong to the application.
+# A library handles the objects that it makes itself: the layouts of the module in which the function is written come first, whichever are allocated more often
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# LOSS: MaxDeclarationsPredictedFromNames x2 f1 v1
+# RUN: pass PlaceTypeTests
+
+module m0 path="application.js" displayPath="application.js"
+module m1 path="library.js" displayPath="library.js"
+layout L0 kind=Instance name="Settings" module=m0 constructor=f2 fields=[{key="getSnapshot" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Theme" module=m0 constructor=f3 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="getSnapshot" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Tasks" module=m0 constructor=f4 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="getSnapshot" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Keys" module=m0 constructor=f5 fields=[{key="e" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}, {key="getSnapshot" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L4 kind=Instance name="Session" module=m0 constructor=f6 fields=[{key="getSnapshot" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}, {key="i" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L5 kind=Instance name="Instance" module=m1 constructor=f7 fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="getSnapshot" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="inTheLibrary" module=m1 parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="getSnapshot"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="inTheLibrary"
+# CHECK: = TypeTest v0 testedType={{*}}L5
+
+function f1 name="inTheApplication" module=m0 parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="getSnapshot"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="inTheApplication"
+# CHECK-NOT: L5
+# CHECK: Return
+
+function f2 name="Settings" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f3 name="Theme" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f4 name="Tasks" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f5 name="Keys" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f6 name="Session" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f7 name="Instance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5

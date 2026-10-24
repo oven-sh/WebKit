@@ -1,0 +1,39 @@
+# The callee tests what it was handed and returns at once, or goes on to a call. The test and the early Return are copied in front of the hot call. The other way out makes the call, and the function starts over
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 1
+# STATISTIC: SelectedHeadsInlined = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = CallDirect v0, v1 function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="early" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=i32
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="caller"
+# CHECK: b0(v0: anything, v1: function):
+# CHECK-NEXT: Jump -> next [[head]]()
+# CHECK: [[join]]([[result]]: anything):
+# CHECK-NEXT: = Call v1, -, [[result]]
+# CHECK: [[calls]]() frequency=Unlikely:
+# CHECK-NEXT: [[called]]: anything = CallDirect v0, v1 function=f1 [isAfterInlinedHead]
+# CHECK-NEXT: Jump -> next [[join]]([[called]])
+# CHECK: [[head]]():
+# CHECK-NEXT: [[test]]: boolean = TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test]] -> taken [[returns]](), notTaken [[calls]]()
+# CHECK: [[returns]]():
+# CHECK-NEXT: Jump -> next [[join]](v0)
+# CHECK-LABEL: function f1 name="early"
+# CHECK: Return v0

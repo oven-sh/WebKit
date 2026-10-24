@@ -1,0 +1,66 @@
+# A coroutine returns to its caller where it suspends and where its frame turns a throw into a rejected promise, so what it did before is in the returning half of its summary, and no summary suspends
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="kept" declared={type=number} flow={location={writers=AllKnown}}}]
+variable g0 name="beforeThrow" declared={type=number} initialization=Undefined flow={writers=AllKnown}
+variable g1 name="beforeAwait" declared={type=number} initialization=Undefined flow={writers=AllKnown}
+function f0 name="asyncWritesThenThrows" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Throw v0
+}
+# CHECK-NOT: suspends
+# CHECK: f0 return: writes(ModuleVariables/1) throws throw: writes(ModuleVariables/1) throws
+function f1 name="plainWritesThenThrows" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Throw v0
+}
+# CHECK-NEXT: f1 return: throws throw: writes(ModuleVariables/1) throws
+function f2 name="writesAwaitsThrows" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+  b0():
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f3
+    Return v0
+}
+function f3 name="writesAwaitsThrows" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+  b0(v0: undefined|Promise):
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g1
+    v3 = AwaitBySavingFrame v1, v0
+    Throw v3
+}
+# CHECK-NOT: suspends
+# CHECK: f3 return: reads(all) writes(ModuleVariables/
+function f4 name="storesAfterAwait" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=0} {
+  b0():
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f5
+    Return v0
+}
+function f5 name="storesAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=0} {
+  b0(v0: undefined|Promise):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = AwaitBySavingFrame v1, v0
+    PutEnvironmentField v2, v1 layout=L0 field=0
+    Return v3
+}
+# CHECK-NOT: suspends
+# CHECK: f5 return: reads(all) writes({{*}}EnvironmentFields/1,
+function f6 name="storesWithoutAwait" results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+}
+# CHECK-NOT: suspends
+# CHECK: f6 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK-NOT: suspends
+# CHECK-LABEL: function f3
+# CHECK: v3 AwaitBySavingFrame: unknownCode suspends

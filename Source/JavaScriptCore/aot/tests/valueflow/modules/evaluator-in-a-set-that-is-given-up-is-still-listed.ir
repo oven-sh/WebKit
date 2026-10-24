@@ -1,0 +1,41 @@
+# tools = Function or first or second; tools("text")
+# The variable holds more than the analysis follows in one set, so the untracked object stands for the two functions. It never stands for an evaluator: the set that is given up still lists `Function`,
+# so the call is a call of it, and the record names the built-in. call-of-the-untracked-object-is-no-call-of-an-evaluator.ir has the call without the evaluator in the variable
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Function
+# CHECK: unseen-code yes
+# RUN(LOST): valueflow-why lost-builtin=Function lost=f1
+# LOST: lost-builtin=Function
+# LOST-NEXT: not held
+# LOST-NEXT: lost=f1
+# LOST-NEXT: n1 lost
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="tools" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=Function
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = String string="text"
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+  b0():
+    Return
+}

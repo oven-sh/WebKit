@@ -1,0 +1,41 @@
+# An object of one of two layouts that is built by its tag: a kept access names the guard parameter that the guards of both builds meet in
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="joinOfTwoLayouts" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = ShapeTest v5 layouts=[L0, L1]
+    Branch v6 -> taken b4(| 0), notTaken b6()
+  b4(v7):
+    Branch v2 -> taken b5(), notTaken b6()
+  b5():
+    PutModuleVariable v5 variable=g0
+    v9 = GetSlotOrUndefined v5, v7 key="x" receivers=[L0, L1] level=Expected
+    Return v9
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="joinOfTwoLayouts"
+# CHECK-NOT: ShapeTest
+# CHECK: ([[cell]]: L0|L1, [[guard]]: guard):
+# CHECK-NEXT: PutModuleVariable [[cell]] variable=g0
+# CHECK-NEXT: = GetSlotOrUndefined [[cell]], [[guard]] key="x" receivers=[L0, L1] level=Expected
+# CHECK: [[first]]:{{*}}= NewObject{{*}}layout=L0
+# CHECK-NEXT: [[firstGuard]]: guard = AllGuards [[first]]
+# CHECK-NEXT: Jump -> next {{*}}([[first]], [[firstGuard]])
+# CHECK: [[second]]:{{*}}= NewObject{{*}}layout=L1
+# CHECK-NEXT: [[secondGuard]]: guard = AllGuards [[second]]
+# CHECK-NEXT: Jump -> next {{*}}([[second]], [[secondGuard]])

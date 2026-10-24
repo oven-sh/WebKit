@@ -1,0 +1,53 @@
+# function add(x: number, y: number) { return x + y }, x - y, x + 1 by ++, x - 1 by --, x + 2: what they answer for numbers that arrive boxed and leave boxed: int32 up to both ends and over them, -0, fractions, numbers beyond 2^53, infinities, NaN
+# FORM: AsRead
+# RUN(IR): pipeline ChooseRepresentations
+# RUN: run-in-shell globalThis.register = (add, sub, increment, decrement, addTwo) => { const values = [0, -0, 1, -1, 2, 0.5, -0.5, 1.75, 2147483645, 2147483646, 2147483647, 2147483648, -2147483647, -2147483648, -2147483649, 4294967295, 4294967296.5, 1e21, -1e21, 9007199254740991, 9007199254740992, Infinity, -Infinity, NaN]; let wrong = 0; const check = (name, x, y, got, want) => { if (!Object.is(got, want)) { wrong++; print(name, x, y, got, want); } }; for (const x of values) { check("increment", x, 0, increment(x), x + 1); check("decrement", x, 0, decrement(x), x - 1); check("addTwo", x, 0, addTwo(x), x + 2); for (const y of values) { check("add", x, y, add(x, y), x + y); check("sub", x, y, sub(x, y), x - y); } } print("wrong: " + wrong); };
+# IR-LABEL: name="add" module=m0 role=GenericEntrypoint
+# IR-NOT: = Unbox
+# IR: number @JSValue = Add {{*}} form=Numbers
+# IR-LABEL: name="increment" module=m0 role=GenericEntrypoint
+# IR-NOT: = Unbox
+# IR: number @JSValue = Increment {{*}} form=Numbers
+# CHECK: wrong: 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v3, v4
+    Return
+}
+function f1 name="add" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="sub" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Sub v0, v1
+    Return v2
+}
+function f3 name="increment" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Increment v0
+    Return v1
+}
+function f4 name="decrement" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Decrement v0
+    Return v1
+}
+function f5 name="addTwo" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}

@@ -1,0 +1,169 @@
+# An access to a module namespace object is resolved against the exports of its module: a variable, another namespace, or a constant for a name the module cannot export
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# RUN(TWICE): pass ResolveAccesses ResolveAccesses
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=number} initialization=Undefined
+variable g1 name="late" module=m1 declared={type=number|absent} initialization=Uninitialized
+variable g2 name="ordered" module=m1 declared={type=number} initialization=Uninitialized flow={initialization=StoredBeforeEveryRead}
+variable g3 name="b" module=m2 declared={type=string} initialization=Undefined
+variable g4 name="a" module=m3 declared={type=number} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}, {target=m3 completes=true}]
+module m1 path="lib.js" displayPath="lib.js" requests=[{target=m2 completes=true}, {target=m4 phase=Defer}] exports=[{name="a" variable=g0}, {name="inner" kind=Namespace module=m2}, {name="late" variable=g1}, {name="lazy" kind=Namespace module=m4 phase=Defer}, {name="ordered" variable=g2}]
+module m2 path="inner.js" displayPath="inner.js" exports=[{name="b" variable=g3}]
+module m3 path="star.js" displayPath="star.js" requests=[{target=m5 isDynamicStarExport=true completes=true}] exports=[{name="a" variable=g4}]
+module m4 path="lazy.js" displayPath="lazy.js"
+module m5 path="plain.js" displayPath="plain.js" kind=External referrer=m3
+
+function f0 name="export" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="a"
+    v2 = Add v1, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="export"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: number = Add v1, v1
+function f1 name="export-maybe-uninitialized" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="export-maybe-uninitialized"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: [[read]]: number|absent = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: number = CheckInitialized [[read]] name="late"
+# CHECK-NEXT: Return v1
+function f2 name="export-stored-before-every-read" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="ordered"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="export-stored-before-every-read"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g2
+# CHECK-NEXT: Return v1
+function f3 name="namespace-export" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="b"
+    Return v2
+}
+# CHECK-LABEL: function f3 name="namespace-export"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: v1: L(m2) = ModuleNamespace module=m2
+# TWICE-LABEL: function f3 name="namespace-export"
+# TWICE: v1: L(m2) = ModuleNamespace module=m2
+# TWICE-NEXT: v2: string = GetModuleVariable variable=g3
+function f4 name="tests" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropHas v0 key="a"
+    v2 = PropHas v0 key="inner"
+    v3 = PropHas v0 key="late"
+    v4 = PropHas v0 key="zz"
+    v5 = PropHasOwn v0 key="a"
+    v6 = PropHasOwn v0 key="zz"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="tests"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: true = Boolean boolean=true
+# CHECK-NEXT: v3: true = Boolean boolean=true
+# CHECK-NEXT: v4: false = Boolean
+# CHECK-NEXT: v5: true = Boolean boolean=true
+# CHECK-NEXT: v6: false = Boolean
+function f5 name="name-not-exported" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="zz"
+    v2 = PropGet v0 key=@@iterator
+    Return v1
+}
+# CHECK-LABEL: function f5 name="name-not-exported"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: undefined = Undefined
+function f6 name="own-export-beside-a-dynamic-star" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m3
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="zz"
+    v3 = PropHas v0 key="zz"
+    Return v1
+}
+# CHECK-LABEL: function f6 name="own-export-beside-a-dynamic-star"
+# CHECK: = ModuleNamespace module=m3
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g4
+# CHECK-NEXT: = PropGet v0 key="zz"
+# CHECK-NEXT: = PropHas v0 key="zz"
+
+function f7 name="own-test-of-export-maybe-uninitialized" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropHasOwn v0 key="late"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="own-test-of-export-maybe-uninitialized"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: = PropHasOwn v0 key="late"
+function f8 name="stores-always-fail" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = ModuleNamespace module=m1
+    PropSet v1, v0 key="a"
+    PropSet v1, v0 key="zz" mode=Sloppy
+    PropDefine v1, v0 key="a"
+    Return
+}
+# CHECK-LABEL: function f8 name="stores-always-fail"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: PropSet v1, v0 key="a"
+# CHECK-NEXT: PropSet v1, v0 key="zz" mode=Sloppy
+# CHECK-NEXT: PropDefine v1, v0 key="a"
+function f9 name="properties-besides-exports" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key=@@toStringTag
+    v2 = PropGet v0 key="__esModule"
+    Return v1
+}
+# CHECK-LABEL: function f9 name="properties-besides-exports"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: = PropGet v0 key=@@toStringTag
+# CHECK-NEXT: = PropGet v0 key="__esModule"
+function f10 name="deferred-namespaces" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="lazy"
+    v2 = ModuleNamespace module=m4 phase=Defer
+    v3 = PropGet v2 key="zz"
+    Return v1
+}
+# CHECK-LABEL: function f10 name="deferred-namespaces"
+# CHECK: = ModuleNamespace module=m1
+# CHECK-NEXT: = PropGet v0 key="lazy"
+# CHECK-NEXT: = ModuleNamespace module=m4 phase=Defer
+# CHECK-NEXT: = PropGet v2 key="zz"
+function f11 name="one-of-two-namespaces" parameters=[{type=L(m1)|L(m3)}] results=[{type=anything}] {
+  b0(v0: L(m1)|L(m3)):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-LABEL: function f11 name="one-of-two-namespaces"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="a"
+function f12 name="expected-namespace" parameters=[{type=L(m1) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L(m1)):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-LABEL: function f12 name="expected-namespace"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="a"

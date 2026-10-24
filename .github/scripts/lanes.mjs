@@ -52,7 +52,10 @@ const SANITIZERS = "address,undefined";
 // All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
 // function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
 const HARDENING =
-  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096";
+  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
+  " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
+  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
+  " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -65,15 +68,22 @@ const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
 const NEHALEM = "-march=nehalem";
 const ARMV8 = "-march=armv8-a+crc";
 
-// The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
-// "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+// The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan-aot is
+// "debug-asan-aot". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+//
+// `aot: false` is ENABLE_AOT=0: neither the ahead-of-time compiler nor the run time of its programs is in the libraries.
+// That is what a bun built with --aot=off links. Each such variant has a twin with both, "-aot", which is what `bun`
+// links. Every other variant has both and no twin without. A label says which it is: a lane with both has "-aot" in its
+// label, and a lane without has the label it had before there was a compiler.
 const variants = {
-  "release": { buildType: "Release", mimalloc: true },
-  "lto": { buildType: "Release", mimalloc: true, lto: true },
-  "debug": { buildType: "Debug" },
-  "asan": { buildType: "Release", sanitizers: SANITIZERS },
-  "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
-  // For fuzzing. Each is "release" with assertions, coverage or both added and nothing else changed, so that what is
+  "release": { buildType: "Release", mimalloc: true, aot: false },
+  "aot": { buildType: "Release", mimalloc: true },
+  "lto": { buildType: "Release", mimalloc: true, lto: true, aot: false },
+  "lto-aot": { buildType: "Release", mimalloc: true, lto: true },
+  "debug-aot": { buildType: "Debug" },
+  "asan-aot": { buildType: "Release", sanitizers: SANITIZERS },
+  "debug-asan-aot": { buildType: "Debug", sanitizers: SANITIZERS },
+  // For fuzzing. Each is "aot" with assertions, coverage or both added and nothing else changed, so that what is
   // fuzzed is as close as it can be to what ships. `assertions` is the assertions of the asan variants without the
   // sanitizers. `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls
   // __sanitizer_cov_trace_pc_guard on every edge. The libraries leave that for bun to define, and jsc takes --reprl.
@@ -81,17 +91,24 @@ const variants = {
   // Not "lto": coverage does not link with ThinLTO ("undefined symbol: __sancov_gen_.1"). Of an inline function that
   // several modules have, ThinLTO keeps one copy and makes the others available_externally, their guards included,
   // which are private to the module. Inlining such a copy leaves a reference to guards that nothing defines.
-  "assertions": { buildType: "Release", mimalloc: true, assertions: true },
-  "coverage": { buildType: "Release", mimalloc: true, coverage: true },
-  "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed. Same ABI as those two.
-  "hardened": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  "assertions-aot": { buildType: "Release", mimalloc: true, assertions: true },
+  "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
+  "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
+  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed. Only what ships
+  // has a twin without the compiler.
+  "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
+  "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
+  // in the libraries.
+  "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
 };
-const NO_ASAN = ["release", "lto", "debug"];
-const ALL = [...NO_ASAN, "asan", "debug-asan"];
-const FUZZING = ["assertions", "coverage", "assertions-coverage"];
-const HARDENED = ["hardened", "lto-hardened"];
+const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug-aot"];
+const ALL = [...NO_ASAN, "asan-aot", "debug-asan-aot"];
+const FUZZING = ["assertions-aot", "coverage-aot", "assertions-coverage-aot"];
+const HARDENED = ["hardened-aot", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"];
+// "lto-aot" is "lto" with the compiler, and "asan-aot" is what bun calls "asan".
+const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/-aot$/, ""));
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
@@ -102,11 +119,15 @@ const HARDENED = ["hardened", "lto-hardened"];
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
-//   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
-//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
-//                   where there is no lto lane) is what bun ships, and nothing else runs "lto-hardened". The asan lanes
-//                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
-//                   on Windows. `quick` is --quick, for a runner with few cores.
+//   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
+//                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
+//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot". The
+//                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
+//                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
+//   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
+//   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
+//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts): of a variant
+//                   that has an "-aot" twin it links the twin. See `programs`.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -116,9 +137,11 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-hardened"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot"] },
     },
+    testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
+    bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
@@ -128,6 +151,7 @@ const platforms = [
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
       HARDENING_FLAGS: v.hardened ? HARDENING : "",
+      ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:
@@ -143,6 +167,7 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
+    bunTests: () => ["lto"],
     image: () => "linux-musl",
     args: arch => ({
       ...ICU,
@@ -158,6 +183,7 @@ const platforms = [
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
+    bunTests: () => ["lto"],
     image: arch => `macos-${arch}`,
     imageInputs: ["macos-cross"],
     args: (arch, v, variant) => ({
@@ -167,7 +193,7 @@ const platforms = [
       CPP_FLAGS: v.mimalloc ? "" : "-D_LIBCXX_ENABLE_ASSERTIONS=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       // Debug builds break the heap down by type, except under ASAN.
-      ENABLE_MALLOC_HEAP_BREAKDOWN: variant === "debug" ? "ON" : "OFF",
+      ENABLE_MALLOC_HEAP_BREAKDOWN: variant === "debug-aot" ? "ON" : "OFF",
     }),
   },
   {
@@ -179,12 +205,13 @@ const platforms = [
     lanes: {
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
-      amd64: ["release", "lto", "debug", "asan"],
+      amd64: ["release", "aot", "lto", "lto-aot", "debug-aot", "asan-aot"],
       // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      arm64: ["release", "debug"],
+      arm64: ["release", "aot", "debug-aot"],
     },
     lto: LTO_WINDOWS,
+    bunTests: arch => [arch === "arm64" ? "release" : "lto"],
     image: () => "windows",
     args: (arch, v) => ({
       ...ICU,
@@ -226,6 +253,29 @@ const platforms = [
   },
 ];
 
+// Every lane links jsc, testFFI and testaot, which checks that they link. Each is a full copy of JavaScriptCore, so a lane
+// only ships the ones something downloads it for:
+//   jsc        everywhere
+//   testFFI    in the lanes bun's CI tests, which packs it next to bun (packageAndUpload in bun's scripts/build/ci.ts),
+//              and in the lanes the `test` job here runs
+//   testaot    in the lanes the `test` job here runs. It has the table of built-ins of the stand-in host (aot/tests/host).
+// and, in lib/, the objects of jsc and of testaot without a table (shell/CMakeLists.txt), which bun links with its own:
+//   jsc-objects, testaot-objects   in those same lanes, and in linux-amd64-debug-asan-aot for bun's "AoT cargo test" job.
+//                                  bun's build looks for them in the tarball (scripts/build/deps/webkit.ts).
+function programs(platform, arch, variant, test) {
+  const objects = ["jsc-objects", "testaot-objects"];
+  if (test && variants[variant].aot === false) return ["jsc", "testFFI"];
+  if (test) return ["jsc", "testFFI", "testaot", ...objects];
+  if (platform.bunTests?.(arch).includes(withoutAOT(variant))) return variants[variant].aot === false ? ["jsc", "testFFI"] : ["jsc", "testFFI", ...objects];
+  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan-aot" ? ["jsc", ...objects] : ["jsc"];
+}
+
+// One more asset of every release, next to the lanes' tarballs: what a tarball has under Source/JavaScriptCore/aot but the
+// tests, at the same paths. That is the schema, the two generators and the generated files the engine was compiled with:
+// 2 MB. bun's jobs that link no engine (its lint and type-check jobs) read it in place of a lane's tarball.
+// `from` packs it, out of its own output.
+const SOURCES = { label: "bun-webkit-aot-sources", from: "bun-webkit-linux-amd64-lto-aot" };
+
 // A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less
 // comments, and less the global ARGs that `base` does not take, which are lane settings), the files that stage copies
 // in, and the build arguments it takes (the ARGs it declares that a lane sets: FREEBSD_VERSION, MACOS_DEPLOYMENT_TARGET,
@@ -256,22 +306,35 @@ const lanes = platforms.flatMap(platform =>
     names.map(variant => {
       const v = variants[variant];
       const buildType = platform.buildType?.(v) ?? v.buildType;
+      const test = platform.tested?.[arch]?.variants.includes(variant) ?? false;
       const buildArgs = {
         WEBKIT_RELEASE_TYPE: buildType,
         LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
         USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
         USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        // Not without the compiler: testb3 and testair set the policies that only the compiler sets.
+        ...(platform.testPrograms ? { TEST_PROGRAMS: test && v.aot !== false ? platform.testPrograms.join(" ") : "" } : {}),
         ...platform.args(arch, v, variant),
       };
+      // wtf/PlatformEnable.h turns it on wherever the FTL is on, unless it is defined. Every Dockerfile hands MARCH_FLAG to
+      // each compile of WebKit.
+      if (v.aot === false) buildArgs.MARCH_FLAG += " -DENABLE_AOT=0";
+      const label = platform.label(arch) + (variant === "release" ? "" : `-${variant}`);
+      if ((v.aot !== false) !== /-aot(-|$)/.test(label)) throw new Error(`${label}: a lane has "-aot" in its label where it has the compiler, and only there`);
       return {
-        label: platform.label(arch) + (variant === "release" ? "" : `-${variant}`),
+        label,
+        sources: label === SOURCES.from ? SOURCES.label : "",
         runner: BUILDER,
         dockerfile: platform.dockerfile,
         package_os: platform.packageOS,
         package_cpu: arch === "arm64" ? "arm64" : "x64",
-        test: platform.tested?.[arch]?.variants.includes(variant) ?? false,
+        test,
         test_runner: platform.tested?.[arch]?.on,
         test_quick: platform.tested?.[arch]?.quick ?? false,
+        programs: programs(platform, arch, variant, test).join(" "),
+        aot: v.aot === false ? 0 : 1,
+        // What of HARDENING the headers in the tarball test: they lay classes out by it.
+        defines: v.hardened ? [...HARDENING.matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" ") : "",
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -282,6 +345,7 @@ const lanes = platforms.flatMap(platform =>
 const labels = lanes.map(lane => lane.label);
 const duplicate = labels.find((label, i) => labels.indexOf(label) !== i);
 if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
+if (!labels.includes(SOURCES.from)) throw new Error(`no lane is called ${SOURCES.from}, which packs ${SOURCES.label}`);
 
 // The toolchain images the lanes start from. One is built by the first lane that uses it: the `base` stage does not
 // read the lane's build arguments, only the ones that say which toolchain it is (MACOS_ARCH, FREEBSD_ARCH, ...).
@@ -341,11 +405,11 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, runner, image, package_os, package_cpu, test }) => ({ label, runner, image, package_os, package_cpu, test });
+  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
-  console.log(`labels=${JSON.stringify(labels)}`);
+  console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {
     const { status, stderr } = spawnSync("docker", ["manifest", "inspect", image], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
@@ -363,7 +427,7 @@ if (command === "build") {
   console.log(JSON.stringify(lanes, null, 2));
 } else if (command === undefined) {
   for (const lane of lanes) {
-    console.log(`${lane.label.padEnd(42)} ${lane.runner.padEnd(15)} ${lane.dockerfile.padEnd(19)} ${lane.build_args.WEBKIT_RELEASE_TYPE}${lane.test ? "  (tested)" : ""}`);
+    console.log(`${lane.label.padEnd(42)} ${lane.runner.padEnd(15)} ${lane.dockerfile.padEnd(19)} ${lane.build_args.WEBKIT_RELEASE_TYPE.padEnd(10)} ${lane.programs}${lane.test ? "  (tested)" : ""}`);
   }
   console.log(`${lanes.length} lanes`);
   for (const { image, runner } of images) console.log(`${image}  ${runner}`);

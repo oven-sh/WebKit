@@ -1,0 +1,179 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTCFG.h"
+#include "AOTVector.h"
+#include <compare>
+#include <optional>
+#include <span>
+#include <type_traits>
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+struct Use {
+    enum class Kind : uint8_t { Operand, TerminatorOperand, EdgeArgument, HandlerArgument, BlockSubject };
+
+    Kind kind { Kind::Operand };
+    BlockID block;
+    ValueID user;
+    uint32_t operandIndex { 0 };
+    uint32_t targetIndex { 0 };
+
+    bool isEdgeUse() const { return kind == Kind::EdgeArgument || kind == Kind::HandlerArgument; }
+    Edge edge() const
+    {
+        RELEASE_ASSERT(isEdgeUse());
+        return kind == Kind::HandlerArgument ? Edge::toHandlerOf(block) : Edge { block, targetIndex };
+    }
+
+    friend bool operator==(const Use&, const Use&) = default;
+};
+
+ValueID usedValueOf(const Function&, const Use&);
+
+enum class ValuePlacement : uint8_t { Detached, Parameter, InBlock };
+
+struct ValueLocation {
+    ValuePlacement placement { ValuePlacement::Detached };
+    BlockID block;
+    uint32_t index { 0 };
+
+    friend bool operator==(const ValueLocation&, const ValueLocation&) = default;
+};
+
+struct UseOrder {
+    uint32_t blockOrder { 0 };
+    uint32_t index { 0 };
+    uint32_t rank { 0 };
+    uint32_t targetIndex { 0 };
+    uint32_t operandIndex { 0 };
+
+    friend auto operator<=>(const UseOrder&, const UseOrder&) = default;
+};
+
+class UseLists {
+    WTF_MAKE_NONCOPYABLE(UseLists);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(UseLists);
+public:
+    UseLists(const Function&, const CFG&);
+
+    std::span<const Use> usesOf(ValueID) const;
+    unsigned useCount(ValueID) const;
+    std::optional<Use> singleUse(ValueID) const;
+    ValueLocation locationOf(ValueID) const;
+    BlockID blockOf(ValueID id) const { return locationOf(id).block; }
+    ProgramPoint pointOf(const Use&) const;
+    ProgramPoint pointOf(ValueID valueInBlock) const;
+    ProgramPoint pointAfter(ValueID) const;
+    UseOrder orderOf(const Use&) const;
+    bool isBefore(const Use& a, const Use& b) const { return orderOf(a) < orderOf(b); }
+    unsigned numberOfValues() const { return m_locations.size(); }
+
+    // What the lists say of a block they read from that block alone.
+    void didChangeBlock(BlockID);
+    void didChangeOperandsOf(ValueID user);
+    void didReplaceUses(ValueID from, ValueID to);
+    void didAddValues() { fallBehind(); }
+    void didChangeControlFlow();
+    void didChangeEverything();
+    void endSilence();
+    bool hasSilentChanges() const { return m_hasSilentChanges; }
+    // The lists describe the function, where a holder that cannot know it throws its lists away: lists made for the next who asks would hold every edit up to then.
+    void didOutliveDrop();
+    void didHandOut() { m_takesSilentChangesAtOnce = false; }
+    // By former index, null for what is gone; no blocks where no block has moved. What stays keeps its place in its block, and the blocks that stay keep their order.
+    void didRenumber(std::span<const BlockID> blocks, std::span<const ValueID> values);
+
+    bool isUpToDate() const { return m_isUpToDate; }
+    bool mustBeMadeAnew() const { return m_mustBeMadeAnew; }
+
+    struct Update {
+        bool hasMadeAnew { false };
+        size_t numberOfValuesRead { 0 };
+    };
+    Update bringUpToDate(const CFG&);
+
+private:
+    struct UseRange {
+        uint32_t first { 0 };
+        uint32_t end { 0 };
+    };
+    static constexpr uint32_t isLinked = 1u << 31;
+
+    struct StoredUse {
+        uint32_t words[5];
+    };
+    static_assert(sizeof(StoredUse) == sizeof(Use) && alignof(StoredUse) == alignof(Use) && std::is_trivially_copyable_v<Use>);
+
+    const Use* uses() const { return reinterpret_cast<const Use*>(m_uses.span().data()); }
+    UseRange rangeOf(ValueID id) const
+    {
+        RELEASE_ASSERT(id.index() < m_ranges.size());
+        return m_ranges.span().data()[id.index()];
+    }
+
+    void fallBehind();
+    void makeAnew();
+    struct RoomForUses {
+        StoredUse* uses;
+        uint32_t* placeOfNextUse;
+        size_t size;
+    };
+    NEVER_INLINE RoomForUses makeRoomForUses(size_t);
+    std::span<const Use> layOut(ValueID) const;
+    void didBecomeUpToDate();
+
+    const Function& m_function;
+    const CFG* m_cfg;
+    mutable Vector<UseRange> m_ranges;
+    mutable Vector<StoredUse> m_uses;
+    Vector<uint32_t> m_placeOfNextUse;
+    Vector<ValueLocation> m_locations;
+    size_t m_numberOfUses { 0 };
+    bool m_hasChangedBlocks { false };
+    bool m_hasSilentChanges { false };
+    bool m_takesSilentChangesAtOnce { false };
+    bool m_isUpToDate { false };
+    bool m_graphMayHaveChanged { false };
+    bool m_mustBeMadeAnew { false };
+};
+
+inline std::span<const Use> UseLists::usesOf(ValueID id) const
+{
+    UseRange range = rangeOf(id);
+    if (range.end & isLinked)
+        return layOut(id);
+    return { uses() + range.first, range.end - range.first };
+}
+
+inline unsigned UseLists::useCount(ValueID id) const
+{
+    UseRange range = rangeOf(id);
+    return range.end & isLinked ? range.end & ~isLinked : range.end - range.first;
+}
+
+inline std::optional<Use> UseLists::singleUse(ValueID id) const
+{
+    if (useCount(id) != 1)
+        return std::nullopt;
+    return uses()[rangeOf(id).first];
+}
+
+inline ValueLocation UseLists::locationOf(ValueID id) const
+{
+    RELEASE_ASSERT(id.index() < m_locations.size());
+    return m_locations[id.index()];
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

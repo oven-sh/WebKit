@@ -1,0 +1,41 @@
+# const [...[...copy]] = numbers()
+# FuseGeneratorLoops puts the body of the generator into the caller as a loop over states. What lives across the loop becomes a parameter of its head, and on the way in, where the value does not exist yet,
+# an Unspecified value is passed. Nobody reads it, so it brings no object: the parameter still points to the one array, and an append to another fresh array does not end a guard about it.
+# FORM: Prepared
+# RUN: analyses escape aliases function=f0 alias-values=v6,v7,v9
+# CHECK: v6 points to: [o1]
+# CHECK: v6 may be untracked: no
+# CHECK: v7 points to: [o0]
+# CHECK: v7 may be untracked: no
+# CHECK: aliases:
+# CHECK: v6 v7 alias: NoAlias
+# CHECK: v6 v9 alias: NoAlias
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="merge" parameters=[{type=boolean}, {type=Array}] results=[{type=anything}] {
+  b0(v0: boolean, v1: Array):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray contents=anything
+    v3 = Integer integer=1
+    Jump -> next b3(v2, v1, v3)
+  b2():
+    v4 = Unspecified valueType=Array
+    v5 = Integer
+    Jump -> next b3(v4, v4, v5)
+  b3(v6, v7, v8):
+    v9 = NewArray contents=anything
+    v10 = Integer integer=1
+    AppendElement v9, v10
+    Switch v8 cases=[1] -> case b4(), otherwise b5()
+  b4():
+    v12 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    v13 = CallBuiltin v7 overload=ArrayPrototypeLength/0
+    v14 = CallBuiltin v9 overload=ArrayPrototypeLength/0
+    v15 = Add v12, v13
+    v16 = Add v15, v14
+    Return v16
+  b5():
+    Return
+}

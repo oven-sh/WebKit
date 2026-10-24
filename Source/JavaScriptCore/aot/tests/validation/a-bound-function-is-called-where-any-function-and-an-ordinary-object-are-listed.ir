@@ -1,0 +1,54 @@
+# function listed() { return "listed" }  function run(callee) { return callee() }  show(run(listed)); show(run(Math.max.bind(null, 5))); if (never) run(Object.create(null))
+# Flow finds what arrives at `callee`: `listed`, a bound function, which is some function to a type, and an ordinary object. The type names `listed`, so the call gets an arm for it,
+# and a validating build puts ValidateCallee in front of the arms (the run with the prefix IR).
+# No test tells an ordinary object from another object, so the test is one for any object, and what that lets in beside the list is looked at again: a bound function is none of the functions that a list names.
+# This list holds any function, so whatever can be called is in it and the build runs to its end
+# FORM: AsRead
+# RUN(IR): pipeline ResolveCalls
+# RUN: run-in-shell globalThis.show = print; globalThis.never = false;
+# OPTIONS: validate disable=pass:InlineCalls
+# IR: ValidateCallee {{*}} validatedType=function|f2|Object
+# IR: = CallDirect function=f2
+# CHECK-NOT: AOT validation
+# CHECK: listed
+# CHECK-NEXT: 5
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="show" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v2, -, v3
+    v5 = Call v1, -, v4
+    v6 = Builtin builtin=MathMax
+    v7 = Builtin builtin=FunctionPrototypeBind
+    v8 = Null
+    v9 = Integer integer=5
+    v10 = Call v7, v6, v8, v9
+    v11 = Call v2, -, v10
+    v12 = Call v1, -, v11
+    v13 = PropGet v0 key="never" [isFreeName]
+    v14 = ToBoolean v13
+    Branch v14 -> taken b1(), notTaken b2()
+  b1():
+    v15 = Builtin builtin=ObjectCreate
+    v16 = Call v15, -, v8
+    v17 = Call v2, -, v16
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f1 name="run" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 name="listed" results=[{type=anything}] {
+  b0():
+    v0 = String string="listed"
+    Return v0
+}

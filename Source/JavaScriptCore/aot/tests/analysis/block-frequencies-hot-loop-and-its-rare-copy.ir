@@ -1,0 +1,77 @@
+# A hot loop and its rare copy lead into each other: a path leaves the hot loop for the copy, and the copy comes back through a test. A rare edge enters at that test too, so the two loops are one cycle with two entries.
+# All that enters a cycle counts as entering at its header. The likely entry is the header: the hot loop is hot and the copy is rare, whichever side of the first branch comes first in the order of the blocks.
+# The cycle round both is gone round through rare code alone, so it is no loop: the hot loop counts ten turns an entry, not a hundred.
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="rareSideIsTheSecondSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b9()
+  b3():
+    Branch v0 -> taken b2(), notTaken b4()
+  b4() frequency=Unlikely:
+    Jump -> next b7()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6() frequency=Rare:
+    Branch v0 -> taken b10(), notTaken b7()
+  b7() frequency=Rare:
+    LoopHint
+    Branch v0 -> taken b8(), notTaken b9()
+  b8() frequency=Rare:
+    Jump -> next b6()
+  b9():
+    Return
+  b10() frequency=Rare:
+    Jump -> next b1()
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.99
+# CHECK-NEXT: b2 frequency: Normal count: 9.99
+# CHECK-NEXT: b3 frequency: Normal count: 8.99
+# CHECK-NEXT: b4 frequency: Rare count: 0.00
+# CHECK-NEXT: b5 frequency: Rare count: 0.00
+# CHECK-NEXT: b6 frequency: Rare count: 0.00
+# CHECK-NEXT: b7 frequency: Rare count: 0.00
+# CHECK-NEXT: b8 frequency: Rare count: 0.00
+# CHECK-NEXT: b9 frequency: Normal count: 0.99
+# CHECK-NEXT: b10 frequency: Rare count: 0.00
+# CHECK-NOT: frequency
+function f1 name="rareSideIsTheFirstSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b5(), notTaken b1()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b9()
+  b3():
+    Branch v0 -> taken b2(), notTaken b4()
+  b4() frequency=Unlikely:
+    Jump -> next b7()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6() frequency=Rare:
+    Branch v0 -> taken b10(), notTaken b7()
+  b7() frequency=Rare:
+    LoopHint
+    Branch v0 -> taken b8(), notTaken b9()
+  b8() frequency=Rare:
+    Jump -> next b6()
+  b9():
+    Return
+  b10() frequency=Rare:
+    Jump -> next b1()
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.99
+# CHECK-NEXT: b2 frequency: Normal count: 9.99
+# CHECK-NEXT: b3 frequency: Normal count: 8.99

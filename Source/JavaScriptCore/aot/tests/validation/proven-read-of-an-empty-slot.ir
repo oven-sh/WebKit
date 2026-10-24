@@ -1,0 +1,39 @@
+# interface Entry { label: string }  function labelOf(entry: Entry) { return entry.label }  register(labelOf, { label: "first" }, <an Entry that nobody gave a label>)
+# A slot may be empty: nothing was stored yet, or the property was deleted, redefined or given a value of another type and has left. A read tests for the empty marker, unless flow proves that the slot of the field is always filled.
+# Then the read is one load, and the marker would travel on as a value of the field's type.
+# The lie: the flow analysis is off, and what it would have said stands in the text, written by hand: `label` is always filled and never leaves its slot. The second allocation fills nothing.
+# No mutation is involved, so no check of a mutation that flow calls impossible comes first.
+# A validating build asks at every access to a slot for what the access relies on. A read without a guard has to find its slot filled, and this one ends the process, before the load.
+# On the object with the label the same read, in the same build, runs to its end
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (labelOf, filled, empty) => { print(labelOf(empty)); };
+# RUN(SAME): run-in-shell globalThis.register = (labelOf, filled, empty) => { print(labelOf(filled)); };
+# OPTIONS: validate disable=flow-results
+# CHECK: AOT validation: SlotEmpty f
+# CHECK: crashed with
+# SAME-NOT: AOT validation
+# SAME: first
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=50 kind=Parameter
+layout L0 name="Entry" fields=[{key="label" declared={type=string} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="first"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L0 fields=[]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v5, v2, v4
+    Return
+}
+function f1 name="labelOf" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="label"
+    Return v1
+}

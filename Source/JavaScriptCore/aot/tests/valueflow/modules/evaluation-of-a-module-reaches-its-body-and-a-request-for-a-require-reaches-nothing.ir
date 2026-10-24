@@ -1,0 +1,45 @@
+# main.cjs: require("./first.cjs"); function later() { require("./second.cjs") }        nobody calls later()
+# A `require` with a constant name is an operation that evaluates its target where it stands. The request that the module lists for it says who requires whom, and reaches nothing:
+# second.cjs is evaluated only by the operation, which lies in a function that nobody calls. What the body of first.cjs throws is thrown by the operation
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK-NEXT: unreached f3
+# RUN(WHY): valueflow-why values=f0:v3
+# WHY: operand 1 {{*}}@f1
+
+layout L0 module=m1
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1
+module m2 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    EvaluateModule module=m1 referrer=m0
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v1 key="caught" mode=Strict
+    Jump -> next b3()
+  b3():
+    v4 = NewClosure function=f3
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    Throw v1
+}
+function f2 name="second" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="later" module=m0 results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m2 referrer=m0
+    Return
+}

@@ -1,0 +1,223 @@
+# A slot read on a receiver whose type proves the layout moves with the cold region around it
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="provenReceiver" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v2 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    v5 = CallMethod v3, v4 key="wide"
+    Jump -> next b4(v5)
+  b3() frequency=Rare:
+    v6 = GetSlot v1 key="y" receivers=[L0] level=Proven
+    v7 = CallMethod v3, v6 key="tall"
+    Jump -> next b4(v7)
+  b4(v8):
+    Return v8
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: GetSlot
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result]]: anything = CallDirect v2, v1, v3 function=f8
+# CHECK-NEXT: Jump -> next [[join]]([[result]])
+# CHECK-NOT: GetSlot
+
+function f1 name="provenReceiver2" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v2 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    v5 = CallMethod v3, v4 key="wide"
+    Jump -> next b4(v5)
+  b3() frequency=Rare:
+    v6 = GetSlot v1 key="y" receivers=[L0] level=Proven
+    v7 = CallMethod v3, v6 key="tall"
+    Jump -> next b4(v7)
+  b4(v8):
+    Return v8
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: GetSlot
+# CHECK: = CallDirect v2, v1, v3 function=f8
+# CHECK-NOT: GetSlot
+
+function f2 name="provenReceiver3" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v2 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    v5 = CallMethod v3, v4 key="wide"
+    Jump -> next b4(v5)
+  b3() frequency=Rare:
+    v6 = GetSlot v1 key="y" receivers=[L0] level=Proven
+    v7 = CallMethod v3, v6 key="tall"
+    Jump -> next b4(v7)
+  b4(v8):
+    Return v8
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: GetSlot
+# CHECK: = CallDirect v2, v1, v3 function=f8
+# CHECK-NOT: GetSlot
+
+function f3 name="provenReceiver4" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v2 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    v5 = CallMethod v3, v4 key="wide"
+    Jump -> next b4(v5)
+  b3() frequency=Rare:
+    v6 = GetSlot v1 key="y" receivers=[L0] level=Proven
+    v7 = CallMethod v3, v6 key="tall"
+    Jump -> next b4(v7)
+  b4(v8):
+    Return v8
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: GetSlot
+# CHECK: = CallDirect v2, v1, v3 function=f8
+# CHECK-NOT: GetSlot
+
+function f4 name="guardFromOutside" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b1(| 0), notTaken b7()
+  b1(v5):
+    Branch v0 -> taken b2(), notTaken b6()
+  b2() frequency=Rare:
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
+    v7 = CallMethod v3, v6 key="wide"
+    Jump -> next b5(v7)
+  b4() frequency=Rare:
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
+    v9 = CallMethod v3, v8 key="tall"
+    Jump -> next b5(v9)
+  b5(v10):
+    Return v10
+  b6():
+    Return v3
+  b7():
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: CallDirect
+# CHECK: Branch v2 -> taken b3(), notTaken b4()
+# CHECK: = GetSlot v1, v5 key="x"
+# CHECK: = GetSlot v1, v5 key="y"
+# CHECK-NOT: CallDirect
+
+function f5 name="guardFromOutside2" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b1(| 0), notTaken b7()
+  b1(v5):
+    Branch v0 -> taken b2(), notTaken b6()
+  b2() frequency=Rare:
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
+    v7 = CallMethod v3, v6 key="wide"
+    Jump -> next b5(v7)
+  b4() frequency=Rare:
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
+    v9 = CallMethod v3, v8 key="tall"
+    Jump -> next b5(v9)
+  b5(v10):
+    Return v10
+  b6():
+    Return v3
+  b7():
+    Return v3
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: CallDirect
+
+function f6 name="guardFromOutside3" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b1(| 0), notTaken b7()
+  b1(v5):
+    Branch v0 -> taken b2(), notTaken b6()
+  b2() frequency=Rare:
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
+    v7 = CallMethod v3, v6 key="wide"
+    Jump -> next b5(v7)
+  b4() frequency=Rare:
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
+    v9 = CallMethod v3, v8 key="tall"
+    Jump -> next b5(v9)
+  b5(v10):
+    Return v10
+  b6():
+    Return v3
+  b7():
+    Return v3
+}
+# CHECK-LABEL: function f6
+# CHECK-NOT: CallDirect
+
+function f7 name="guardFromOutside4" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b1(| 0), notTaken b7()
+  b1(v5):
+    Branch v0 -> taken b2(), notTaken b6()
+  b2() frequency=Rare:
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v6 = GetSlot v1, v5 key="x" receivers=[L0] level=Expected
+    v7 = CallMethod v3, v6 key="wide"
+    Jump -> next b5(v7)
+  b4() frequency=Rare:
+    v8 = GetSlot v1, v5 key="y" receivers=[L0] level=Expected
+    v9 = CallMethod v3, v8 key="tall"
+    Jump -> next b5(v9)
+  b5(v10):
+    Return v10
+  b6():
+    Return v3
+  b7():
+    Return v3
+}
+# CHECK-LABEL: function f7
+# CHECK-NOT: CallDirect
+
+# CHECK-LABEL: function f8 {{*}}role=OutlinedBody{{*}}parameters=[{type=boolean}, {type=L0}, {type=anything}]
+# CHECK: b0(v0: boolean, v1: L0, v2: anything)
+# CHECK-NEXT: Branch v0 -> taken [[wide]](), notTaken [[tall]]()
+# CHECK: [[wide]]()
+# CHECK-NEXT: [[x]]: number = GetSlot v1 key="x" receivers=[L0] level=Proven
+# CHECK-NEXT: = CallMethod v2, [[x]] key="wide"
+# CHECK: [[tall]]()
+# CHECK-NEXT: [[y]]: number = GetSlot v1 key="y" receivers=[L0] level=Proven
+# CHECK-NEXT: = CallMethod v2, [[y]] key="tall"
+# CHECK-NOT: function f9

@@ -1,0 +1,17 @@
+# function Node(kind, pos) { this.kind = kind; this.pos = pos }    and nobody reads `pos`
+# A field of birth that is stored and never read loses its stores, so no allocation lists it any more. It is no field of birth from then on: an object that is made with the others is finished,
+# and a read of `kind` behind the test of the cell finds the cell without its mark. Left among the fields of birth it made every object unfinished for life
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} occupancy=FilledWithValueAtBirth}}, {key="pos" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead} occupancy=FilledWithValueAtBirth}}, {key="parent" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead} occupancy=FilledAtBirth}}]
+# CHECK: layout L0 name="Node" fields=[{key="kind"{{*}}occupancy=FilledWithValueAtBirth}}, {key="pos"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="parent"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+function f0 name="make" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    Return v3
+}
+# CHECK-LABEL: function f0 name="make"
+# CHECK: = NewObject -, v0 layout=L0 fields=[0]

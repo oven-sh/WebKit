@@ -1,0 +1,44 @@
+# The result of a generic bitwise operator whose type is an int32 leaves as a word: the stub boxes it as an int32, never as a double, so its low half is the result. One that may be a BigInt stays boxed
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="maskOfAnything" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = Integer integer=8
+    v2 = BitAnd v0, v1 form=Generic
+    v3 = ToBoolean v2 form=Integers
+    Return v3
+}
+# CHECK-LABEL: function f0 name="maskOfAnything"
+# CHECK: 8 @JSValue = Integer integer=8
+# CHECK-NEXT: int[0, 8] @Int32 = BitAnd v0, v1 form=Generic
+# CHECK-NEXT: boolean @Boolean = ToBoolean v2 form=Integers
+# CODE-LABEL: f0:
+# CODE: stub BinaryOperation
+
+function f1 name="eachOperator" parameters=[{type=anything}, {type=i32}] results=[{type=i32}] {
+  b0(v0: anything, v1: i32):
+    v2 = BitOr v0, v1 form=Generic
+    v3 = BitXor v0, v2 form=Generic
+    v4 = LShift v0, v3 form=Generic
+    v5 = RShift v0, v4 form=Generic
+    Return v5
+}
+# CHECK-LABEL: function f1 name="eachOperator"
+# CHECK: i32 @Int32 = BitOr
+# CHECK: i32 @Int32 = BitXor
+# CHECK: i32 @Int32 = LShift
+# CHECK: i32 @Int32 = RShift
+
+function f2 name="mayBeBigInt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = BitAnd v0, v1 form=Generic
+    Return v2
+}
+# CHECK-LABEL: function f2 name="mayBeBigInt"
+# CHECK: @JSValue = BitAnd v0, v1 form=Generic
+# CHECK-NEXT: Return v2
+# CODE-NOT: diagnostic

@@ -1,0 +1,49 @@
+# The check of the encoded tables reads the bytes back: each damage to the bytes is reported under its rule
+# RUN(BOUNDS): tables damage=TableOutOfBounds
+# RUN(SORTED): tables damage=TableNotSorted
+# RUN(SHAPE): tables damage=ShapeWithoutLayout
+# RUN(FLAG): tables damage=UnknownFieldFlag
+# RUN(LOST): tables damage=FieldMissingFromFieldTable
+# RUN(STRAY): tables damage=FieldTableEntryWithoutField
+# RUN(MEMBER): tables damage=MemberMissingFromClassMemberTable
+# DIAGNOSTIC: ProgramTableCheckFailed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="First" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Second" module=m0 constructor=f2 fields=[{key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="publish" [isFreeName]
+    v8 = Call v7, -, v2, v5
+    Return
+}
+function f1 name="First" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="Second" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="y"
+    Return v3
+}
+
+# BOUNDS: rule TableOutOfBounds
+# SORTED: rule TableNotSorted
+# SHAPE: rule ShapeWithoutLayout
+# FLAG: rule UnknownFieldFlag
+# LOST: rule FieldMissingFromFieldTable
+# STRAY: rule FieldTableEntryWithoutField
+# MEMBER: rule MemberMissingFromClassMemberTable

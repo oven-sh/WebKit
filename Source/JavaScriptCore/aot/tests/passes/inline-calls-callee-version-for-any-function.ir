@@ -1,0 +1,132 @@
+# Outside hot code a call of a library function that passes one known function goes to one copy for whatever function is passed: in it the parameter is known to hold a function.
+# A hot call still gets a copy for its function alone
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 2
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="addIndex" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="each" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: function):
+    v5 = Integer integer=0
+    v6 = Call v4, v2, v1, v5, v1
+    v7 = Add v6, v1
+    v8 = Add v7, v1
+    v9 = Add v8, v1
+    v10 = Add v9, v1
+    v11 = Add v10, v1
+    v12 = Add v11, v1
+    v13 = Add v12, v1
+    v14 = Add v13, v1
+    v15 = Add v14, v1
+    v16 = Add v15, v1
+    v17 = Add v16, v1
+    v18 = Add v17, v1
+    v19 = Add v18, v1
+    v20 = Add v19, v1
+    v21 = Add v20, v1
+    v22 = Add v21, v1
+    v23 = Add v22, v1
+    v24 = Add v23, v1
+    v25 = Add v24, v1
+    v26 = Add v25, v1
+    v27 = Add v26, v1
+    v28 = Add v27, v1
+    v29 = Add v28, v1
+    v30 = Add v29, v1
+    v31 = Add v30, v1
+    v32 = Add v31, v1
+    v33 = Add v32, v1
+    v34 = Add v33, v1
+    v35 = Add v34, v1
+    v36 = Add v35, v1
+    v37 = Add v36, v1
+    v38 = Add v37, v1
+    v39 = Add v38, v1
+    v40 = Add v39, v1
+    v41 = Add v40, v1
+    v42 = Add v41, v1
+    v43 = Add v42, v1
+    v44 = Add v43, v1
+    v45 = Add v44, v1
+    v46 = Add v45, v1
+    v47 = Add v46, v1
+    v48 = Add v47, v1
+    v49 = Add v48, v1
+    v50 = Add v49, v1
+    v51 = Add v50, v1
+    v52 = Add v51, v1
+    v53 = Add v52, v1
+    v54 = Add v53, v1
+    v55 = Add v54, v1
+    v56 = Add v55, v1
+    v57 = Add v56, v1
+    v58 = Add v57, v1
+    v59 = Add v58, v1
+    v60 = Add v59, v1
+    v61 = Add v60, v1
+    v62 = Add v61, v1
+    v63 = Add v62, v1
+    v64 = Add v63, v1
+    v65 = Add v64, v1
+    v66 = Add v65, v1
+    Return v66
+  b2():
+    Return v1
+}
+
+function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = CallDirect v1, v0, v0 function=f3
+    v5 = CallDirect v2, v0, v0 function=f3
+    v6 = CallDirect v3, v0, v0 function=f3
+    Return v6
+}
+# CHECK-LABEL: function f4 name="outsideLoops"
+# CHECK: v4{{*}}= CallDirect v1, v0, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v5{{*}}= CallDirect v2, v0, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v6{{*}}= CallDirect v3, v0, v0 function=[[forAnyFunction]]
+
+function f5 name="inLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v2, v0, v0 function=f3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f5 name="inLoop"
+# CHECK: = CallDirect v2, v0, v0 function=[[forDouble]]
+
+# CHECK: function [[forDouble]] name="each" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: f0,
+# CHECK: = Call {{*}}, v2, v1, v5, v1
+# CHECK: function [[forAnyFunction]] name="each" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: function,
+# CHECK: = Call {{*}}, v2, v1, v5, v1

@@ -1,0 +1,95 @@
+# class Shape { area() { this.name }  describe() { this.area() } }  class Circle extends Shape { area() { this.radius } }  class Square extends Shape { area() { this.side } }
+# new Circle().describe(); new Square().describe()
+# The constructor of Shape allocates the instances of all three classes, and each class has an object of its own that stands for its instances. A construction is answered the instances of its own class.
+# `this.area()` in the base class has the instances of both classes below as receivers, and each override sees the instances of its own class alone. A lookup goes past a method that hides another one,
+# so the method of Shape sees both.
+# RUN: valueflow-why values=f0:v21 values=f0:v24 values=f3:v2 values=f5:v1 values=f7:v1 values=f2:v1
+# CHECK: values=f0:v21
+# CHECK: operand 1 {{*}} 1 members: [[circle]]
+# CHECK: values=f0:v24
+# CHECK: operand 1 {{*}} 1 members: [[square]]
+# CHECK: values=f3:v2
+# CHECK: operand 1 {{*}} 2 members: [[circle]] [[square]]
+# CHECK: values=f5:v1
+# CHECK: operand 0 {{*}} 1 members: [[circle]]
+# CHECK: values=f7:v1
+# CHECK: operand 0 {{*}} 1 members: [[square]]
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 2 members: [[circle]] [[square]]
+# RUN(APPLY): valueflow-apply
+# APPLY: function f5 name="area" {{*}}thisType={type=L1}
+# APPLY: function f7 name="area" {{*}}thisType={type=L2}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f1
+layout L1 kind=Instance name="Circle" base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Square" base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="area"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="describe"
+    v6 = FinishClass v1 layout=L0
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f4
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = NewClosure function=f5
+    DefineMethod v9, v10 layout=L1 key="area"
+    v12 = FinishClass v9 layout=L1
+    v13 = ResolveHeritage v6
+    v14 = NewClosure function=f6
+    v15 = NewClass v14, v6, v13 layout=L2
+    v16 = NewClosure function=f7
+    DefineMethod v15, v16 layout=L2 key="area"
+    v18 = FinishClass v15 layout=L2
+    v19 = Construct v12
+    v20 = PropGet v19 key="describe"
+    v21 = Call v20, v19 calleeKey="describe"
+    v22 = Construct v18
+    v23 = PropGet v22 key="describe"
+    v24 = Call v23, v22 calleeKey="describe"
+    Return
+}
+function f1 name="Shape" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="name"
+    Return
+}
+function f3 name="describe" module=m0 kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return
+}
+function f4 name="Circle" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="radius"
+    Return
+}
+function f6 name="Square" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f7 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="side"
+    Return
+}

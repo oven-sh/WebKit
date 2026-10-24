@@ -1,0 +1,53 @@
+# A write to the object of an entry parameter is in the summary of that parameter, through any number of direct calls; a write to an object reached by reading a field of the parameter is memory reached another way
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Holder" fields=[{key="inner" declared={type=L0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 kind=Environment fields=[{key="count" declared={type=number}}]
+function f0 name="outer" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = CallDirect v0, v1 function=f1
+    Return
+}
+# CHECK: f0 return: none throw: none p0: [{{*}}] writes(ObjectFields/1) p1:
+function f1 name="middle" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = CallDirect v0, v1 function=f2
+    Return
+}
+# CHECK-NEXT: f1 return: none throw: none p0: [{{*}}] writes(ObjectFields/1) p1:
+function f2 name="writesX" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-NEXT: f2 return: none throw: none p0: [Inspects] writes(ObjectFields/1) p1:
+function f3 name="passesFieldOfParameter" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L1, v1: number):
+    v2 = GetSlot v0 key="inner" receivers=[L1] level=Proven
+    v3 = CallDirect v2, v1 function=f2
+    Return
+}
+# CHECK-NEXT: f3 return: reads(ObjectFields/1) writes(ObjectFields/1) throw: none p0: [
+# CHECK-NOT: writes
+function f4 name="passesParameterTwice" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = CallDirect v0, v0, v1 function=f6
+    Return
+}
+# CHECK: f4 return: none throw: none p0: [{{*}}] writes(ObjectFields/2) p1:
+function f5 name="writesCapture" captures=[{type=env L2}] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: env L2, v1: number):
+    PutEnvironmentField v0, v1 layout=L2 field=0
+    Return
+}
+# CHECK-NEXT: f5 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1:
+function f6 name="writesXOfFirstYOfSecond" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: L0, v2: number):
+    PutSlot v0, -, v2 key="x" receivers=[L0] level=Proven
+    PutSlot v1, -, v2 key="y" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-NEXT: f6 return: none throw: none p0: [Inspects] writes(ObjectFields/1) p1: [Inspects] writes(ObjectFields/1) p2:

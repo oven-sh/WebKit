@@ -1,0 +1,74 @@
+# The copy of a return without a value gives the call the value undefined
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 3
+# STATISTIC: InlineDecisionSignatureMismatch = 0
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="last" declared={type=number}
+
+function f0 name="onlyBareReturn" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="bareReturnAndValue" parameters=[{type=number}, {type=boolean}] results=[{type=undefined|number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = Add v0, v0
+    Return v2
+}
+function f2 name="returnsItsValue" parameters=[{type=number}] results=[{type=undefined|number}] {
+  b0(v0: number):
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+
+function f3 name="callsOnlyBareReturn" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: name="callsOnlyBareReturn"
+# CHECK-NOT: CallDirect
+# CHECK: [[join3]](v1: undefined):
+# CHECK-NEXT: Return v1
+# CHECK-NOT: CallDirect
+# CHECK: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: [[undefined3]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[join3]]([[undefined3]])
+
+function f4 name="callsBareReturnAndValue" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    v2 = CallDirect v0, v1 function=f1 [isAlwaysInlined]
+    Return v2
+}
+# CHECK-LABEL: name="callsBareReturnAndValue"
+# CHECK-NOT: CallDirect
+# CHECK: [[join4]](v2: undefined|number):
+# CHECK-NEXT: Return v2
+# CHECK-NOT: CallDirect
+# CHECK: Branch v1 -> taken [[bare4]](), notTaken [[valued4]]()
+# CHECK: [[bare4]]():
+# CHECK-NEXT: [[undefined4]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[join4]]([[undefined4]])
+# CHECK: [[valued4]]():
+# CHECK-NEXT: [[sum4]]: number = Add v0, v0
+# CHECK-NEXT: Jump -> next [[join4]]([[sum4]])
+
+function f5 name="callsReturnsItsValue" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f2 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: name="callsReturnsItsValue"
+# CHECK-NOT: Undefined
+# CHECK: [[join5]](v1: number):
+# CHECK-NEXT: Return v1
+# CHECK-NOT: Undefined
+# CHECK: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: Jump -> next [[join5]](v0)

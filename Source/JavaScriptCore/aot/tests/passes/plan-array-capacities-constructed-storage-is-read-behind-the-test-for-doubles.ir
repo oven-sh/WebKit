@@ -1,0 +1,76 @@
+# Behind the test for double storage stands the read that the test was made for, and it names the array itself, with no join between. That read is what the choice of double storage serves.
+# Counted as another use of the storage it kept the allocation as it was: the test failed for each fresh array, which was then read by the generic path. A read that names another storage still keeps it
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6):
+    v7 = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v11 = HasArrayStorage v3 arrayStorage=Double
+    Branch v11 -> taken b3(| 0), notTaken b4()
+  b3(v12):
+    v13 = IsInBounds v3, v4
+    Branch v13 -> taken b5(| 0), notTaken b4()
+  b4() frequency=Unlikely:
+    v14 = ElemGet v3, v4
+    Return v14
+  b5(v15):
+    v16 = AllGuards v6, v12, v15
+    v17 = GetArrayElement v3, v4, v16 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v17
+}
+# CHECK-LABEL: function f0
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
+# CHECK: v7: {{*}} = HasArrayStorage v3 arrayStorage=Double [isWritable]
+# CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Double
+# CHECK: = GetArrayElement v3, v4, v16 arrayStorage=Double
+
+function f1 name="alsoReadAsIntegers" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b5()
+  b1(v6):
+    v7 = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v11 = HasArrayStorage v3 arrayStorage=Double
+    Branch v11 -> taken b3(| 0), notTaken b4()
+  b3(v12):
+    v13 = IsInBounds v3, v4
+    Branch v13 -> taken b7(| 0), notTaken b5()
+  b4():
+    v14 = HasArrayStorage v3 arrayStorage=Int32
+    Branch v14 -> taken b6(| 0), notTaken b5()
+  b5() frequency=Unlikely:
+    v15 = ElemGet v3, v4
+    Return v15
+  b6(v16):
+    v17 = IsInBounds v3, v4
+    Branch v17 -> taken b8(| 0), notTaken b5()
+  b7(v18):
+    v19 = AllGuards v6, v12, v18
+    v20 = GetArrayElement v3, v4, v19 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v20
+  b8(v21):
+    v22 = AllGuards v6, v16, v21
+    v23 = GetArrayElement v3, v4, v22 arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
+    Return v23
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArrayLike v0, v1 arrayStorage=
+# CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous

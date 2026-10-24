@@ -1,0 +1,222 @@
+# A definition in a covered block ends its block, and each handler edge passes the definition that holds at the head of its block
+# FORM: Prepared
+# RUN: repair function=f0 variable=v2,v4,v6
+# RUN(ARMS): repair function=f1 redirect=b3.0:b2 variable=v3,v4,v7
+# RUN(EARLIER): repair function=f2 variable=v2,v3
+# RUN(BRANCH): repair function=f3 variable=v3,v5
+# RUN(UNUSED): repair function=f4 variable=v2,v4
+# RUN(CAUGHT): repair function=f5 variable=v2,v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="definedTwiceInOneBlock" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0
+    v4 = Mul v1, v1
+    v5 = Call v0
+    v6 = Sub v1, v1
+    v7 = Call v0
+    Jump -> next b2()
+  b2():
+    v8 = Negate v2
+    Return v8
+  b3() role=CatchHandler:
+    v9 = CatchValue
+    v10 = Negate v2
+    Return v10
+}
+# CHECK: function f0
+# CHECK: v2: number = Add v1, v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3(v2):
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: v4: number = Mul v1, v1
+# CHECK-NEXT: Jump -> next [[A]]()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v8: number = Negate v6
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b3([[P]]: number) role=CatchHandler:
+# CHECK-NEXT: v9: anything = CatchValue
+# CHECK-NEXT: v10: number = Negate [[P]]
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: [[A]]() handler=b3(v4):
+# CHECK-NEXT: v5: anything = Call v0
+# CHECK-NEXT: v6: number = Sub v1, v1
+# CHECK-NEXT: Jump -> next [[B]]()
+# CHECK-NEXT: [[B]]() handler=b3(v6):
+# CHECK-NEXT: v7: anything = Call v0
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: }
+
+function f1 name="definedInTwoArms" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: anything, v2: number):
+    v3 = Add v2, v2
+    Branch v0 -> taken b1(), notTaken b3()
+  b1() handler=b5():
+    v4 = Mul v2, v2
+    v5 = Call v1
+    Jump -> next b2()
+  b2():
+    v6 = Negate v3
+    Return v6
+  b3() handler=b5():
+    v7 = Sub v2, v2
+    v8 = Call v1
+    Jump -> next b4()
+  b4():
+    Return v2
+  b5() role=CatchHandler:
+    v9 = CatchValue
+    v10 = Negate v3
+    Return v10
+}
+# ARMS: function f1
+# ARMS: v3: number = Add v2, v2
+# ARMS-NEXT: Branch v0 -> taken b1(), notTaken b3()
+# ARMS-NEXT: b1() handler=b5(v3):
+# ARMS-NEXT: v4: number = Mul v2, v2
+# ARMS-NEXT: Jump -> next [[A]]()
+# ARMS-NEXT: b2([[P]]: number):
+# ARMS-NEXT: v6: number = Negate [[P]]
+# ARMS-NEXT: Return v6
+# ARMS-NEXT: b3() handler=b5(v3):
+# ARMS-NEXT: v7: number = Sub v2, v2
+# ARMS-NEXT: Jump -> next [[B]]()
+# ARMS: b5([[Q]]: number) role=CatchHandler:
+# ARMS-NEXT: v9: anything = CatchValue
+# ARMS-NEXT: v10: number = Negate [[Q]]
+# ARMS-NEXT: Return v10
+# ARMS-NEXT: [[A]]() handler=b5(v4):
+# ARMS-NEXT: v5: anything = Call v1
+# ARMS-NEXT: Jump -> next b2(v4)
+# ARMS-NEXT: [[B]]() handler=b5(v7):
+# ARMS-NEXT: v8: anything = Call v1
+# ARMS-NEXT: Jump -> next b2(v7)
+# ARMS-NEXT: }
+
+function f2 name="handlerKeepsEarlierDefinition" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    v4 = StrictEq v2, v0
+    Return v2
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = StrictEq v2, v0
+    Return v2
+}
+# EARLIER: function f2
+# EARLIER: Jump -> next b1()
+# EARLIER-NEXT: b1() handler=b3():
+# EARLIER-NEXT: v3: anything = Call v0
+# EARLIER-NEXT: Jump -> next b2()
+# EARLIER-NEXT: b2():
+# EARLIER-NEXT: v4: boolean = StrictEq v3, v0
+# EARLIER-NEXT: Return v3
+# EARLIER-NEXT: b3() role=CatchHandler:
+# EARLIER-NEXT: v5: anything = CatchValue
+# EARLIER-NEXT: v6: boolean = StrictEq v2, v0
+# EARLIER-NEXT: Return v2
+# EARLIER-NEXT: }
+
+function f3 name="definedInFrontOfBranch" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: anything, v2: number):
+    v3 = Add v2, v2
+    Jump -> next b1()
+  b1() handler=b4():
+    v4 = Call v1
+    v5 = Mul v2, v2
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Negate v3
+    Return v6
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Negate v3
+    Return v8
+}
+# BRANCH: function f3
+# BRANCH: b1() handler=b4(v3):
+# BRANCH-NEXT: v4: anything = Call v1
+# BRANCH-NEXT: v5: number = Mul v2, v2
+# BRANCH-NEXT: Jump -> next [[A]]()
+# BRANCH-NEXT: b2():
+# BRANCH-NEXT: v6: number = Negate v5
+# BRANCH: b4([[Q]]: number) role=CatchHandler:
+# BRANCH-NEXT: v7: anything = CatchValue
+# BRANCH-NEXT: v8: number = Negate [[Q]]
+# BRANCH-NEXT: Return v8
+# BRANCH-NEXT: [[A]]() handler=b4(v5):
+# BRANCH-NEXT: Branch v0 -> taken b2(), notTaken b3()
+# BRANCH-NEXT: }
+
+function f4 name="nobodyReadsVariable" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0
+    v4 = Mul v1, v1
+    v5 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    Return v1
+}
+# UNUSED: function f4
+# UNUSED: b1() handler=b3():
+# UNUSED-NEXT: v3: anything = Call v0
+# UNUSED-NEXT: v4: number = Mul v1, v1
+# UNUSED-NEXT: v5: anything = Call v0
+# UNUSED-NEXT: Jump -> next b2()
+# UNUSED-NEXT: b2():
+# UNUSED-NEXT: Return v1
+# UNUSED-NEXT: b3() role=CatchHandler:
+# UNUSED-NEXT: v6: anything = CatchValue
+# UNUSED-NEXT: Return v1
+# UNUSED-NEXT: }
+
+function f5 name="caughtValuesStayTogether" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return v1
+  b1() role=CatchHandler:
+    v2 = CatchException
+    Jump -> next b2()
+  b2() handler=b3():
+    v3 = Call v0
+    Rethrow v2
+  b3() role=CatchHandler handler=b4():
+    v4 = CatchException
+    v5 = CatchValue
+    v6 = Call v0, -, v5
+    Rethrow v2
+  b4() role=CatchHandler:
+    v7 = CatchValue
+    Rethrow v2
+}
+# CAUGHT: function f5
+# CAUGHT: b2() handler=b3():
+# CAUGHT-NEXT: v3: anything = Call v0
+# CAUGHT-NEXT: Rethrow v2
+# CAUGHT-NEXT: b3() role=CatchHandler handler=b4(v2):
+# CAUGHT-NEXT: v4: exception = CatchException
+# CAUGHT-NEXT: v5: anything = CatchValue
+# CAUGHT-NEXT: Jump -> next [[A]]()
+# CAUGHT-NEXT: b4([[Q]]: exception) role=CatchHandler:
+# CAUGHT-NEXT: v7: anything = CatchValue
+# CAUGHT-NEXT: Rethrow [[Q]]
+# CAUGHT-NEXT: [[A]]() handler=b4(v4):
+# CAUGHT-NEXT: v6: anything = Call v0, -, v5
+# CAUGHT-NEXT: Rethrow v4
+# CAUGHT-NEXT: }

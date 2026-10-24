@@ -1,0 +1,99 @@
+# Each use of a range decides for itself: a use that needs the string keeps the range, and a use that only reads characters reads the base string, in whatever block and under whatever handler it stands
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-on-edge" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = ToNumber v7
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1(v7)
+  b1(v10):
+    v11 = String string="ab"
+    v12 = StrictEq v10, v11
+    Return v12
+}
+variable g0 name="number" declared={type=anything} initialization=Undefined
+# CHECK-LABEL: function f0 name="slice-on-edge"
+# CHECK-NOT: FlattenString
+# CHECK: [[slice0]]: string = Substring v0, v5, v6
+# CHECK-NEXT: number = StringRangeToNumber v0, v5, v6
+# CHECK: Jump -> next b1([[slice0]])
+# CHECK-NOT: StringRangeEqualsLiteral
+
+function f1 name="slice-under-handler" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int) handler=b2():
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    Jump -> next b1()
+  b1():
+    v8 = String string="ab"
+    v9 = StrictEq v7, v8
+    Return v9
+  b2() role=CatchHandler:
+    v10 = CatchValue
+    v11 = Boolean boolean=false
+    Return v11
+}
+# CHECK-LABEL: function f1 name="slice-under-handler"
+# CHECK-NOT: = Substring
+# CHECK: [[result1]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+# CHECK-NEXT: Return [[result1]]
+
+function f2 name="slice-returned" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    Return v7
+}
+# CHECK-LABEL: function f2 name="slice-returned"
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NEXT: Return v7
+
+function f3 name="slice-without-use" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    Return v0
+}
+# CHECK-LABEL: function f3 name="slice-without-use"
+# CHECK-NOT: = Substring
+# CHECK: Return v0
+
+function f4 name="slice-converted-under-handler" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
+  b0(v0: string, v1: int, v2: int) handler=b2():
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = ToNumber v7
+    Jump -> next b1()
+  b1():
+    Return v8
+  b2() role=CatchHandler:
+    v9 = CatchValue
+    v10 = Integer integer=0
+    Return v10
+}
+# CHECK-LABEL: function f4 name="slice-converted-under-handler"
+# CHECK: b0(v0: string, v1: int, v2: int) {{*}}handler=b2():
+# CHECK-NOT: = Substring
+# CHECK: [[result4]]: number = StringRangeToNumber v0, v5, v6
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: Return [[result4]]

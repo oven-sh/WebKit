@@ -1,0 +1,29 @@
+# point = { x: 1 }; holder = { prototype: point }; other = { y: 1 }; function target() {}  Object.assign(target, holder)
+# object-held-under-the-name-prototype-is-no-prototype-because-another-object-is-copied-onto-a-function.ir with the holder itself as the source of the copy:
+# the point may become the prototype of what the function constructs.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Point"
+# CHECK-NOT: BecomePrototype
+# CHECK: layout L1 name="Holder"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Holder" fields=[{key="prototype" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Other" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="x"
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    v4 = NewObject -, v0 layout=L2 fields=[0]
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=ObjectAssign
+    v7 = Call v6, -, v5, v3
+    Return
+}
+function f1 name="target" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

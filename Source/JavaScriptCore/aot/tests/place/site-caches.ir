@@ -1,0 +1,57 @@
+# The hottest sites get the site caches, whatever function they are in. A site past the limit has none and uses the hashed table. A site that runs at most once asks for none: nothing would read it
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxSiteCaches:2 disable=rule:PropertyPair
+# RUN: place site-caches
+# LOSS: MaxSiteCaches x3 f1 v2
+# STATISTIC: SiteCachesPlaced = 2
+# STATISTIC: SitesWithoutSiteCache = 6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v1 key="first"
+    v3 = CallDirect v1, v2 function=f1
+    v4 = CallDirect v1, v2 function=f1
+    v5 = CallDirect v1, v2 function=f3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = CallDirect v1, v2 function=f2
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="cold" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v1 key="b"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+function f2 name="hot" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v1 key="b"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+function f3 name="calledOnce" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="a"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v1 key="b"
+    v5 = StrictEq v2, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+# The two sites of the module body and the first of calledOnce run at most once. The loop of calledOnce is as hot as the loop of main
+# CHECK: site caches 2, without 6
+# CHECK-NEXT: f2 v2 PropGet cache=0
+# CHECK-NEXT: f2 v3 PropGet cache=1
+# CHECK-NOT: cache=

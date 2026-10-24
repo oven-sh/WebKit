@@ -1,0 +1,30 @@
+# Inside a block with a handler what is thrown goes to the node of the handler, outside of it to the node of the function.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=5 sites=4 edges=2 edgesOnceReached=0 seeds=0 statements=2
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: n4 caught
+# CHECK-NEXT: s0 v2 result of a built-in
+# CHECK-NEXT: s1 v2 contents of the result of a built-in
+# CHECK-NEXT: s2 v4 result of a built-in
+# CHECK-NEXT: s3 v4 contents of the result of a built-in
+# CHECK-NEXT: edge n1 -> n4
+# CHECK-NEXT: edge n4 -> n3
+# CHECK-NEXT: Call v2 (n0, -) throws n4
+# CHECK-NEXT: Call v4 (n0, -, n4) throws n3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="catches" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0
+    Throw v1
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Call v0, -, v3
+    Throw v3
+}

@@ -1,0 +1,153 @@
+# A RequireObject of a value whose type has only objects goes, a second one of the same value is the first, any other stays
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 8
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyCasts SimplifyCasts
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Step" fields=[{key="done" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="operandIsObject" parameters=[{type=object}] results=[{type=object}] {
+  b0(v0: object):
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v1
+}
+# CHECK-LABEL: function f0 name="operandIsObject"
+# CHECK-NOT: RequireObject
+# CHECK: Return v0
+
+function f1 name="operandHasLayout" parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v1
+}
+# CHECK-LABEL: function f1 name="operandHasLayout"
+# CHECK-NOT: RequireObject
+# CHECK: Return v0
+
+function f2 name="operandIsFunction" parameters=[{type=function}] results=[{type=function}] {
+  b0(v0: function):
+    v1 = RequireObject v0 runtimeError=IteratorIsNotAnObject
+    Return v1
+}
+# CHECK-LABEL: function f2 name="operandIsFunction"
+# CHECK-NOT: RequireObject
+# CHECK: Return v0
+
+function f3 name="operandThroughUpcast" parameters=[{type=object}] results=[{type=object}] {
+  b0(v0: object):
+    v1 = Upcast v0 castType=anything
+    v2 = RequireObject v1 runtimeError=IteratorResultNotObject
+    Return v2
+}
+# CHECK-LABEL: function f3 name="operandThroughUpcast"
+# CHECK-NOT: RequireObject
+# CHECK: Return v0
+
+function f4 name="predictionIsRetained" parameters=[{type=object}] results=[{type=object}] {
+  b0(v0: object):
+    v1 ~ L0 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v1
+}
+# CHECK-LABEL: function f4 name="predictionIsRetained"
+# CHECK-NOT: RequireObject
+# CHECK: v1: object ~ L0 = Upcast v0
+# CHECK-NEXT: Return v1
+
+function f5 name="repeated" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v2 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v3 = StrictEq v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="repeated"
+# CHECK: v1: object = RequireObject v0 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: = StrictEq v1, v1
+# CHECK-NOT: RequireObject
+
+function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+  b0(v0: anything, v1: boolean):
+    v2 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="repeatedBelow"
+# CHECK: = RequireObject v0
+# CHECK: b1():
+# CHECK-NEXT: Return v2
+# CHECK-NOT: RequireObject
+
+function f7 name="operandIsAnything" parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v1
+}
+# CHECK-LABEL: function f7 name="operandIsAnything"
+# CHECK: v1: object = RequireObject v0 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: Return v1
+
+function f8 name="operandMayBeUndefined" parameters=[{type=undefined|L0}] results=[{type=L0}] {
+  b0(v0: undefined|L0):
+    v1 = RequireObject v0 runtimeError=DerivedConstructorResult
+    Return v1
+}
+# CHECK-LABEL: function f8 name="operandMayBeUndefined"
+# CHECK: v1: L0 = RequireObject v0 runtimeError=DerivedConstructorResult
+# CHECK-NEXT: Return v1
+
+function f9 name="operandIsNeverAnObject" parameters=[{type=number}] results=[{type=object}] {
+  b0(v0: number):
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Unreachable
+}
+# CHECK-LABEL: function f9 name="operandIsNeverAnObject"
+# CHECK: v1: never = RequireObject v0 runtimeError=IteratorResultNotObject
+# CHECK-NEXT: Unreachable
+
+function f10 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v2
+  b2():
+    v3 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v3
+}
+# CHECK-LABEL: function f10 name="repeatedInSiblingBranches"
+# CHECK: b1():
+# CHECK-NEXT: = RequireObject v0
+# CHECK: b2():
+# CHECK-NEXT: = RequireObject v0
+
+function f11 name="sameCastOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v3 = RequireObject v1 runtimeError=IteratorResultNotObject
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f11 name="sameCastOfAnotherValue"
+# CHECK: = RequireObject v0
+# CHECK-NEXT: = RequireObject v1
+# CHECK-NEXT: = StrictEq v2, v3
+
+function f12 name="otherCastOfSameValue" parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = RequireObjectCoercible v0 nullishAccess=Iterate
+    v2 = RequireObject v0 runtimeError=IteratorIsNotAnObject
+    Return v2
+}
+# It stays, and takes what the earlier cast has let through.
+# CHECK-LABEL: function f12 name="otherCastOfSameValue"
+# CHECK: = RequireObjectCoercible v0
+# CHECK-NEXT: = RequireObject v1
+# CHECK-NEXT: Return v2

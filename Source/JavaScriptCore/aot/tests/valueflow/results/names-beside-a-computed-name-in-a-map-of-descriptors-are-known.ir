@@ -1,0 +1,115 @@
+# Object.defineProperties(State.prototype, { [computed]: { get }, flowing: { get, set }, ended: { get } })
+# The map is an object literal that goes nowhere but into the call. One computed name in it hides no written name: `flowing` and `ended` are names of the prototype, so nobody takes a read of one
+# of them on an instance for a read of a name that is not there. Which function answers is not said: what stands under the computed name may be defined under any name, a written one too.
+# And the names of the prototype are not complete.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="State"{{*}} namedMembers=[{key="flowing"}, {key="ended"}]
+# CHECK-NOT: prototypeNamesAreComplete
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="State" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="value" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewDictionary
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ToString v4
+    v6 = NewClosure function=f12
+    v7 = NewObject layout=L1
+    PropDefine v7, v6 key="get"
+    v9 = FinishObject v7
+    ElemDefine v2, v5, v9
+    v11 = NewClosure function=f2
+    v12 = NewObject layout=L1
+    PropDefine v12, v11 key="get"
+    v14 = NewClosure function=f3
+    PropDefine v12, v14 key="set"
+    v16 = FinishObject v12
+    PropDefine v2, v16 key="flowing"
+    v18 = NewClosure function=f4
+    v19 = NewObject layout=L1
+    PropDefine v19, v18 key="get"
+    v21 = FinishObject v19
+    PropDefine v2, v21 key="ended"
+    v23 = Builtin builtin=Object
+    v24 = Builtin builtin=ObjectDefineProperties
+    v25 = Call v24, v23, v1, v2
+    v26 = Construct v0
+    v27 = PropGet v26 key="flowing"
+    v28 = Call v27
+    v29 = PropGet v26 key="ended"
+    v30 = Call v29
+    v31 = PropGet v26 key="other"
+    v32 = Call v31
+    Return v28
+}
+function f1 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}
+function f4 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f7
+    Return v1
+}
+function f5 name="spare" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 name="whileFlowing" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="onceEnded" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f8 name="spare" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f9 name="spare" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f10 name="spare" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f11 name="spare" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f12 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f13
+    Return v1
+}
+function f13 name="underTheComputedName" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

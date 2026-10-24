@@ -1,0 +1,33 @@
+# A read and a store of a static field through the class object, after its definition, reach code generation as accesses to the variable the class owns
+# RUN: compile
+# RUN(RESOLVED): pipeline ResolveAccesses
+# OPTIONS: check=validate-back-end only-passes=ResolveAccesses
+# CHECK: image not empty
+# RESOLVED-LABEL: function f0 name="main"
+# RESOLVED: PutModuleVariable [[defined]] variable=g0
+# RESOLVED-NEXT: = GetModuleVariable variable=g0
+# RESOLVED: PutModuleVariable [[stored]] variable=g0
+# RESOLVED-NOT: key="count"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}]
+variable g0 module=m0 declared={type=number} initialization=Uninitialized owner=L0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Double number=1.5
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v2 key="count"
+    v6 = Double number=2
+    PropSet v2, v6 key="count" mode=Strict
+    Return v5
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

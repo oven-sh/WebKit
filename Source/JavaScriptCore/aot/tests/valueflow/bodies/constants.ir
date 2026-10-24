@@ -1,0 +1,39 @@
+# Allocations, closures, built-ins and literals are constants inside the operands that read them. A string that is a property key of the program is that key, any other string is its kind. An allocation without operands has no statement.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=3 sites=5 edges=0 edgesOnceReached=0 seeds=2 statements=4
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: s0 v1 layout=L0
+# CHECK-NEXT: s1 v3 layout=L0
+# CHECK-NEXT: s2 v8 class=Array
+# CHECK-NEXT: s3 v9 result of a built-in
+# CHECK-NEXT: s4 v9 contents of the result of a built-in
+# CHECK-NEXT: reached: seed n1 <- s0
+# CHECK-NEXT: reached: seed host{{*}} <- ArrayPrototypePush
+# CHECK-NEXT: NewObject v3 (-, int)
+# CHECK-NEXT: NewArray v8 (-, s0, closure f1)
+# CHECK-NEXT: Call v9 (n0, s0, s1, closure f1, ArrayPrototypePush, "x", string, s2) throws n2
+# CHECK-NEXT: ElemGet v10 (s0, "x") throws n2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="constants" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = Builtin builtin=ArrayPrototypePush
+    v6 = String string="x"
+    v7 = String string="no key of the program"
+    v8 = NewArray v1, v4 contents=anything
+    v9 = Call v0, v1, v3, v4, v5, v6, v7, v8
+    v10 = ElemGet v1, v6
+    Return v1
+}
+function f1 name="closure" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

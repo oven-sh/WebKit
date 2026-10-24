@@ -1,0 +1,58 @@
+# Every store to a module variable that nothing reads is removed, and the stored values stay
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 3
+# CHECK: variable g0 name="read"{{*}}stores=AtMostOnce
+# CHECK: variable g1 name="unread"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g2 name="visible"{{*}}stores=AtMostOnce
+# CHECK: variable g3 name="storedTwice"{{*}}stores=Never{{*}}reads=NeverRead
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="read" variable=g0}, {name="storedTwice" variable=g3}, {name="unread" variable=g1}]
+module m2 path="/open.ts" displayPath="open.ts" body=f2 exports=[{name="visible" variable=g2}]
+entry module=m0
+variable g0 name="read" module=m1 declared={type=anything}
+variable g1 name="unread" module=m1 declared={type=anything}
+variable g2 name="visible" module=m2 declared={type=anything}
+variable g3 name="storedTwice" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ModuleNamespace module=m2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="compute" [isFreeName]
+    v2 = Call v1
+    v3 = ToNumber v2
+    PutModuleVariable v3 variable=g0
+    v5 = Call v1
+    v6 = ToNumber v5
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v3 variable=g3
+    PutModuleVariable v6 variable=g3
+    Return
+}
+# CHECK-LABEL: function f1 name="library"
+# CHECK: = Call
+# CHECK-NEXT: = ToNumber
+# CHECK-NEXT: PutModuleVariable v3 variable=g0
+# CHECK-NEXT: = Call
+# CHECK-NEXT: = ToNumber
+# CHECK-NEXT: Return
+
+function f2 name="open" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    Return
+}
+# CHECK-LABEL: function f2 name="open"
+# CHECK: PutModuleVariable v0 variable=g2

@@ -1,0 +1,49 @@
+# An entrypoint leaves by a tail call and has no frame and no check: whatever calls a closure has tested the stack. What it enters has no check either, and a tail call of a value polls in the stub that makes it
+# FORM: AsRead
+# RUN: generate-code
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# STATISTIC: StackChecksCoveredByCallers >= 7
+# PLACED: function f2 name="returnsAnything"
+# PLACED: ReturnCall
+# PLACED: function f6 name="returnsNumber" {{*}}role=GenericEntrypoint
+# PLACED: ReturnCall
+# PLACED: function f7 name="returnsAnything" {{*}}role=GenericEntrypoint
+# PLACED: ReturnCall
+# PLACED: function f8 name="leaf" {{*}}role=GenericEntrypoint
+# PLACED: ReturnCall
+# CHECK: f1: size={{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
+# CHECK: f2: size={{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f3: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f6: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f7: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f8: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="returnsNumber" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = ToNumber v1
+    Return v2
+}
+function f2 name="returnsAnything" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f3 name="leaf" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}

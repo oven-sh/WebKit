@@ -1,0 +1,88 @@
+# A field of an environment that nothing reads loses its value at creation and its later stores; a read that names the field keeps it
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="setAtCreation" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 kind=Environment name="storedLater" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L2 kind=Environment name="withoutName" fields=[{key="x" declared={type=anything}}, {declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L3 kind=Environment name="readRemains" fields=[{key="x" declared={type=anything}}, {key="callback" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}]
+# CHECK: layout L0 kind=Environment name="setAtCreation"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L1 kind=Environment name="storedLater"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L2 kind=Environment name="withoutName"{{*}}, {declared={type=anything} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L3 kind=Environment name="readRemains"{{*}}{key="callback"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}]
+
+function f0 name="setAtCreation" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    v4 = NewClosure v3 function=f4
+    Return v4
+}
+# CHECK-LABEL: function f0 name="setAtCreation"
+# CHECK-NOT: Add
+# CHECK: = NewObject -, v0 layout=L0 fields=[0]
+
+function f1 name="storedLater" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Add v1, v1
+    PutEnvironmentField v2, v3 layout=L1 field=1
+    PutEnvironmentField v2, v3 layout=L1 field=0
+    v6 = NewClosure v2 function=f5
+    Return v6
+}
+# CHECK-LABEL: function f1 name="storedLater"
+# CHECK: = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: [[sum]]: number = Add v1, v1
+# CHECK-NEXT: PutEnvironmentField v2, [[sum]] layout=L1
+# CHECK-NOT: field=1
+# CHECK: = NewClosure
+
+function f2 name="withoutName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v2 = NewClosure v1 function=f6
+    Return v2
+}
+# CHECK-LABEL: function f2 name="withoutName"
+# CHECK: = NewObject -, v0 layout=L2 fields=[0]
+
+function f3 name="readRemains" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f8
+    v2 = NewObject -, v0, v1 layout=L3 fields=[0, 1]
+    PutEnvironmentField v2, v1 layout=L3 field=1
+    v4 = NewClosure v2 function=f7
+    Return v4
+}
+# CHECK-LABEL: function f3 name="readRemains"
+# CHECK: = NewObject -, v0, v1 layout=L3 fields=[0, 1]
+# CHECK-NEXT: PutEnvironmentField v2, v1 layout=L3 field=1
+
+function f4 name="readsOtherField" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+function f5 name="readsOtherFieldOfStoredLater" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+function f6 name="readsOtherFieldOfWithoutName" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+}
+function f7 name="callsField" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=1
+    v2 = Call v1
+    Return v2
+}
+function f8 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

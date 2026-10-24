@@ -1,0 +1,55 @@
+# A call with a list that becomes a call with arguments, or one that forwards the arguments of its frame, keeps the mark of a demoted tail call
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="target" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    Return
+}
+function f1 name="markedCallList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v0 contents=anything
+    v3 = CallList v0, v1, v2 [isDemotedTailCall]
+    Return v3
+}
+# CHECK-LABEL: function f1 name="markedCallList"
+# CHECK-NOT: NewArray
+# CHECK: v3: anything = Call v0, v1, v1, v0 [isDemotedTailCall]
+
+function f2 name="callList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v0 contents=anything
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="callList"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v3: anything = Call v0, v1, v1, v0
+# CHECK-NOT: isDemotedTailCall
+
+function f3 name="markedForwardedCall" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: f0, v1: anything):
+    v2 = GetArgument argumentIndex=0
+    v3 = GetArgument argumentIndex=1
+    v4 = CreateRest firstArgument=2
+    v5 = CallList v2, v3, v4 [isDemotedTailCall]
+    Return v5
+}
+# CHECK-LABEL: function f3 name="markedForwardedCall"
+# CHECK-NOT: CreateRest
+# CHECK: v5: anything = CallForwardVarargs v2, v3 firstArgument=2 [isDemotedTailCall]
+
+function f4 name="forwardedCall" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: f0, v1: anything):
+    v2 = GetArgument argumentIndex=0
+    v3 = GetArgument argumentIndex=1
+    v4 = CreateRest firstArgument=2
+    v5 = CallList v2, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f4 name="forwardedCall"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v5: anything = CallForwardVarargs v2, v3 firstArgument=2
+# CHECK-NOT: isDemotedTailCall

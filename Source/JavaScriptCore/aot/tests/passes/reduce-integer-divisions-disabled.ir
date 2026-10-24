@@ -1,0 +1,21 @@
+# With the pass disabled Math.floor of a quotient of two integers stays a division and a call
+# FORM: Prepared
+# OPTIONS: disable=pass:ReduceIntegerDivisions
+# RUN: pass ReduceIntegerDivisions
+# STATISTIC: ReduceIntegerDivisionsChanges = 0
+# STATISTIC: IntegerDivisionsReduced = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="floorOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
+  b0(v0: int[0, 100], v1: int[1, 8]):
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f0 name="floorOfNonNegative"
+# CHECK-NEXT: b0(v0: int[0, 100], v1: int[1, 8]):
+# CHECK-NEXT: v2: number = Div v0, v1
+# CHECK-NEXT: v3: {{*}} = CallBuiltin -, v2 overload=MathFloor/0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

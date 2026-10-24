@@ -1,0 +1,51 @@
+# A built-in calls its callback with what its entry says: the comparator of a sort gets the elements of the array that is sorted. Function.prototype.call passes its operands on, each at its position. A function that nobody hands to anything stays unreached.
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> ArrayPrototypeSort
+# CHECK-NEXT: f0 v9 -> FunctionPrototypeCall
+# CHECK-NEXT: f2 v1 -> f1
+# CHECK-NEXT: f4 v1 -> f5
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=ArrayPrototypeSort
+    v4 = Call v3, v1, v2
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Builtin builtin=FunctionPrototypeCall
+    v8 = Undefined
+    v9 = Call v7, v5, v8, v6
+    Return
+}
+function f1 name="element" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="callback" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f3 name="neverUsed" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="calledThroughCall" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f5 name="passedThroughCall" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

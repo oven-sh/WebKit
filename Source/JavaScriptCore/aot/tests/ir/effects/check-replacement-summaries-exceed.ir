@@ -1,0 +1,21 @@
+# With summaries a call of unknown code leaves out what only compiled code writes, so a call of a function that writes such a variable does more than the call it replaces
+# FORM: Prepared optimizing
+# RUN: check-replacement summaries f0 v3 v2
+# DIAGNOSTIC: EffectsExceedReplacedGroup 1
+# CHECK-NOT: valid
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="writerHasOnlyDirectCallers" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="closes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, v0 calleeKey="return"
+    v3 = CallBuiltin v0 overload=IteratorHelperPrototypeReturn/0 builtinCallForm=AnyReceiver
+    Return
+}
+function f1 name="return" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+runtimefunction id=87 function=f1

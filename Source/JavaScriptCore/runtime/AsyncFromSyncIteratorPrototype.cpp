@@ -27,6 +27,11 @@
 #include "config.h"
 #include "AsyncFromSyncIteratorPrototype.h"
 
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "ExceptionHelpers.h"
+#include "JSMicrotask.h"
+#endif
 #include "AsyncContextSwapScope.h"
 
 #include "IteratorOperations.h"
@@ -75,6 +80,12 @@ static void awaitAndContinue(JSGlobalObject* globalObject, VM& vm, JSAsyncFromSy
 {
     InternalMicrotask task = done ? InternalMicrotask::AsyncFromSyncIteratorDone : InternalMicrotask::AsyncFromSyncIteratorContinue;
     iterator->setTarget(vm, target, closeSyncIteratorOnRejection);
+#if ENABLE(AOT)
+    if (JSValue awaited = vm.hasCompiledCode() ? AOT::tryAwaitForStepInProgress(globalObject, target, value) : JSValue()) {
+        asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, awaited, JSPromise::Status::Fulfilled, done, nullptr);
+        return;
+    }
+#endif
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, task, iterator);
 }
 
@@ -96,7 +107,7 @@ static bool callSyncIteratorMethodAndExtract(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, { });
 
     if (!result.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+        throwTypeError(globalObject, scope, IteratorResultNotObjectError);
         return { };
     }
 
@@ -240,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncThrow, (JSGlobalObjec
                 RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
             if (!returnResult.isObject()) [[unlikely]] {
-                throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+                throwTypeError(globalObject, scope, IteratorResultNotObjectError);
                 RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
             }
         }

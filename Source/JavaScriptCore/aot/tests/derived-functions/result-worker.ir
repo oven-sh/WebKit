@@ -1,0 +1,87 @@
+# The worker of a function returns the parts of its fresh result, and the worker of a function without a fresh result is a copy that returns its value
+# FORM: Prepared
+# RUN: derived-functions ResultWorker:f1 ResultWorker:f2 ResultWorker:f3 ResultWorker:f4 ResultWorker:f5
+# STATISTIC: FreshResultsSplit = 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f1 name="point" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="point"
+# CHECK-NOT: role=
+# CHECK: [[original]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Return [[original]]
+
+function f2 name="pair" parameters=[{type=number}, {type=string}] results=[{type=Array<anything>}] {
+  b0(v0: number, v1: string):
+    v2 = NewArray v0, v1 contents=anything
+    Return v2
+}
+
+function f3 name="onePart" parameters=[{type=number}] results=[{type=Array<number>}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = NewArray v1 contents=number
+    Return v2
+}
+
+function f4 name="returnsParameter" parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
+    Return v0
+}
+
+function f5 name="returnsStoredLiteral" parameters=[{type=number}, {type=object}] results=[{type=L0}] {
+  b0(v0: number, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v2 key="last"
+    Return v2
+}
+# CHECK-LABEL: function f5 name="returnsStoredLiteral"
+
+# CHECK-LABEL: name="point" module=m0 role=ResultWorker
+# CHECK: parameters=[{type=number}] results=[{type=number}, {type=number}]
+# CHECK: derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1} {
+# CHECK-NEXT: b0([[x]]: number):
+# CHECK-NEXT: [[y]]: number = Add [[x]], [[x]]
+# CHECK-NOT: NewObject
+# CHECK: [[parts]]:{{*}}= Results [[x]], [[y]]
+# CHECK-NEXT: Return [[parts]]
+
+# CHECK-LABEL: name="pair" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=string}]
+# CHECK: derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f2} {
+# CHECK-NEXT: b0([[first]]: number, [[second]]: string):
+# CHECK-NOT: NewArray
+# CHECK: [[elements]]:{{*}}= Results [[first]], [[second]]
+# CHECK-NEXT: Return [[elements]]
+
+# CHECK-LABEL: name="onePart" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}]
+# CHECK: creator=ResultWorker{origin=f3} {
+# CHECK: [[only]]: number = Add
+# CHECK-NOT: NewArray
+# CHECK-NOT: Results
+# CHECK: Return [[only]]
+
+# CHECK-LABEL: name="returnsParameter" module=m0 role=ResultWorker
+# CHECK: results=[{type=L0}]
+# CHECK: derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
+# CHECK-NEXT: b0([[parameter]]:
+# CHECK-NEXT: Return [[parameter]]
+
+# CHECK-LABEL: name="returnsStoredLiteral" module=m0 role=ResultWorker
+# CHECK: results=[{type=L0}]
+# CHECK: creator=ResultWorker{origin=f5} {
+# CHECK: [[stored]]:{{*}}= NewObject -, {{*}}layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet {{*}}, [[stored]] key="last"
+# CHECK-NEXT: Return [[stored]]

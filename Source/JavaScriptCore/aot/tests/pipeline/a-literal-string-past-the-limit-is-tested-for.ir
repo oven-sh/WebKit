@@ -1,0 +1,22 @@
+# A literal string past the limit has no word: a test for it hands the number of the string to the operation that compares texts, so the image holds the text
+# FORM: AsRead
+# OPTIONS: limit=MaxLiteralStrings:2
+# RUN: run-in-shell globalThis.register = f => { print(f("north"), f("south"), f("east"), f("nor" + String("th"))); };
+# CHECK: true true false true
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="isDirection" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType="south"|"north"
+    Return v1
+}

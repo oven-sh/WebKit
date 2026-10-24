@@ -1,0 +1,24 @@
+# class Readable { constructor(options) { if (options.read) this._read = options.read } }   Readable.prototype._read = function () { .. }   Readable.prototype._other = ..; Readable.prototype._other = ..
+# A store that finds the slot empty goes to what the object inherits. Of a member that stores put on the prototype object nobody says when it comes or whether it stays a writable data property:
+# the run time is asked whether stores pass it. That holds where flow knows the one function that is stored there as where it knows the name alone: knowing more makes no worse plan.
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Readable" constructor=f0 fields=[{key="_read" declared={type=anything} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="_other" declared={type=anything} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated} classFlow={evaluations=AtMostOnce prototypeLink=Fixed members=[{key="_read" function=f1}] namedMembers=[{key="_read" function=f1}, {key="_other"}]}
+
+function f0 name="Readable" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+
+function f2 name="below-a-name-without-a-function" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="_other"
+    Return
+}
+# CHECK: F2 v2 PropSet [[other]]: form=Slot level=Expected operation=PutSlot receivers=[L0] conditions=[MemberPassedByStores(L0, [[other]])]
+function f3 name="below-a-method-whose-function-is-known" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="_read"
+    Return
+}
+# CHECK-NEXT: F3 v2 PropSet [[read]]: form=Slot level=Expected operation=PutSlot receivers=[L0] conditions=[MemberPassedByStores(L0, [[read]])]

@@ -1,0 +1,101 @@
+# The loops of the shell test for-in-expansion/programs have a copy of their body for each name of the expected layout, in both of its key orders, when the whole pipeline runs: two loops, two orders, and once more in the entry for callers nobody sees, into which each function is inlined
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# STATISTIC: OwnKeyWalksExpanded = 8
+
+layout L0 name="Triple" fields=[{key="first" declared={type=anything}}, {key="second" declared={type=anything}}, {key="third" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
+    Return
+}
+function f1 name="makeTriple" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="makeReversed" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[2, 1, 0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="walk" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = ForInOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = ForInStep v2, v0
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6, v0
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f4 name="copy" parameters=[{type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ L0):
+    v2 = ForInOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = ForInStep v2, v1
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = ElemGet v1, v6
+    ElemSet v0, v6, v7
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+function f5 name="firstKey" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = ForInOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = ForInStep v1, v0
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    Return v5
+  b3():
+    v6 = String string="none"
+    Return v6
+}
+function f6 name="set" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: anything):
+    ElemSet v0, v1, v2
+    Return v0
+}
+function f7 name="remove" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = ElemDelete v0, v1
+    Return v0
+}
+function f8 name="setPrototype" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectSetPrototypeOf
+    v3 = Call v2, -, v0, v1
+    Return v0
+}

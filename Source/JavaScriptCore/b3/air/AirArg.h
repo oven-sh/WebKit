@@ -1371,9 +1371,6 @@ public:
             return false;
 
 #if CPU(ARM64)
-        if (MacroAssembler::supportsFloat16() && ARM64Assembler::canEncodeFPImm<16>(value))
-            return true;
-
         uint16_t u16 = static_cast<uint16_t>(value);
 
         auto shiftedImm = ARM64ShiftedImmediate16::create(u16);

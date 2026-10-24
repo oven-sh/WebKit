@@ -1,0 +1,463 @@
+# A generic operation on an unlikely path of a hot loop leaves for a copy of the loop, so the loop keeps the types of its likely paths. The copy comes back at the end of the turn
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 9
+# STATISTIC: LoopsWithoutWayBack = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b7()
+  b2():
+    v8 = TypeTest v4 testedType=number
+    Branch v8 -> taken b3(| 0), notTaken b5()
+  b3(v9):
+    v10 = TypeTest v0 testedType=number
+    Branch v10 -> taken b4(| 0), notTaken b5()
+  b4(v11):
+    v12 = Add v9, v11
+    Jump -> next b6(v12)
+  b5() frequency=Unlikely:
+    v13 = Add v4, v0
+    Jump -> next b6(v13)
+  b6(v14):
+    v15 = Increment v5
+    Jump -> next b1(v14, v15)
+  b7():
+    Return v4
+}
+# CHECK-LABEL: function f0 name="sum"
+# CHECK: Jump -> next [[entry0]](v2, v3)
+# CHECK-NEXT: b1(v4: number, v5: int|whole):
+# CHECK: Branch v8 -> taken b3(| 0), notTaken [[generic0]](v4, v5)
+# CHECK: Branch v10 -> taken b4(| 0), notTaken [[generic0]](v4, v5)
+# CHECK: v12: number = Add v9, v11
+# CHECK: b6(v14: number):
+# CHECK: Jump -> next b1(v14, v15)
+# CHECK: [[latch0]]([[sum0]]: number|string|bigint, {{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[count0]]: int|whole = Increment
+# CHECK-NEXT: Jump -> next [[tests0]]([[sum0]], [[count0]])
+# CHECK-NEXT: [[generic0]]([[left0]]: number|string|bigint{{*}}) frequency=Rare:
+# CHECK-NEXT: : number|string|bigint = Add [[left0]], v0
+# CHECK-NEXT: Jump -> next [[latch0]](
+# CHECK: [[header0]]([[wide0]]: number|string|bigint, {{*}}) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK: [[entry0]]([[a0]]: number{{*}}, [[b0]]: int|whole{{*}}):
+# CHECK-NEXT: Jump -> next b1([[a0]], [[b0]])
+# CHECK-NEXT: [[tests0]]([[carried0]]: number|string|bigint, [[counter0]]: int|whole) frequency=Unlikely:
+# CHECK-NEXT: [[test0]]: boolean = TypeTest [[carried0]] testedType=number
+# CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken [[failed0]](| 0)
+# CHECK-NEXT: [[passed0]]([[narrowed0]]: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[entry0]]([[narrowed0]], [[counter0]])
+# CHECK-NEXT: [[failed0]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[header0]]([[carried0]], [[counter0]])
+
+# An unlikely path that only computes is one more form of the likely path
+function f1 name="unlikelyPathOnlyComputes" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = TypeTest v0 testedType=i32
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = BitOr v9, v9
+    Jump -> next b5(v10)
+  b4() frequency=Unlikely:
+    v11 = Mul v0, v0
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Add v4, v12
+    v14 = Increment v5
+    Jump -> next b1(v13, v14)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f1 name="unlikelyPathOnlyComputes"
+# CHECK: b4() frequency=Unlikely:
+# CHECK-NEXT: = Mul v0, v0
+# CHECK-NEXT: Jump -> next b5(v11)
+# CHECK: b6():
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+
+# Nothing that the loop reads is wider for the unlikely path
+function f2 name="nothingGetsNarrower" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    Branch v2 -> taken b4(), notTaken b3()
+  b3() frequency=Unlikely:
+    v7 = Call v0, -
+    Jump -> next b4()
+  b4():
+    v8 = Increment v4
+    Jump -> next b1(v8)
+  b5():
+    Return v4
+}
+# CHECK-LABEL: function f2 name="nothingGetsNarrower"
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b4()
+# CHECK: b5():
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+
+# The sum comes into the inner loop from the loop around it, where it is wider: it enters through the tests
+function f3 name="sumCarriedThroughBothLoops" parameters=[{type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b13()
+  b2():
+    v8 = Integer integer=0
+    Jump -> next b3(v4, v8)
+  b3(v9, v10):
+    LoopHint
+    v12 = Less v10, v1
+    Branch v12 -> taken b4(), notTaken b9()
+  b4():
+    v13 = TypeTest v9 testedType=number
+    Branch v13 -> taken b5(| 0), notTaken b7()
+  b5(v14):
+    v15 = TypeTest v0 testedType=number
+    Branch v15 -> taken b6(| 0), notTaken b7()
+  b6(v16):
+    v17 = Add v14, v16
+    Jump -> next b8(v17)
+  b7() frequency=Unlikely:
+    v18 = Add v9, v0
+    Jump -> next b8(v18)
+  b8(v19):
+    v20 = Increment v10
+    Jump -> next b3(v19, v20)
+  b9():
+    v21 = TypeTest v9 testedType=number
+    Branch v21 -> taken b10(| 0), notTaken b11()
+  b10(v22):
+    v23 = Increment v22
+    Jump -> next b12(v23)
+  b11() frequency=Unlikely:
+    v24 = Add v9, v0
+    Jump -> next b12(v24)
+  b12(v25):
+    v26 = Increment v5
+    Jump -> next b1(v25, v26)
+  b13():
+    Return v4
+}
+# CHECK-LABEL: function f3 name="sumCarriedThroughBothLoops"
+# CHECK: b1(v4: number|string|bigint{{*}}, v5: int|whole):
+# CHECK: Jump -> next [[tests3]](v4, v8)
+# CHECK-NEXT: b3(v9: number, v10: int|whole):
+# CHECK: Jump -> next b3(v19, v20)
+# CHECK: b11() frequency=Unlikely:
+# CHECK: [[entry3]]({{*}}: number, {{*}}):
+# CHECK-NEXT: Jump -> next b3(
+# CHECK-NEXT: [[tests3]]([[carried3]]: number|string|bigint{{*}}, {{*}}):
+# CHECK-NEXT: = TypeTest [[carried3]] testedType=number
+
+# The inner loop is separated by itself. The loop around it stays, also where a path of its own would leave
+function f4 name="loopAroundSeparatedLoop" parameters=[{type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b13()
+  b2():
+    v8 = Integer integer=0
+    v9 = Integer integer=0
+    Jump -> next b3(v8, v9)
+  b3(v10, v11):
+    LoopHint
+    v13 = Less v11, v1
+    Branch v13 -> taken b4(), notTaken b9()
+  b4():
+    v14 = TypeTest v10 testedType=number
+    Branch v14 -> taken b5(| 0), notTaken b7()
+  b5(v15):
+    v16 = TypeTest v0 testedType=number
+    Branch v16 -> taken b6(| 0), notTaken b7()
+  b6(v17):
+    v18 = Add v15, v17
+    Jump -> next b8(v18)
+  b7() frequency=Unlikely:
+    v19 = Add v10, v0
+    Jump -> next b8(v19)
+  b8(v20):
+    v21 = Increment v11
+    Jump -> next b3(v20, v21)
+  b9():
+    v22 = TypeTest v4 testedType=number
+    Branch v22 -> taken b10(| 0), notTaken b11()
+  b10(v23):
+    v24 = Increment v23
+    Jump -> next b12(v24)
+  b11() frequency=Unlikely:
+    v25 = Add v4, v10
+    Jump -> next b12(v25)
+  b12(v26):
+    v27 = Increment v5
+    Jump -> next b1(v26, v27)
+  b13():
+    Return v4
+}
+# CHECK-LABEL: function f4 name="loopAroundSeparatedLoop"
+# CHECK: b1(v4: number|string|bigint{{*}}, v5: int|whole):
+# CHECK: b3(v10: number, v11: int|whole):
+# CHECK: b11({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = Add v4,
+# CHECK-NEXT: Jump -> next b12(v25)
+
+# No test establishes the contents of an array, so the copy does not come back
+function f5 name="noTestForTypeOfLoop" parameters=[{type=Array<number, proven>}, {type=anything}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven>, v1: anything, v2: boolean, v3: number):
+    v4 = Integer integer=0
+    Jump -> next b1(v0, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v3
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    v9 = ElemGet v5, v6
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v0)
+  b4() frequency=Unlikely:
+    v10 = Call v1, -
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = Increment v6
+    Jump -> next b1(v11, v12)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: function f5 name="noTestForTypeOfLoop"
+# CHECK: b1(v5: Array<number, proven>, v6: int|whole):
+# CHECK-NOT: TypeTest
+# CHECK: Jump -> next [[header5]](v13, v14)
+# CHECK-NOT: TypeTest
+# CHECK: [[header5]]({{*}}: anything ~ Array<number, proven>, {{*}}: int|whole) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: TypeTest
+
+# A value that goes around the loop and is tested in every turn is tested where it is made: the header has the tested type, and the edge that enters with a number passes no test
+function f6 name="testedInEveryTurn" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = TypeTest v4 testedType=number
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = Increment v9
+    Jump -> next b5(v10)
+  b4() frequency=Unlikely:
+    v11 = Increment v4
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Call v0, -, v12
+    v14 = Increment v5
+    Jump -> next b1(v13, v14)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f6 name="testedInEveryTurn"
+# CHECK: Jump -> next [[entry6]](v2, v3)
+# CHECK-NEXT: b1(v4: number, v5: int|whole):
+# CHECK: b5(v12: number):
+# CHECK-NEXT: v13: anything = Call v0, -, v12
+# CHECK-NEXT: v14: int|whole = Increment v5
+# CHECK-NEXT: Jump -> next [[latch6]]()
+# CHECK: [[header6]]({{*}}: anything, {{*}}: int|whole) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK: [[entry6]]({{*}}: number{{*}}, {{*}}):
+# CHECK-NEXT: Jump -> next b1(
+# CHECK: [[latch6]]():
+# CHECK-NEXT: [[test6]]: boolean = TypeTest v13 testedType=number
+# CHECK-NEXT: Branch [[test6]] -> taken [[passed6]](| 0), notTaken [[failed6]](| 0)
+# CHECK-NEXT: [[passed6]]([[narrowed6]]: number):
+# CHECK-NEXT: Jump -> next b1([[narrowed6]], v14)
+# CHECK-NEXT: [[failed6]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[header6]](v13, v14)
+
+# A test that not every turn runs stays where it is
+function f7 name="testedInSomeTurns" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = Integer integer=0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b8()
+  b2():
+    Branch v2 -> taken b3(), notTaken b7()
+  b3():
+    v9 = TypeTest v5 testedType=number
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Increment v10
+    Jump -> next b6(v11)
+  b5() frequency=Unlikely:
+    v12 = Increment v5
+    Jump -> next b6(v12)
+  b6(v13):
+    v14 = Call v0, -, v13
+    Jump -> next b7()
+  b7():
+    v15 = Call v0, -
+    v16 = Increment v6
+    Jump -> next b1(v15, v16)
+  b8():
+    Return v5
+}
+# CHECK-LABEL: function f7 name="testedInSomeTurns"
+# CHECK: b1(v5: anything{{*}}, v6: int|whole):
+# CHECK: = TypeTest v5 testedType=number
+# CHECK: b6(v13: number):
+# CHECK: Jump -> next b1(v15, v16)
+
+# An inner loop without unlikely paths goes into the copy with the loop around it
+function f8 name="loopAroundPlainLoop" parameters=[{type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b10()
+  b2():
+    v8 = Integer integer=0
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v1
+    Branch v11 -> taken b4(), notTaken b5()
+  b4():
+    v12 = Increment v9
+    Jump -> next b3(v12)
+  b5():
+    v13 = TypeTest v0 testedType=number
+    Branch v13 -> taken b6(| 0), notTaken b8()
+  b6(v14):
+    v15 = TypeTest v4 testedType=number
+    Branch v15 -> taken b7(| 0), notTaken b8()
+  b7(v16):
+    v17 = Add v16, v14
+    Jump -> next b9(v17)
+  b8() frequency=Unlikely:
+    v18 = Add v4, v0
+    Jump -> next b9(v18)
+  b9(v19):
+    v20 = Increment v5
+    Jump -> next b1(v19, v20)
+  b10():
+    Return v4
+}
+# CHECK-LABEL: function f8 name="loopAroundPlainLoop"
+# CHECK: b1(v4: number, v5: int|whole):
+# CHECK: b3(v9: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK: b9(v19: number):
+# CHECK-COUNT-2: LoopHint
+
+# What a leaving path defines may be named behind the loop, in a block that only that path reaches: it is the copy's value there
+function f9 name="leavingPathDefinesValueUsedBehindLoop" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b8()
+  b2():
+    v8 = TypeTest v0 testedType=number
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = Add v5, v9
+    Jump -> next b6(v10)
+  b4() frequency=Unlikely:
+    v11 = Add v4, v0
+    v12 = ToBoolean v11
+    Branch v12 -> taken b5(), notTaken b7()
+  b5() frequency=Unlikely:
+    Jump -> next b6(v11)
+  b6(v13):
+    v14 = Increment v5
+    Jump -> next b1(v13, v14)
+  b7() frequency=Unlikely:
+    Return v11
+  b8():
+    Return v4
+}
+# CHECK-LABEL: function f9 name="leavingPathDefinesValueUsedBehindLoop"
+# CHECK: b1(v4: number, v5: int|whole):
+# CHECK: b7() frequency=Unlikely:
+# CHECK-NEXT: Return [[sumOfCopy9]]
+# CHECK: [[sumOfCopy9]]: number|string|bigint = Add
+
+# The copy is entered at its header too, past everything that the loop defines: it reads its own constants and values
+function f10 name="copyEnteredAtItsHeader" parameters=[{type=anything}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: anything):
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Integer integer=3
+    v9 = Mul v5, v8
+    v10 = TypeTest v4 testedType=number
+    Branch v10 -> taken b3(| 0), notTaken b4()
+  b3(v11):
+    v12 = Add v11, v9
+    Jump -> next b5(v12)
+  b4() frequency=Unlikely:
+    v13 = Add v4, v9
+    Jump -> next b5(v13)
+  b5(v14):
+    v15 = Call v0, -, v14, v8, v9
+    v16 = Increment v5
+    Jump -> next b1(v15, v16)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f10 name="copyEnteredAtItsHeader"
+# CHECK: Jump -> next [[tests10]](v2, v3)
+# CHECK-NEXT: b1(v4: number, v5: int|whole):
+# CHECK: [[tests10]]([[carried10]]: anything, {{*}}):
+# CHECK-NEXT: = TypeTest [[carried10]] testedType=number

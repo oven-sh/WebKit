@@ -1,0 +1,134 @@
+# The number of stores to a virtual object and the number of fields of its layout are not limited: only the fields in use count
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# LOSS: MaxVirtualObjectFields f5 v2
+# STATISTIC: AllocationsSunk = 4
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: StoresFoldedIntoAllocations = 31
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Many" fields=[{key="k0" declared={type=anything}}, {key="k1" declared={type=anything}}, {key="k2" declared={type=anything}}, {key="k3" declared={type=anything}}, {key="k4" declared={type=anything}}, {key="k5" declared={type=anything}}, {key="k6" declared={type=anything}}, {key="k7" declared={type=anything}}, {key="k8" declared={type=anything}}, {key="k9" declared={type=anything}}, {key="k10" declared={type=anything}}, {key="k11" declared={type=anything}}, {key="k12" declared={type=anything}}, {key="k13" declared={type=anything}}, {key="k14" declared={type=anything}}, {key="k15" declared={type=anything}}, {key="k16" declared={type=anything}}, {key="k17" declared={type=anything}}, {key="k18" declared={type=anything}}, {key="k19" declared={type=anything}}]
+layout L1 name="Wide" fields=[{key="k0" declared={type=anything}}, {key="k1" declared={type=anything}}, {key="k2" declared={type=anything}}, {key="k3" declared={type=anything}}, {key="k4" declared={type=anything}}, {key="k5" declared={type=anything}}, {key="k6" declared={type=anything}}, {key="k7" declared={type=anything}}, {key="k8" declared={type=anything}}, {key="k9" declared={type=anything}}, {key="k10" declared={type=anything}}, {key="k11" declared={type=anything}}, {key="k12" declared={type=anything}}, {key="k13" declared={type=anything}}, {key="k14" declared={type=anything}}, {key="k15" declared={type=anything}}, {key="k16" declared={type=anything}}, {key="k17" declared={type=anything}}, {key="k18" declared={type=anything}}, {key="k19" declared={type=anything}}, {key="k20" declared={type=anything}}, {key="k21" declared={type=anything}}, {key="k22" declared={type=anything}}, {key="k23" declared={type=anything}}, {key="k24" declared={type=anything}}, {key="k25" declared={type=anything}}, {key="k26" declared={type=anything}}, {key="k27" declared={type=anything}}, {key="k28" declared={type=anything}}, {key="k29" declared={type=anything}}, {key="k30" declared={type=anything}}, {key="k31" declared={type=anything}}, {key="k32" declared={type=anything}}, {key="k33" declared={type=anything}}, {key="k34" declared={type=anything}}, {key="k35" declared={type=anything}}, {key="k36" declared={type=anything}}, {key="k37" declared={type=anything}}, {key="k38" declared={type=anything}}, {key="k39" declared={type=anything}}, {key="k40" declared={type=anything}}, {key="k41" declared={type=anything}}, {key="k42" declared={type=anything}}, {key="k43" declared={type=anything}}, {key="k44" declared={type=anything}}, {key="k45" declared={type=anything}}, {key="k46" declared={type=anything}}, {key="k47" declared={type=anything}}, {key="k48" declared={type=anything}}, {key="k49" declared={type=anything}}, {key="k50" declared={type=anything}}, {key="k51" declared={type=anything}}, {key="k52" declared={type=anything}}, {key="k53" declared={type=anything}}, {key="k54" declared={type=anything}}, {key="k55" declared={type=anything}}, {key="k56" declared={type=anything}}, {key="k57" declared={type=anything}}, {key="k58" declared={type=anything}}, {key="k59" declared={type=anything}}, {key="k60" declared={type=anything}}, {key="k61" declared={type=anything}}, {key="k62" declared={type=anything}}, {key="k63" declared={type=anything}}, {key="k64" declared={type=anything}}, {key="k65" declared={type=anything}}, {key="k66" declared={type=anything}}, {key="k67" declared={type=anything}}, {key="k68" declared={type=anything}}, {key="k69" declared={type=anything}}]
+
+function f0 name="eightStores" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject layout=L0
+    PropDefine v3, v0 key="k0" receivers=[L0]
+    PropDefine v3, v1 key="k1" receivers=[L0]
+    PropDefine v3, v0 key="k2" receivers=[L0]
+    PropDefine v3, v1 key="k3" receivers=[L0]
+    PropDefine v3, v0 key="k4" receivers=[L0]
+    PropDefine v3, v1 key="k5" receivers=[L0]
+    PropDefine v3, v0 key="k6" receivers=[L0]
+    PropDefine v3, v1 key="k7" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v12 = Call v0, -, v3
+    Return v12
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="eightStores"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell0]]:{{*}}= NewObject -, v0, v1, v0, v1, v0, v1, v0, v1 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7]
+# CHECK-NEXT: = Call v0, -, [[cell0]]
+# CHECK-NOT: PropDefine
+
+function f1 name="twentyStoresInReverseOrder" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject layout=L0
+    PropDefine v3, v0 key="k19" receivers=[L0]
+    PropDefine v3, v1 key="k18" receivers=[L0]
+    PropDefine v3, v0 key="k17" receivers=[L0]
+    PropDefine v3, v1 key="k16" receivers=[L0]
+    PropDefine v3, v0 key="k15" receivers=[L0]
+    PropDefine v3, v1 key="k14" receivers=[L0]
+    PropDefine v3, v0 key="k13" receivers=[L0]
+    PropDefine v3, v1 key="k12" receivers=[L0]
+    PropDefine v3, v0 key="k11" receivers=[L0]
+    PropDefine v3, v1 key="k10" receivers=[L0]
+    PropDefine v3, v0 key="k9" receivers=[L0]
+    PropDefine v3, v1 key="k8" receivers=[L0]
+    PropDefine v3, v0 key="k7" receivers=[L0]
+    PropDefine v3, v1 key="k6" receivers=[L0]
+    PropDefine v3, v0 key="k5" receivers=[L0]
+    PropDefine v3, v1 key="k4" receivers=[L0]
+    PropDefine v3, v0 key="k3" receivers=[L0]
+    PropDefine v3, v1 key="k2" receivers=[L0]
+    PropDefine v3, v0 key="k1" receivers=[L0]
+    PropDefine v3, v1 key="k0" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v24 = Call v0, -, v3
+    Return v24
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="twentyStoresInReverseOrder"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1 layout=L0 fields=[19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+# CHECK-NEXT: = Call v0, -, [[cell1]]
+# CHECK-NOT: PropDefine
+
+function f2 name="storeToStoredFieldKeepsItsPlace" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject layout=L0
+    PropDefine v3, v0 key="k5" receivers=[L0]
+    PropDefine v3, v0 key="k2" receivers=[L0]
+    PropSet v3, v1 key="k5" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v0, -, v3
+    Return v7
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="storeToStoredFieldKeepsItsPlace"
+# CHECK: b1():
+# CHECK-NEXT: [[cell2]]:{{*}}= NewObject -, v1, v0 layout=L0 fields=[5, 2]
+# CHECK-NEXT: = Call v0, -, [[cell2]]
+
+function f3 name="twoFieldsOfSeventyRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L1 fields=[3, 69]
+    v3 = PropGet v2 key="k69" receivers=[L1]
+    Return v3
+}
+# CHECK-LABEL: function f3 name="twoFieldsOfSeventyRead"
+# CHECK: b0(
+# CHECK-NEXT: v3: anything = Upcast v1 castType=anything
+# CHECK-NEXT: Return v3
+
+function f4 name="twoFieldsOfSeventySunk" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L1 fields=[69, 3]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    v5 = PropGet v3 key="k3" receivers=[L1]
+    Return v5
+}
+# CHECK-LABEL: function f4 name="twoFieldsOfSeventySunk"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell4]]:{{*}}= NewObject -, v0, v1 layout=L1 fields=[69, 3]
+# CHECK: b2():
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+
+function f5 name="sixtyFiveFieldsInUse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 layout=L1 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64]
+    v3 = PropGet v2 key="k64" receivers=[L1]
+    Return v3
+}
+# CHECK-LABEL: function f5 name="sixtyFiveFieldsInUse"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0, v0,
+# CHECK-NEXT: = PropGet v2 key="k64"

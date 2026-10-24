@@ -1,0 +1,63 @@
+# The base of a super access in an object literal, a class and its prototype, and reads and stores through it by name and by key, pass the back-end checks in fast code
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Home"
+layout L1 kind=Instance name="Holder" constructor=f4
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="bases" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    SetLiteralPrototype v1, v0
+    v3 = FinishObject v1
+    v4 = GetSuperBase v3
+    v5 = NewClosure function=f4
+    v6 = NewClass v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = GetSuperBase v7 homeKind=ClassPrototype
+    v9 = GetSuperBase v7
+    v10 = NewArray v4, v8, v9 contents=anything
+    Return v10
+}
+function f2 name="reads" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject layout=L0
+    SetLiteralPrototype v3, v0
+    v5 = FinishObject v3
+    v6 = GetSuperBase v5
+    v7 = SuperGet v6, v1 key="k"
+    v8 = SuperGet v6, v1, v2
+    v9 = NewArray v7, v8 contents=anything
+    Return v9
+}
+function f3 name="stores" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject layout=L0
+    SetLiteralPrototype v3, v0
+    v5 = FinishObject v3
+    v6 = GetSuperBase v5
+    SuperSet v6, v1, v2 mode=Sloppy key="k"
+    SuperSet v6, v1, v2 key="k"
+    SuperSet v6, v1, v2, v2 mode=Sloppy
+    SuperSet v6, v1, v2, v2
+    Return
+}
+function f4 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}

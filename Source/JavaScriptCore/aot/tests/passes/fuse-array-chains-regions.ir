@@ -1,0 +1,225 @@
+# Where a chain may stand: under a handler, in a loop, beside another chain, behind another chain, with casts between its links
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
+runtimefunction id=33 function=f1
+runtimefunction id=65 function=f2
+runtimefunction id=131090 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Undefined
+    Return v6
+}
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f2 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+
+function f3 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f4 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f5 name="insideTry" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>) handler=b2():
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    v8 = AssumeType v7 castType=Array<number>
+    Jump -> next b1()
+  b1():
+    Return v8
+  b2() role=CatchHandler:
+    v9 = CatchValue
+    Return v9
+}
+# CHECK-LABEL: function f5 name="insideTry"
+# CHECK: b0(v0: Array<number, proven, pristine[Storage, Names]>) handler=b2():
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: b1():
+# CHECK: [[zero5]]: 0 = Integer
+# CHECK-NEXT: [[none5]]: undefined = Undefined
+# CHECK-NEXT: [[fused5]]: anything = CallDirect v0, [[zero5]], [[none5]], v1, [[none5]], v5, [[none5]] function=[[filterMapToArray]]
+# CHECK-NEXT: v8: Array<number> = AssumeType [[fused5]] castType=Array<number>
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+
+function f6 name="insideLoop" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewClosure function=f3
+    v4 = NewArray contents=anything
+    v5 = CallDirect v0, v3, v4 function=f1
+    v6 = AssumeType v5 castType=Array<number>
+    v7 = NewClosure function=f4
+    v8 = NewArray contents=anything
+    v9 = CallDirect v6, v7, v8 function=f2
+    v10 = AssumeType v9 castType=Array<number>
+    v11 = Call v1, -, v10
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    Return v10
+}
+# CHECK-LABEL: function f6 name="insideLoop"
+# CHECK: LoopHint
+# CHECK-NOT: = CallDirect v0, v3, v4 function=
+# CHECK-NOT: = CallDirect v6, v7, v8 function=
+# CHECK: [[zero6]]: 0 = Integer
+# CHECK-NEXT: [[none6]]: undefined = Undefined
+# CHECK-NEXT: [[fused6]]: anything = CallDirect v0, [[zero6]], [[none6]], v3, [[none6]], v7, [[none6]] function=[[filterMapToArray]]
+# CHECK-NOT: = CallDirect v0, v3, v4 function=
+# CHECK-NOT: = CallDirect v6, v7, v8 function=
+
+function f7 name="twoChainsInOneBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: Array<number, proven, pristine[Storage, Names]>):
+    v2 = NewClosure function=f3
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f1
+    v5 = AssumeType v4 castType=Array<number>
+    v6 = NewClosure function=f4
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f2
+    v9 = AssumeType v8 castType=Array<number>
+    v10 = NewClosure function=f3
+    v11 = NewArray contents=anything
+    v12 = CallDirect v1, v10, v11 function=f1
+    v13 = AssumeType v12 castType=Array<number>
+    v14 = NewClosure function=f4
+    v15 = NewArray contents=anything
+    v16 = CallDirect v13, v14, v15 function=f2
+    v17 = AssumeType v16 castType=Array<number>
+    v18 = NewArray v9, v17 contents=anything
+    Return v18
+}
+# CHECK-LABEL: function f7 name="twoChainsInOneBlock"
+# CHECK-NOT: = CallDirect v0, v2, v3 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK-NOT: = CallDirect v1, v10, v11 function=
+# CHECK-NOT: = CallDirect v13, v14, v15 function=
+# CHECK: [[firstChain]]: anything = CallDirect v0, {{*}}, {{*}}, v2, {{*}}, v6, {{*}} function=[[filterMapToArray]]
+# CHECK-NOT: = CallDirect v0, v2, v3 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK-NOT: = CallDirect v1, v10, v11 function=
+# CHECK-NOT: = CallDirect v13, v14, v15 function=
+# CHECK: [[secondChain]]: anything = CallDirect v1, {{*}}, {{*}}, v10, {{*}}, v14, {{*}} function=[[filterMapToArray]]
+# CHECK-NOT: = CallDirect v0, v2, v3 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK-NOT: = CallDirect v1, v10, v11 function=
+# CHECK-NOT: = CallDirect v13, v14, v15 function=
+
+function f8 name="chainFeedsChain" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>):
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    v8 = AssumeType v7 castType=Array<number>
+    v9 = AssumeType v8 castType=Array<number, proven, pristine[Storage, Names]>
+    PutModuleVariable v9 variable=g0
+    v11 = NewClosure function=f3
+    v12 = NewArray contents=anything
+    v13 = CallDirect v9, v11, v12 function=f1
+    v14 = AssumeType v13 castType=Array<number>
+    v15 = NewClosure function=f4
+    v16 = NewArray contents=anything
+    v17 = CallDirect v14, v15, v16 function=f2
+    v18 = AssumeType v17 castType=Array<number>
+    Return v18
+}
+# CHECK-LABEL: function f8 name="chainFeedsChain"
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v11, v12 function=
+# CHECK-NOT: = CallDirect v14, v15, v16 function=
+# CHECK: [[feeding]]: anything = CallDirect v0, {{*}}, {{*}}, v1, {{*}}, v5, {{*}} function=[[filterMapToArray]]
+# CHECK: v9: Array<number, proven, pristine[Storage, Names]> = AssumeType
+# CHECK-NEXT: PutModuleVariable v9 variable=g0
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v11, v12 function=
+# CHECK-NOT: = CallDirect v14, v15, v16 function=
+# CHECK: [[fed]]: anything = CallDirect v9, {{*}}, {{*}}, v11, {{*}}, v15, {{*}} function=[[filterMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v11, v12 function=
+# CHECK-NOT: = CallDirect v14, v15, v16 function=
+
+function f9 name="castsBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>):
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = Upcast v4 castType=undefined|Array<number>
+    v6 = NewClosure function=f4
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f2
+    v9 = AssumeType v8 castType=Array<number>
+    Return v9
+}
+# CHECK-LABEL: function f9 name="castsBetweenLinks"
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK-NOT: Upcast
+# CHECK: [[zero9]]: 0 = Integer
+# CHECK-NEXT: [[none9]]: undefined = Undefined
+# CHECK-NEXT: [[fused9]]: anything = CallDirect v0, [[zero9]], [[none9]], v1, [[none9]], v6, [[none9]] function=[[filterMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK-NOT: Upcast
+
+function f10 name="castUsedTwice" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>):
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = Upcast v4 castType=undefined|Array<number>
+    v6 = NewClosure function=f4
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f2
+    v9 = AssumeType v8 castType=Array<number>
+    PutModuleVariable v5 variable=g0
+    Return v9
+}
+# CHECK-LABEL: function f10 name="castUsedTwice"
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1
+# CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f2
+
+# CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=96}
+# CHECK-NOT: role=ChainStep

@@ -1,0 +1,57 @@
+# function on(table, type, listener) { table[type] = listener }  function emit(table, type, a) { table[type](a) }
+# on(table, "request", takesRequest); on(table, "failure", takesFailure); emit(table, "request", new Request); emit(table, "failure", new Failure)
+# One node holds what a parameter is handed by all callers: every listener would lie under every name, and every listener would be handed every operand.
+# A function that stores under a parameter, or calls what it has read under one, has an instance for each constant that a call passes there.
+# The nodes of the body hold what they hold for all calls together: the one compiled `emit` calls either listener.
+# RUN: valueflow-why values=f1:v1 values=f2:v1 values=f4:v4
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f0
+# CHECK: values=f4:v4
+# CHECK: operand 0 {{*}} members: {{*}}f1 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table"
+layout L1 name="Request" fields=[{key="url" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Failure" fields=[{key="code" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = String string="request"
+    v6 = String string="failure"
+    v7 = Call v1, -, v0, v5, v3
+    v8 = Call v1, -, v0, v6, v4
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = NewObject -, v9 layout=L2 fields=[0]
+    v12 = Call v2, -, v0, v5, v10
+    v13 = Call v2, -, v0, v6, v11
+    Return
+}
+function f1 name="takesRequest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="url"
+    Return v1
+}
+function f2 name="takesFailure" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="code"
+    Return v1
+}
+function f3 name="on" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    Return
+}
+function f4 name="emit" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ElemGet v0, v1
+    v4 = Call v3, -, v2
+    Return v4
+}

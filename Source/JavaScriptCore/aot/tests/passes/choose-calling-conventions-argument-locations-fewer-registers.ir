@@ -1,0 +1,11 @@
+# With the limit lowered the direct convention has fewer integer registers, and as many for numbers as before
+# FORM: Prepared
+# OPTIONS: limit=MaxArgumentRegisters:4
+# RUN: pass ChooseCallingConventions
+# CHECK: f0 Direct ([[g0]]:Int64, [[g1]]:Int64, [[g2]]:Int64, [[g3]]:Int64, stack0:Int64, [[d0]]:Double, [[d1]]:Double, [[d2]]:Double, [[d3]]:Double, [[d4]]:Double, [[d5]]:Double, [[d6]]:Double, [[d7]]:Double, stack1:Double) -> ([[result]]:Int64) reserved=2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fiveIntegers" parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=int}] {
+  b0(v0: int, v1: int, v2: int, v3: int, v4: int, v5: number, v6: number, v7: number, v8: number, v9: number, v10: number, v11: number, v12: number, v13: number):
+    Return v0
+}

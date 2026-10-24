@@ -1,0 +1,26 @@
+# The keys that the rest of a pattern leaves out lie in the image as a run of property keys, shared by the sites that leave out the same keys. A copy that leaves out nothing, an index among the keys, or a key named twice gets no run and hands its keys over one by one
+# FORM: Selected
+# RUN: pass NumberAndEncode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Rest"
+function f0 name="main" parameters=[{type=anything}, {type=string|symbol}] results=[{type=object}] {
+  b0(v0: anything, v1: string|symbol):
+    v2 = CopyObject v0 excludedKeys=["a", "b"]
+    v3 = CopyObject v0, v1 excludedKeys=["a", "b"]
+    v4 = NewObject layout=L0
+    CopyDataProperties v4, v0 excludedKeys=["b", "c"]
+    v6 = CopyObject v0
+    v7 = CopyObject v0, v1
+    v8 = CopyObject v0 excludedKeys=["a", "0"]
+    v9 = CopyObject v0 excludedKeys=["a", "a"]
+    CopyDataProperties v4, v0
+    Return v2
+}
+# CHECK: propertyRun 0 ["a" "b"]
+# CHECK-NEXT: propertyRun 1 ["b" "c"]
+# CHECK-NOT: propertyRun
+# CHECK: v2: object = CopyObject v0 excludedKeys=["a", "b"] request=0
+# CHECK-NEXT: v3: object = CopyObject v0, v1 excludedKeys=["a", "b"] request=0
+# CHECK: CopyDataProperties v4, v0 excludedKeys=["b", "c"] request=1
+# CHECK-NOT: request=

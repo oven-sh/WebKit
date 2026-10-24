@@ -1,0 +1,38 @@
+# A caller stops growing at the limit on what inlining adds to it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:100
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCallerSizeLimit = 2
+# LOSS: MaxInlinedCallerBytes x2 f1 v2
+# LOSS: MaxInlineHeadBytes x1 f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+
+function f1 name="callsThreeTimes" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v1 function=f0
+    v3 = CallDirect v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: name="callsThreeTimes"
+# CHECK-COUNT-2: = CallDirect
+# CHECK-NOT: CallDirect

@@ -1,0 +1,64 @@
+# Where the type of the receiver lists its layouts, the dispatch tests the type for every arm but the last: what fails the tests has the layouts of the last arm, and no arm is left for other objects. Where a guard proves the layouts, every arm is a case of a switch on the shape and takes the proof of its case
+# FORM: Prepared
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: pass Select
+# RUN(PLACE): pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L0]}
+layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
+layout L2 name="Label" fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L2]}
+
+# The arm with the most layouts is tested first.
+function f0 name="read-by-type" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2):
+    v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L1, L2] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f0 name="read-by-type"
+# CHECK-NEXT: b0(v0: L0|L1|L2):
+# CHECK-NEXT: [[isTextOfRead]]: boolean = TypeTest v0 testedType=L0|L2
+# CHECK-NEXT: TestAndBranch [[isTextOfRead]] -> taken [[textsOfRead]](| 0), notTaken [[countsOfRead]](| 0)
+# CHECK: [[textsOfRead]]([[textOfRead]]: L0|L2):
+# CHECK-NEXT: = GetSlotOrUndefined [[textOfRead]] key="value" receivers=[L0, L2] level=Proven
+# CHECK: [[countsOfRead]]([[countOfRead]]: L1):
+# CHECK-NEXT: = GetSlotOrUndefined [[countOfRead]] key="value" receivers=[L1] level=Proven
+# CHECK-NOT: Unreachable
+
+function f1 name="store-by-type" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = Undefined
+    PutSlotOrAdd v0, -, v1 key="value" receivers=[L0, L1] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1 name="store-by-type"
+# CHECK: [[isTextOfStore]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: TestAndBranch [[isTextOfStore]] -> taken [[textsOfStore]](| 0), notTaken [[countsOfStore]](| 0)
+# CHECK: [[textsOfStore]]([[textOfStore]]: L0):
+# CHECK-NEXT: PutSlotOrAdd [[textOfStore]], -, v1 key="value" receivers=[L0] level=Proven
+# CHECK: [[countsOfStore]]([[countOfStore]]: L1):
+# CHECK-NEXT: PutSlotOrAdd [[countOfStore]], -, v1 key="value" receivers=[L1] level=Proven
+# CHECK-NOT: Unreachable
+
+function f2 name="read-under-guard" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0, L1]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="value" receivers=[L0, L1] level=Expected
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="read-under-guard"
+# CHECK: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]] -> case [[textsUnderGuard]](| 0), case [[countsUnderGuard]](| 0), otherwise [[noneUnderGuard]]()
+# CHECK: [[textsUnderGuard]]([[isTextUnderGuard]]: guard):
+# CHECK-NEXT: = AllGuards [[isTextUnderGuard]], v2
+# CHECK-NEXT: = GetSlotOrUndefined v0, {{*}} key="value" receivers=[L0] level=Expected
+# CHECK: [[countsUnderGuard]]([[isCountUnderGuard]]: guard):
+# CHECK-NEXT: = AllGuards [[isCountUnderGuard]], v2
+# CHECK-NEXT: = GetSlotOrUndefined v0, {{*}} key="value" receivers=[L1] level=Expected
+# CHECK: [[noneUnderGuard]]() frequency=Rare:
+# CHECK-NEXT: Unreachable
+
+# PLACE: "value" {L0 L2} read EveryMember

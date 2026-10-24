@@ -1,0 +1,49 @@
+# plain = { v: one }; thenable = { then(resolve) { resolve(two) } }; (await plain).v(); (await thenable)()
+# An object without a callable `then` is what awaiting it gives. `then` of a thenable is entered with functions of native code, so what it hands them escapes and the await gives the unknown value.
+# RUN: valueflow-solve calls
+# CHECK: f1 v5 -> f3
+# CHECK: f1 v9 -> unknown
+# CHECK: f2 v3 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Thenable" fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Await v1
+    v3 = PropGet v2 key="v"
+    v4 = Undefined
+    v5 = Call v3, v2
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Await v7
+    v9 = Call v8
+    Return
+}
+function f2 name="then" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f4
+    v3 = Call v1, -, v2
+    Return
+}
+function f3 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}

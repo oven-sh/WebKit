@@ -1,0 +1,30 @@
+# No step of the numbering runs after the one that reports an error, and nothing is placed
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow limit=KeyOrdersPerLayout:1
+# RUN: place
+# DIAGNOSTIC: LimitExceeded 1
+# LOSS: KeyOrdersPerLayout L0
+# STATISTIC: Slots >= 2
+# STATISTIC: Shapes = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+variable g0 name="enumerated" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L0 fields=[1, 0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = GetModuleVariable variable=g0
+    v10 = ForInOpen v9
+    Return
+}
+# CHECK-NOT: shape
+# CHECK-NOT: statics

@@ -1,0 +1,117 @@
+# To evaluate a module that reaches no await and no code outside the image is to call its body: the body evaluates what the module imports, in the order of the requests, then runs the code of the module, once
+# A module that only this walk comes to has no state and no such body: the walk's order is known, so the module at which the walk starts calls the code of each of them at its place.
+# For the loader such a module has nothing to run: its record names no body, and nothing is made for the host to enter its code by.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 1
+# STATISTIC: ModulesWithoutState = 5
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="c" module=m4 declared={type=anything} initialization=Undefined
+variable g3 name="d" module=m5 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m4 completes=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m1 completes=true}]
+module m1 path="/a.js" displayPath="a.js" body=f1 requests=[{target=m3 completes=true}] exports=[{name="a" variable=g0}]
+module m2 path="/barrel.js" displayPath="barrel.js" body=f2 requests=[{target=m3 completes=true}, {target=m1 completes=true}]
+module m3 path="/b.js" displayPath="b.js" body=f3 requests=[{target=m0 completes=true}, {target=m4 completes=true}] exports=[{name="b" variable=g1}]
+module m4 path="/c.cjs" displayPath="c.cjs" kind=CommonJs requireResult=ModuleExports body=f4
+module m5 path="/d.json" displayPath="d.json" kind=Data body=f5 exports=[{name="d" variable=g3}]
+module m6 path="/empty.js" displayPath="empty.js" body=f6
+entry module=m0
+# CHECK: module m0 {{*}}flags=[EvaluatesItself] body=f0
+# CHECK: module m1 path="/a.js" displayPath="a.js" requests=
+# CHECK: module m2 path="/barrel.js" displayPath="barrel.js" requests=
+# CHECK: module m3 path="/b.js" displayPath="b.js" requests=
+# CHECK: module m4 path="/c.cjs" displayPath="c.cjs" kind=CommonJs
+# CHECK-NOT: body=f4
+# CHECK: module m5 {{*}}kind=Data exports=
+# CHECK: module m6 path="/empty.js" displayPath="empty.js" body=f6
+
+# The CommonJS module stands first among the requests of the entry point, where the front end has put it: it runs before every ES module of the graph, and it is a function like them.
+# What a module imports comes before it, and a module comes once: b, which a imports, then a; the barrel has no code, and what it imports has run. The cycle from b to the entry ends here, in the build.
+# The body of the data stores what the data exports. Nothing is called for a module that runs nothing and leads to nothing that runs. Nothing is stored for a module without a state.
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+# CHECK-LABEL: function f0 name="main"{{*}}capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch [[begins]] -> taken [[run]](), notTaken [[done]]()
+# CHECK-NEXT: [[run]]():
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f5
+# CHECK-NEXT: = CallDirect function=f7
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+# CHECK-NEXT: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: Return [[nothing]]
+# CHECK-NEXT: [[done]]():
+# CHECK-NEXT: [[nothingAgain]]: undefined = Undefined
+# CHECK-NEXT: Return [[nothingAgain]]
+# CHECK-NEXT: }
+function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="a"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = Integer integer=1
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: Return
+
+function f2 name="barrel" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK-LABEL: function f2 name="barrel"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+function f3 name="b" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+# CHECK-LABEL: function f3 name="b"
+# CHECK-NOT: ModuleEvaluation
+# CHECK-NOT: CallDirect
+
+function f4 name="c" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+# CHECK-LABEL: function f4 name="c"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NOT: ModuleEvaluation
+function f5 name="d" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g3
+    Return
+}
+# CHECK-LABEL: function f5 name="d"
+# CHECK-NOT: ModuleEvaluation
+# CHECK-NOT: CallDirect
+function f6 name="empty" module=m6 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK-LABEL: function f6 name="empty"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+
+# The code of a module has one caller, and stack traces show it in place of the function that calls it.
+# CHECK-LABEL: function f7 name="main"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f0} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[read]]: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: PutModuleVariable [[read]] variable=g1
+# CHECK-NEXT: Return
+# CHECK-NOT: function f8

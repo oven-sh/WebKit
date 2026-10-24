@@ -1,0 +1,60 @@
+# A pass lost the type by which an earlier round matched a call with an overload (the word f0:v3 retypes that value to anything behind the parser). No form of the overload may be
+# compiled there: each reads the receiver as the Array it is declared to be. The built-in is called as a function is, with whatever arrives, and no rule makes inline code of it
+# FORM: Prepared
+# RUN: pass f0:v3 f1:v3 Select
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
+  b0(v0: anything, v1: string):
+    v2 = TypeTest v0 testedType=Array
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: Array):
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+    Return v5
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="receiverOfInlineCode"
+# CHECK-NOT: TryCallInline
+# CHECK-NOT: needsPristineReceiver
+# CHECK: [[joined]]: string = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return [[joined]]
+
+function f1 name="receiverAndLiteralSeparator" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = String string=", "
+    v2 = TypeTest v0 testedType=Array
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: Array):
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+    Return v5
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="receiverAndLiteralSeparator"
+# CHECK-NOT: TryCallInline
+# CHECK-NOT: literalSeparator
+# CHECK: CallBuiltin v3, {{*}} overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+
+function f2 name="receiverThatKeptItsType" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
+  b0(v0: anything, v1: string):
+    v2 = TypeTest v0 testedType=Array
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: Array):
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+    Return v5
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="receiverThatKeptItsType"
+# CHECK: TryCallInline v3, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0

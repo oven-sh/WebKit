@@ -1,0 +1,20 @@
+# A SourceOpen guard depends on no heap location and still ends at an await
+# FORM: Prepared optimizing
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="openSource" flags=[IsAsync] parameters=[{type=string}, {type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: function):
+    v3 = JSONSourceOpen v0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = Integer integer=1
+    v6 = Await v1
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v4 facts: [SourceOpen
+# CHECK: b1:1 available: [v4]
+# CHECK-NEXT: b1:2 available: []

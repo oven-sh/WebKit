@@ -1,0 +1,59 @@
+# A guard that one of two tests stands behind proves less than either test, so it does not fold a repetition of one of them
+# FORM: Prepared
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Size" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="oneOfTheTestsAgain" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b3(| 0), notTaken b5()
+  b2():
+    v3 = ShapeTest v0 layouts=[L1]
+    Branch v3 -> taken b3(| 0), notTaken b5()
+  b3(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
+    v6 = ShapeTest v0 layouts=[L0]
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+    Return v8
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="oneOfTheTestsAgain"
+# CHECK: b3(v4: guard):
+# CHECK-NEXT: v5: number = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
+# CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v7: guard):
+# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+
+function f1 name="sameTestOnBothArmsAgain" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b3(| 0), notTaken b5()
+  b2():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(| 0), notTaken b5()
+  b3(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0, L1] level=Expected
+    v6 = ShapeTest v0 layouts=[L0]
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+    Return v8
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="sameTestOnBothArmsAgain"
+# CHECK: b3(v4: guard
+# CHECK-NOT: ShapeTest
+# CHECK: = GetSlot v0, v7 key="x" receivers=[L0] level=Expected

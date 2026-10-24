@@ -1,0 +1,55 @@
+# The record of a global binding holds a constant, or the place of a value that the program replaces. The constant is tested in line everywhere. The place is tested in line only in fast code: 50 bytes a read or a store.
+# Behind the constant, balanced and compact code call: a read a stub that makes the same test and keeps the registers, a store the operation, which makes it in front of everything else
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=ValidateBackEnd
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsInBalancedCode" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = GetGlobalBinding key="counter" level=Expected [seesScriptBindings]
+    Return v1
+  b2():
+    Return
+}
+# CHECK: f0: size=[[read]] frame=
+# CHECK-NEXT: stub GetGlobalBinding.ScriptsAndGlobalObject x1
+# S: f0 b1 Balanced
+function f1 name="readsInCompactCode" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = GetGlobalBinding key="counter" level=Expected [seesScriptBindings]
+    Return v1
+  b2():
+    Return
+}
+# CHECK-NEXT: f1: size=[[read]] frame=
+# CHECK-NEXT: stub GetGlobalBinding.ScriptsAndGlobalObject x1
+# S: f1 b1 Compact
+function f2 name="storesInBalancedCode" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    SetGlobalBinding v0 key="counter" level=Expected [seesScriptBindings]
+    Return
+}
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: operation operationAOTSetGlobalBinding x1
+# CHECK-NEXT: f3: size=
+function f3 name="inFastCode" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetGlobalBinding key="counter" level=Expected [seesScriptBindings]
+    SetGlobalBinding v2 key="other" level=Expected [seesScriptBindings]
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-NEXT: operation operationAOTGetGlobalBinding x1
+# CHECK: operation operationAOTSetGlobalBinding x1
+# CHECK: stub WriteBarrier{{*}} x1
+# S: f3 b1 Fast

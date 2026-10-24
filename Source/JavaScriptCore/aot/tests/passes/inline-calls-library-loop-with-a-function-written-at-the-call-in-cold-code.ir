@@ -1,0 +1,158 @@
+# A loop of the library (forEach, some, find ..) runs once for each element, however seldom the call of it is reached. Where the function that it calls is written at the call,
+# the call is weighed as one of ordinary heat though the code around it is cold: the loop comes in, and with it goes the closure.
+# A function that comes from elsewhere, a call that is not expected to be reached, and a loop of the program itself leave the call a call
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: anything, v1: int[0, 100], v2: number):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+    v10 = Mul v2, v2
+    v11 = Mul v10, v2
+    v12 = Mul v11, v2
+    v13 = Mul v12, v2
+    v14 = Mul v13, v2
+    v15 = Mul v14, v2
+    v16 = Mul v15, v2
+    v17 = Mul v16, v2
+    v18 = Mul v17, v2
+    v19 = Mul v18, v2
+    v20 = Mul v19, v2
+    v21 = Mul v20, v2
+    v22 = Mul v21, v2
+    v23 = Mul v22, v2
+    v24 = Mul v23, v2
+    v25 = Mul v24, v2
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: anything, v1: int[0, 100], v2: number):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+    v10 = Mul v2, v2
+    v11 = Mul v10, v2
+    v12 = Mul v11, v2
+    v13 = Mul v12, v2
+    v14 = Mul v13, v2
+    v15 = Mul v14, v2
+    v16 = Mul v15, v2
+    v17 = Mul v16, v2
+    v18 = Mul v17, v2
+    v19 = Mul v18, v2
+    v20 = Mul v19, v2
+    v21 = Mul v20, v2
+    v22 = Mul v21, v2
+    v23 = Mul v22, v2
+    v24 = Mul v23, v2
+    v25 = Mul v24, v2
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f2 name="handed" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: number, v1: anything):
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f3 name="writesTheFunctionAtTheCall" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="writesTheFunctionAtTheCall"
+# CHECK-NOT: function=f0
+# CHECK: LoopHint
+
+function f4 name="handsOnWhatItWasGiven" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: f2, v1: int[0, 100], v2: number):
+    v3 = CallDirect v0, v1, v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f4 name="handsOnWhatItWasGiven"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v0, v1, v2
+
+function f5 name="whereTheCallIsNotExpected" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: int[0, 100], v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = NewClosure v1 function=f2
+    v4 = CallDirect v3, v0, v1 function=f0
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f5 name="whereTheCallIsNotExpected"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v3, v0, v1
+
+function f6 name="theSameLoopOfTheProgram" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="theSameLoopOfTheProgram"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v2, v0, v1
+
+function f7 name="theSameLoopOfTheProgramAgain" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f1
+    Return v3
+}
+
+function f8 name="handsTheOneClosureOnInTwoArms" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: int[0, 100], v1: number, v2: boolean):
+    v3 = NewClosure v1 function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v3, v0, v1 function=f0
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = CallDirect v3, v0, v1 function=f0
+    Return v5
+}
+# CHECK-LABEL: function f8 name="handsTheOneClosureOnInTwoArms"
+# CHECK: frequency=Unlikely
+# CHECK: = CallDirect v3, v0, v1
+# CHECK: LoopHint

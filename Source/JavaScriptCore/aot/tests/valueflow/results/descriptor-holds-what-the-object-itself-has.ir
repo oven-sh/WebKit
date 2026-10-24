@@ -1,0 +1,38 @@
+# source = { kept: 1 }; target = {}; Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); probe = target.probe; probe && probe(source)
+# A descriptor describes an own property. Under a name that nobody knows it holds what was written into the object, and nothing of what Object.prototype holds: no accessor of the table, which is
+# a function that nobody follows. So what is read from the target is no such function either, and the source stays with followed code.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Source" fields=[{key="kept" {{*}}storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: cause=ReachesUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="kept" declared={type=anything}}]
+layout L1 name="Target" fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Integer integer=1
+    PropSet v1, v2 key="kept" mode=Sloppy
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v8 = Builtin builtin=ObjectDefineProperty
+    v9 = Builtin builtin=DateNow
+    v10 = Undefined
+    v11 = Call v9, v10
+    v12 = ToPropertyKey v11
+    v13 = Call v7, v6, v1, v12
+    v14 = Call v8, v6, v5, v12, v13
+    v15 = PropGet v5 key="probe"
+    v16 = ToBoolean v15
+    Branch v16 -> taken b1(), notTaken b2()
+  b1():
+    v17 = Call v15, v10, v1
+    Jump -> next b2()
+  b2():
+    v18 = PropGet v1 key="kept"
+    Return
+}

@@ -1,0 +1,43 @@
+# The only argument that reaches a typed parameter does not fit, and the call stays a call by value: flow sees that the check at the head of the function always fails, so only the generic copy of its body is left and answers, and what stands behind the call stays. The entrypoint has no test of its own
+# FORM: AsRead
+# OPTIONS: disable=pass:ResolveCalls,pass:InlineCalls heat=EverythingIsHot
+# RUN: pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="4"
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    Return
+}
+function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: Throw
+# CHECK-NOT: Unreachable
+# CHECK: [[product]]: number = Call {{*}}, -,
+# CHECK-NOT: Throw
+# CHECK-NOT: Unreachable
+# CHECK: = Call {{*}}, -, [[product]]
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="double"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: [[text]]: string = AssumeType v0 castType=string
+# CHECK-NOT: TypeTest
+# CHECK: [[answer]]: number = Mul [[text]], {{*}}form=NumberAndValue
+# CHECK-NEXT: Return [[answer]]
+# CHECK: name="double"{{*}}role=GenericEntrypoint
+# CHECK-NOT: TypeTest
+# CHECK-NOT: site=w0
+# CHECK: = CallDirect {{*}}function=f1

@@ -1,0 +1,45 @@
+# Outside fast code the test for a callable value is one call of a stub that answers in the flags, and a branch: the two ranges of cell types, the flag of cells that answer for themselves and the call of the operation are in the stub. Where only a callable value passes, the stub also refuses what is no cell. Where undefined passes too, the value is tested for a cell in place and the stub is asked about the cell
+# FORM: Selected
+# OPTIONS: heat=everything-is-cold check=validate-back-end
+# RUN: generate-code calls
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="isFunction" parameters=[{type=anything}] results=[{type=int}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}
+function f1 name="isFunctionOrUndefined" parameters=[{type=anything}] results=[{type=int}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function|undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}
+function f2 name="asValue" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Return v1
+}
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub ValueIsCallable x1
+# CHECK-NEXT: f1: size={{*}}
+# CHECK-NEXT: stub ValueIsCallable x1
+# CHECK-NEXT: f2: size={{*}}
+# CHECK-NEXT: stub ValueIsCallable x1
+# X64: f0: size=27 frame
+# X64-NEXT: f1: size=39 frame
+# X64-NEXT: f2: size=30 frame

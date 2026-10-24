@@ -1,0 +1,47 @@
+# source = { get late() { .. } }; target = {}; Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)), as the front end writes the pair
+# The accessor is an own accessor of the target: its descriptor there holds the function, and a spread of the target runs it.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v13 -> f1
+# CHECK-NOT: f0 v13 -> {{*}}
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source"
+layout L1 name="Target"
+layout L2 name="Copy"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0 fields=[]
+    DefineGetter v1, v0 key="late"
+    v3 = FinishObject v1
+    v4 = NewObject layout=L1 fields=[]
+    v5 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v6 = Call v5, -, v3
+    v7 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+    v8 = Call v7, -, v4, v6, v3
+    v9 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v10 = String string="late"
+    v11 = Call v9, -, v4, v10
+    v12 = PropGet v11 key="get"
+    v13 = Call v12, v4
+    v14 = NewClosure function=f2
+    v15 = NewObject layout=L0 fields=[]
+    DefineGetter v15, v14 key="other"
+    v17 = FinishObject v15
+    v18 = NewObject layout=L1 fields=[]
+    v19 = Call v5, -, v17
+    v20 = Call v7, -, v18, v19, v17
+    v21 = NewObject layout=L2 fields=[]
+    CopyDataProperties v21, v18
+    Return
+}
+function f1 name="late" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

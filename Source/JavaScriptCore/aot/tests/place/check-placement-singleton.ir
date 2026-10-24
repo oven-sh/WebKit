@@ -1,0 +1,25 @@
+# A second cell for the closure of a constructor function that is evaluated once would be a second function object, so the full form is refused there
+# RUN: check-placement singleton-form
+# DIAGNOSTIC: PlacementCheckFailed 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+
+# CHECK: mutated f0 v2
+# CHECK-NEXT: rule ClosureFormNotProven
+# CHECK-NEXT: rule PayloadMissing

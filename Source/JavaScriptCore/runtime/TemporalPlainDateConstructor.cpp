@@ -70,7 +70,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalPlainDate);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalPlainDate);
 
 TemporalPlainDateConstructor::TemporalPlainDateConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalPlainDate, constructTemporalPlainDate)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalPlainDate), JSC_REGISTERED_HOST_FUNCTION(constructTemporalPlainDate))
 {
 }
 

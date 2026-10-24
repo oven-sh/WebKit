@@ -1,0 +1,59 @@
+# A 4-byte slot for int32s that may also be undefined or null becomes an 8-byte slot where its cell has free bytes for it. The most accessed slot goes first, and no cell grows. A slot for integers alone stays at 4 bytes
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HasFreeBytes" fields=[{key="cold" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="besideCold" declared={type=i32} flags=[IsRequired]}, {key="hot" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="besideHot" declared={type=i32} flags=[IsRequired]}, {key="boxed" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Full" fields=[{key="first" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="second" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="third" declared={type=i32} flags=[IsRequired]}, {key="fourth" declared={type=i32} flags=[IsRequired]}]
+layout L2 name="BothWiden" fields=[{key="lower" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="upper" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="held" declared={type=anything} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L3 name="IntegersAlone" fields=[{key="plain" declared={type=int[0, 100]}}, {key="maybe" declared={type=undefined|int[0, 100]}}, {key="content" declared={type=anything} flags=[IsRequired]}, {key="tail" declared={type=i32} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = Null
+    v4 = NewObject -, v3, v2, v3, v2, v1 layout=L0 fields=[0, 1, 2, 3, 4]
+    v5 = FinishObject v4
+    v6 = NewObject -, v2, v2, v2, v2, v1 layout=L0 fields=[0, 1, 2, 3, 4]
+    v7 = FinishObject v6
+    v8 = NewObject -, v3, v3, v2, v2 layout=L1 fields=[0, 1, 2, 3]
+    v9 = FinishObject v8
+    v10 = NewObject -, v2, v2, v2, v2 layout=L1 fields=[0, 1, 2, 3]
+    v11 = FinishObject v10
+    v12 = NewObject -, v3, v3, v1, v2 layout=L2 fields=[0, 1, 2, 3]
+    v13 = FinishObject v12
+    v14 = NewObject -, v2, v2, v1, v2 layout=L2 fields=[0, 1, 2, 3]
+    v15 = FinishObject v14
+    v16 = NewObject -, v1, v2 layout=L3 fields=[2, 3]
+    v17 = FinishObject v16
+    v18 = NewObject -, v2, v2, v1, v2 layout=L3 fields=[0, 1, 2, 3]
+    v19 = FinishObject v18
+    v20 = PropGet v7 key="cold"
+    v21 = PropGet v7 key="hot"
+    v22 = PropGet v7 key="hot"
+    Return
+}
+# "boxed", "cold", "besideCold", "hot" and "besideHot" end at 40, so 8 aligned bytes are free. "cold" is the first row and "hot" has the higher weight. The 4 bytes that "hot" leaves lie beside another slot.
+# CHECK: L0 CompiledObject size=48
+# CHECK-NEXT: "cold" OptionalInt32 @24
+# CHECK-NEXT: "besideCold" {{*}}Int32 @28
+# CHECK-NEXT: "hot" OptionalInt64 @40
+# CHECK-NEXT: "besideHot" {{*}}Int32 @36
+# CHECK-NEXT: "boxed" JSValue @16
+# CHECK: L1 CompiledObject size=32
+# CHECK-NEXT: "first" OptionalInt32 @16
+# CHECK-NEXT: "second" OptionalInt32 @20
+# "held", "lower", "upper" and "filler" end at 36. "lower" takes bytes 40 to 48, and "upper" grows over the 4 bytes that "lower" leaves.
+# CHECK: L2 CompiledObject size=48
+# CHECK-NEXT: "lower" OptionalInt64 @40
+# CHECK-NEXT: "upper" OptionalInt64 @24
+# CHECK-NEXT: "held" JSValue @16
+# Neither field is in every object, so both slots can say that they are empty. "plain" is read and stored as its raw word: it stays narrow beside the 4 bytes that "maybe" leaves.
+# CHECK: L3 CompiledObject size=48
+# CHECK-NEXT: "plain" OptionalInt32 @24
+# CHECK-NEXT: "maybe" OptionalInt64 @40
+# CHECK-NEXT: "content" JSValue @16

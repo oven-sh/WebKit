@@ -223,11 +223,21 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+}
+#endif
+
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+    JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
+#endif
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -237,6 +247,10 @@ private:
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
     {
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
+#if ENABLE(AOT)
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
+#endif
     }
 
 // Our hashtable code-generator tries to access these properties, so we make them public.
@@ -384,6 +398,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrierStructureID m_internalFieldTupleStructure;
+#endif
+#if ENABLE(FFI)
     LazyProperty<JSGlobalObject, Structure> m_ffiFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_ffiCallbackStructure;
 #endif
@@ -516,6 +532,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+#endif
+#if ENABLE(FFI)
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
@@ -678,7 +696,7 @@ public:
     bool isSetPrototypeAddFastAndNonObservable();
     bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
-#if ENABLE(DFG_JIT)
+#if ENABLE(DFG_JIT) || ENABLE(AOT)
     using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
     ReferencedGlobalPropertyWatchpointSets m_referencedGlobalPropertyWatchpointSets;
     ConcurrentJSLock m_referencedGlobalPropertyWatchpointSetsLock;
@@ -1126,6 +1144,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
+#endif
+#if ENABLE(FFI)
     Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
@@ -1141,6 +1161,13 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
+#if ENABLE(AOT)
+    // Compiled code runs some jobs without queueing them. True where a job would go straight into the queue and the queue would run it.
+    bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+#endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
@@ -1255,6 +1282,7 @@ public:
     }
         
     void haveABadTime(VM&);
+    void haveABadTime(VM&, JSObject* interceptor);
 
     void notifyArrayBufferDetaching();
 
@@ -1377,7 +1405,14 @@ public:
     ImportMap& importMap() { return m_importMap.get(); }
 
     QueuedTaskResult microtaskRunnability() const { return m_microtaskRunnability; }
-    void setMicrotaskRunnability(QueuedTaskResult runnability) { m_microtaskRunnability = runnability; }
+    void setMicrotaskRunnability(QueuedTaskResult runnability)
+    {
+        m_microtaskRunnability = runnability;
+#if ENABLE(AOT)
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
+#endif
+    }
 
     void setAssociatedContextIsFullyActive(bool value)
     {

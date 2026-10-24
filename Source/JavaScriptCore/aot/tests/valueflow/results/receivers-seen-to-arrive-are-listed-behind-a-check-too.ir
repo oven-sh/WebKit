@@ -1,0 +1,33 @@
+# interface Rule { limit: number }   type Made = { limit: number }
+# function readsBoth(rule: Rule) { rule.limit }   readsBoth(made as any); readsBoth({ limit: 1 }); readsBoth(unknown())
+# The type of a receiver behind a check holds while the check passes. An object of another layout that has the name is seen to arrive in front of the check, so the read lists what is seen to arrive:
+# whoever takes the check away finds there what the same text without its types would have been told.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="readsBoth"
+# CHECK: = PropGet v1 key="limit" {{*}}receivers=[L0, L1, ..]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Made" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="unknown" [isFreeName]
+    v6 = Call v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v1
+    v9 = Call v7, -, v3
+    v10 = Call v7, -, v6
+    Return
+}
+function f1 name="readsBoth" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}

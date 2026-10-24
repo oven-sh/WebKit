@@ -1,0 +1,71 @@
+# a closure that is made on demand has no operands, and its only use is as the initial value of a field that defers a closure of its function with the same capture, or as what a store gives such a field
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: ClosureOnDemandWithoutField 6
+# DIAGNOSTIC: ArgumentCountMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything}
+layout L0 name="Handlers" fields=[{key="overNothing" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled}}, {key="overObject" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f1} occupancy=AlwaysFilled}}, {key="ordinary" declared={type=anything}}]
+function f0 name="overNothing" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f1 name="overObject" kind=Arrow captures=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    Return
+}
+function f2 name="goodInitialValues" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    v1 = NewClosure function=f1 [isMadeOnDemand]
+    v2 = Upcast v1 castType=anything
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    Return v3
+}
+function f3 name="badNeverListed" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    Return v0
+}
+function f4 name="badWithoutUse" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    Return
+}
+function f5 name="badUsedTwice" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v0 variable=g0
+    Return v1
+}
+function f6 name="badFieldDefersNothing" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    v1 = NewObject -, v0 layout=L0 fields=[2]
+    Return v1
+}
+function f7 name="badFieldDefersAnotherFunction" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f0 [isMadeOnDemand]
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    Return v1
+}
+function f8 name="goodAndBadStores" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = NewClosure function=f0 [isMadeOnDemand]
+    PutSlot v0, -, v1 key="overNothing" receivers=[L0] level=Proven
+    v3 = NewClosure function=f1 [isMadeOnDemand]
+    PutSlotOrAdd v0, -, v3 key="overObject" receivers=[L0] level=Proven
+    v5 = NewClosure function=f0 [isMadeOnDemand]
+    PutSlot v0, -, v5 key="overObject" receivers=[L0] level=Proven
+    Return
+}
+function f9 name="badHasOperand" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f1 [isMadeOnDemand]
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    Return v2
+}

@@ -1,0 +1,115 @@
+# An access by name or by key has the effects of the slot or element form its plan gives, so each form may replace the access beside it
+# FORM: Prepared
+# RUN(GET): check-replacement f1 v2 v1
+# GET: valid
+# RUN(EMPTY): check-replacement f2 v2 v1
+# EMPTY: valid
+# RUN(PUT): check-replacement f3 v3 v2
+# PUT: valid
+# RUN(ADD): check-replacement f4 v3 v2
+# ADD: valid
+# RUN(HAS): check-replacement f5 v2 v1
+# HAS: valid
+# RUN(ELEMENT): check-replacement f6 v3 v2
+# ELEMENT: valid
+# RUN(PRIVATE): check-replacement f7 v3 v2
+# PRIVATE: valid
+# RUN(PURE): check-replacement f8 v2 v1
+# PURE: valid
+# RUN(ARRAY): check-replacement f9 v4 v3
+# ARRAY: valid
+# RUN(E): effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 kind=Instance name="Once" constructor=f0 fields=[{key=#"#secret"@L1 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L1]} classFlow={evaluations=AtMostOnce}
+function f0 name="Once" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f1 name="readFilledSlot" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    Return
+}
+# E-LABEL: function f1
+# E-NEXT: v1 PropGet: reads(ObjectFields/1)
+# E-NEXT: v2 GetSlot: reads(ObjectFields/1)
+# E-NEXT: b0 Return
+function f2 name="readSlotPossiblyEmpty" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="y"
+    v2 = GetSlotOrUndefined v0 key="y" receivers=[L0] level=Proven
+    Return
+}
+# E-LABEL: function f2
+# E-NEXT: v1 PropGet: reads(ObjectFields/1)
+# E-NEXT: v2 GetSlotOrUndefined: reads(ObjectFields/1)
+# E-NEXT: b0 Return
+function f3 name="storeToFilledSlot" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="x"
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    Return
+}
+# E-LABEL: function f3
+# E-NEXT: v2 PropSet: writes(ObjectFields/1)
+# E-NEXT: v3 PutSlot: writes(ObjectFields/1)
+# E-NEXT: b0 Return
+function f4 name="storeMayAddField" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="y"
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    Return
+}
+# E-LABEL: function f4
+# E-NEXT: v2 PropSet: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+# E-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+# E-NEXT: b0 Return
+function f5 name="hasSlotPossiblyEmpty" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="y"
+    v2 = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
+    Return
+}
+# E-LABEL: function f5
+# E-NEXT: v1 PropHas: reads(ObjectFields/1)
+# E-NEXT: v2 IsSlotFilled: reads(ObjectFields/1)
+# E-NEXT: b0 Return
+function f6 name="readTypedArrayElement" parameters=[{type=Uint8Array}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: number):
+    v2 = ElemGet v0, v1
+    v3 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
+    Return
+}
+# E-LABEL: function f6
+# E-NEXT: v2 ElemGet: reads(TypedArrayStorage, TypedArrayElements, AllocatorState) writes(AllocatorState) collects
+# E-NEXT: v3 GetTypedArrayElement: reads(TypedArrayStorage, TypedArrayElements, AllocatorState) writes(AllocatorState) collects
+# E-NEXT: b0 Return
+function f7 name="readPrivateField" parameters=[{type=L1}] results=[{type=undefined}] {
+  b0(v0: L1):
+    v1 = NewClassToken layout=L1
+    v2 = PrivateGet v0, v1 layout=L1 field=0
+    v3 = GetSlot v0 key=#"#secret"@L1 receivers=[L1] level=Proven
+    Return
+}
+# E-LABEL: function f7
+# E: v2 PrivateGet: reads(ObjectFields/1)
+# E-NEXT: v3 GetSlot: reads(ObjectFields/1)
+# E-NEXT: b0 Return
+function f8 name="rowWithoutEffectsNamesNobody" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Undefined
+    Return
+}
+# E-LABEL: function f8
+# E-NEXT: v1 PropGet: unknownCode
+# E-NEXT: v2 Undefined: none
+function f9 name="storeArrayElement" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: int[0, 10], v2: number):
+    ElemSet v0, v1, v2
+    PutArrayElement v0, v1, v2 arrayStorage=Double level=Proven [keyIsIntegral]
+    Return
+}
+# E-LABEL: function f9
+# E-NEXT: v3 ElemSet: reads(Elements/1, ArrayStorage, AllocatorState) writes(Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects
+# E-NEXT: v4 PutArrayElement: reads(Elements/1, ArrayStorage, AllocatorState) writes(Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects

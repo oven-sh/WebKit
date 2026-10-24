@@ -29,6 +29,7 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTRemovableFeature.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -99,6 +100,7 @@
 #include "JSToWasm.h"
 #include "LLIntData.h"
 #include "LLIntExceptions.h"
+#include "LLIntThunks.h"
 #include "MarkedBlockInlines.h"
 #include "MegamorphicCache.h"
 #include "MicrotaskCall.h"
@@ -171,6 +173,12 @@
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
+#if ENABLE(AOT)
+#include "AOTImage.h"
+#include "AOTRuntimeHooks.h"
+#include "AOTUnwinding.h"
+#endif
+
 #if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
 #include "ConservativeRoots.h"
 #endif
@@ -211,6 +219,9 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
+#if !ENABLE(JIT)
+    return false;
+#else
     if (!Options::useJIT())
         return false;
 
@@ -218,7 +229,7 @@ static bool enableAssembler()
     if (canUseJITString.data() && !parseInteger<int>(canUseJITString).value_or(0))
         return false;
 
-    ExecutableAllocator::initializeUnderlyingAllocator();
+    callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, ExecutableAllocator::initializeUnderlyingAllocator>();
     if (!ExecutableAllocator::singleton().isValid()) {
         if (Options::crashIfCantAllocateJITMemory())
             CRASH();
@@ -226,6 +237,7 @@ static bool enableAssembler()
     }
 
     return true;
+#endif
 }
 #endif // ENABLE(!ASSEMBLER)
 
@@ -314,7 +326,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
 
         m_heapProfiler.initLater([](VM& vm, auto& ref) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, Abort, void)
             ref.set(makeUniqueRef<HeapProfiler>(vm));
+            JSC_END_REMOVABLE_ENTRY_POINT
         });
 
         m_stringSearcherTables.initLater([](VM&, auto& ref) {
@@ -356,6 +370,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
     structureStructure.setWithoutWriteBarrier(Structure::createStructure(*this));
+#if ENABLE(AOT)
+    if (AOT::Image::isRegistered())
+        m_aotState.attachImage(*this);
+#endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
 
@@ -516,7 +534,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
-    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
+    createBytecodeIntrinsicRegistry();
 
     if (Options::useTypeProfiler())
         enableTypeProfiler();
@@ -621,9 +639,21 @@ void waitForVMDestruction()
 void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 {
     m_crossTaskToken = WTF::move(token);
+#if USE(BUN_JSC_ADDITIONS)
+    updateHostObservesMicrotaskBoundaries();
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+void VM::updateHostObservesMicrotaskBoundaries()
+{
+    m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken;
+#if ENABLE(AOT)
+    if (hasCompiledCode())
+        AOT::RuntimeHooks::didChangeMicrotaskQueueing(*this);
+#endif
+}
+
 void VM::queueMicrotask(QueuedTask&& task)
 {
     m_defaultMicrotaskQueue->enqueue(WTF::move(task));
@@ -681,7 +711,13 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
+#if ENABLE(AOT)
+    m_aotState.willShutDownHeap();
+#endif
     heap.shutDown();
+#if ENABLE(AOT)
+    m_aotState.releaseImage(*this);
+#endif
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();
@@ -804,8 +840,9 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 }
 
 #if ENABLE(SAMPLING_PROFILER)
-SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
+NEVER_INLINE SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
+    JSC_REMOVABLE_DEFINITION(Profilers, &VM::ensureSamplingProfiler);
     if (!m_samplingProfiler) {
         lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
         requestEntryScopeService(EntryScopeService::SamplingProfiler);
@@ -908,8 +945,10 @@ static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intri
         return objectIsThunkGenerator;
     case BoundFunctionCallIntrinsic:
         return boundFunctionCallGenerator;
+#if ENABLE(SHADOW_REALM)
     case RemoteFunctionCallIntrinsic:
         return remoteFunctionCallGenerator;
+#endif
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
     case StringConstructorIntrinsic:
@@ -941,13 +980,50 @@ MacroAssemblerCodeRef<JITThunkPtrTag> VM::getCTIStub(CommonJITThunkID thunkID)
 
 #endif // ENABLE(JIT)
 
+void VM::createBytecodeIntrinsicRegistry()
+{
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Interpreter, ReturnDefault, void)
+    m_bytecodeIntrinsicRegistry = makeUnique<BytecodeIntrinsicRegistry>(*this);
+    JSC_END_REMOVABLE_ENTRY_POINT
+}
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, NativeFunction constructor, unsigned length, const String& name)
 {
     return getHostFunction(function, implementationVisibility, NoIntrinsic, constructor, nullptr, length, name);
 }
 
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+// What a call from bytecode enters in place of llint_native_call_trampoline in a process without a JIT: llint/LowLevelInterpreterAOT.asm.
+static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
+{
+    switch (intrinsic) {
+    case CharCodeAtIntrinsic:
+        return llint_aot_char_code_at_thunk;
+    case BoundFunctionCallIntrinsic:
+        return llint_aot_bound_function_call_thunk;
+    case GlobalIsNaNIntrinsic:
+    case NumberIsNaNIntrinsic:
+        return llint_aot_is_nan_thunk;
+    case GlobalIsFiniteIntrinsic:
+    case NumberIsFiniteIntrinsic:
+        return llint_aot_is_finite_thunk;
+    case NumberIsIntegerIntrinsic:
+    case NumberIsSafeIntegerIntrinsic:
+        return llint_aot_is_integer_thunk;
+    case ArrayIsArrayIntrinsic:
+        return llint_aot_is_array_thunk;
+    default:
+        return nullptr;
+    }
+}
+#endif
+
 static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
 {
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+    if (auto* thunk = Options::runsCompiledImage() ? thunkBesideCompiledCode(intrinsic) : nullptr)
+        return adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(thunk))), JITType::HostCallThunk, NoIntrinsic));
+#endif
     switch (intrinsic) {
 #if ENABLE(WEBASSEMBLY)
     case WasmFunctionIntrinsic: {
@@ -980,19 +1056,40 @@ static Ref<NativeJITCode> jitCodeForConstructTrampoline()
     return result.get();
 }
 
+#if ENABLE(JIT)
+NEVER_INLINE static NativeExecutable* hostFunctionStubWithThunk(VM& vm, NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
+{
+    JSC_REMOVABLE_DEFINITION(JIT, hostFunctionStubWithThunk);
+    return vm.jitStubs->hostFunctionStub(
+        vm, toTagged(function), toTagged(constructor),
+        intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
+        implementationVisibility, intrinsic, signature, length, name);
+}
+#endif // ENABLE(JIT)
+
 NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
+    function = functionUnlessRemoved(function);
+    constructor = functionUnlessRemoved(constructor);
 #if ENABLE(JIT)
-    if (Options::useJIT()) {
-        return jitStubs->hostFunctionStub(
-            *this, toTagged(function), toTagged(constructor),
-            intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
-            implementationVisibility, intrinsic, signature, length, name);
-    }
+    if (Options::useJIT())
+        return hostFunctionStubWithThunk(*this, function, implementationVisibility, intrinsic, constructor, signature, length, name);
 #endif // ENABLE(JIT)
-    UNUSED_PARAM(intrinsic);
     UNUSED_PARAM(signature);
-    return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
+    auto create = [&] {
+        return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
+    };
+    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. There are as many as there are functions in C++.
+    if (!name.isNull() || intrinsic != NoIntrinsic || length > 0xffff)
+        return create();
+    std::tuple<uintptr_t, uintptr_t, unsigned> key { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), length << 8 | static_cast<unsigned>(implementationVisibility) };
+    if (auto found = m_executablesOfNamelessHostFunctions.find(key); found != m_executablesOfNamelessHostFunctions.end()) {
+        if (NativeExecutable* executable = found->value.get())
+            return executable;
+    }
+    NativeExecutable* executable = create();
+    m_executablesOfNamelessHostFunctions.set(key, Weak<NativeExecutable>(executable));
+    return executable;
 }
 
 NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin taintedness)
@@ -1007,7 +1104,7 @@ NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin ta
         NativeExecutable* result = getHostFunction(
             slowCase ? boundFunctionCall : boundThisNoArgsFunctionCall,
             ImplementationVisibility::Private, // Bound function's visibility is private on the stack.
-            slowCase ? NoIntrinsic : BoundFunctionCallIntrinsic,
+            slowCase && !Options::runsCompiledImage() ? NoIntrinsic : BoundFunctionCallIntrinsic,
             boundFunctionConstruct, nullptr, 0, String());
         slot.setWithoutWriteBarrier(result);
         return result;
@@ -1321,7 +1418,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
-    CallFrame* throwOriginFrame = topJSCallFrame();
+    CallFrame* throwOriginFrame = !hasCompiledCode() || globalObject->debugger() || Options::breakOnThrow() ? topJSCallFrame() : nullptr;
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
         dataLog("Throwing exception in call frame ", RawPointer(throwOriginFrame), " for code block ", codeBlock, "\n");
@@ -1346,9 +1443,28 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     return exceptionToThrow;
 }
 
+#if ENABLE(AOT)
+NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalObject* globalObject, JSValue thrownValue)
+{
+    using Action = Exception::StackCaptureAction;
+    if (globalObject->debugger())
+        return Exception::create(vm, thrownValue, Action::CaptureStack);
+    AOT::Instance* instance = globalObject->aotInstance();
+    if (instance && vm.topCallFrame && AOT::nearestHandlerIgnoresValue(vm, *instance, vm.topCallFrame))
+        return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
+    if (Exception* exception = Exception::tryCreateWithStackOfError(vm, thrownValue))
+        return exception;
+    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStack);
+}
+#endif
+
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
+#if ENABLE(AOT)
+    if (!exception && hasCompiledCode()) [[unlikely]]
+        exception = createExceptionWithCompiledCode(*this, globalObject, thrownValue);
+#endif
     if (!exception) {
         auto action = Exception::StackCaptureAction::CaptureStack;
         if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())
@@ -1625,8 +1741,9 @@ static bool disableProfilerWithRespectToCount(unsigned& counter, NOESCAPE const 
     return needsToRecompile;
 }
 
-bool VM::enableTypeProfiler()
+NEVER_INLINE bool VM::enableTypeProfiler()
 {
+    JSC_REMOVABLE_DEFINITION(Profilers, &VM::enableTypeProfiler);
     auto enableTypeProfiler = [this] () {
         this->m_typeProfiler = makeUnique<TypeProfiler>();
         this->m_typeProfilerLog = makeUnique<TypeProfilerLog>(*this);
@@ -1645,8 +1762,9 @@ bool VM::disableTypeProfiler()
     return disableProfilerWithRespectToCount(m_typeProfilerEnabledCount, disableTypeProfiler);
 }
 
-bool VM::enableControlFlowProfiler()
+NEVER_INLINE bool VM::enableControlFlowProfiler()
 {
+    JSC_REMOVABLE_DEFINITION(Profilers, &VM::enableControlFlowProfiler);
     auto enableControlFlowProfiler = [this] () {
         this->m_controlFlowProfiler = makeUnique<ControlFlowProfiler>();
     };
@@ -2105,6 +2223,18 @@ void VM::executeEntryScopeServicesOnExit()
     clearScratchBuffers();
 }
 
+JSGlobalObject* VM::topFrameGlobalObject()
+{
+    JSGlobalObject* globalObject = nullptr;
+    StackVisitor::visit(topCallFrame, *this, [&](StackVisitor& visitor) {
+        globalObject = visitor->lexicalGlobalObject(*this);
+        return IterationStatus::Done;
+    });
+    if (!globalObject && entryScope)
+        globalObject = entryScope->globalObject();
+    return globalObject;
+}
+
 JSGlobalObject* VM::deprecatedVMEntryGlobalObject(JSGlobalObject* globalObject) const
 {
     if (entryScope)
@@ -2287,6 +2417,9 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_promiseAllSettledSlowRejectFunctionExecutable);
     visitor.append(m_promiseAnyRejectFunctionExecutable);
     visitor.append(m_promiseAnySlowRejectFunctionExecutable);
+#if ENABLE(AOT)
+    m_aotState.visitAggregate(visitor);
+#endif
 }
 DEFINE_VISIT_AGGREGATE(VM);
 
@@ -2357,8 +2490,30 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
     heap.sweeper().doWorkUntil(*this, deadline);
 }
 
-void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
+void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* uid)
 {
+#if ENABLE(AOT)
+    if (hasCompiledCode())
+        AOT::RuntimeHooks::didChangePrototypeChain(*this, changed, uid);
+#else
+    UNUSED_PARAM(changed);
+    UNUSED_PARAM(uid);
+#endif
+    if (auto* megamorphicCache = this->megamorphicCache())
+        megamorphicCache->bumpEpoch();
+}
+
+void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, std::span<UniquedStringImpl* const> uids)
+{
+#if ENABLE(AOT)
+    if (hasCompiledCode()) {
+        for (UniquedStringImpl* uid : uids)
+            AOT::RuntimeHooks::didChangePrototypeChain(*this, changed, uid);
+    }
+#else
+    UNUSED_PARAM(changed);
+    UNUSED_PARAM(uids);
+#endif
     if (auto* megamorphicCache = this->megamorphicCache())
         megamorphicCache->bumpEpoch();
 }

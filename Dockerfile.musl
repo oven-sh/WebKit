@@ -224,6 +224,10 @@ WORKDIR /webkit
 
 COPY --from=build_icu /output /icu
 
+#
+# The programs ship without debug info: each of them would carry another copy of the library's.
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. Here it only prints its rows so far: the list of expected rows was made on Linux x86-64 with glibc.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
@@ -259,23 +263,38 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" --target "testFFI" && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" --target "testFFI" --target "testaot" && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ]; then \
+        python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || echo "find-structures-decoded-behind-calls.py: not yet fatal here"; \
+    fi && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    llvm-strip --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \( -name "*.h" -o -name "*.def" -o -name "*.inc" \) -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \
     cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/ /output/include && \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
     cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir /output/Source/JavaScriptCore/aot/builtins/generated && \
+    (cd $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/aot && cp AOTBuiltinEngineDeclarations.json AOTBuiltinFeatures.h AOTBuiltinIDs.h AOTBuiltinTableEngineBindings.cpp AOTBuiltinTableWords.h /output/Source/JavaScriptCore/aot/builtins/generated) && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     echo "";
 
 FROM scratch as artifact

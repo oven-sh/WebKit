@@ -1,0 +1,143 @@
+# An array under construction and the direct stores into it get one storage kind, from the types of what is stored. So do all the arrays that one operand of a store may name
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# RUN(TWICE): pass PlanArrayCapacities PlanArrayCapacities
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="int32Stores" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v2
+    v6 = Integer integer=1
+    v7 = TryPutByValDirect v3, v6, v2
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Int32
+# TWICE-LABEL: function f0
+# TWICE: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
+# TWICE: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
+# TWICE: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Int32
+
+function f1 name="numberStores" parameters=[{type=int[0, 100]}, {type=i32}, {type=number}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: i32, v2: number):
+    v3 = NewArrayWithCapacity v0
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v1
+    v6 = Integer integer=1
+    v7 = TryPutByValDirect v3, v6, v2
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK: v3: {{*}} = NewArrayWithCapacity v0 arrayStorage=Double
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v1 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Double
+
+function f2 name="mixedStores" parameters=[{type=int[0, 100]}, {type=i32}, {type=string}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: i32, v2: string):
+    v3 = NewArrayWithCapacity v0
+    v4 = Integer integer=0
+    v5 = TryPutByValDirect v3, v4, v1
+    v6 = Integer integer=1
+    v7 = TryPutByValDirect v3, v6, v2
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: arrayStorage=
+
+function f3 name="noStores" parameters=[{type=int[0, 100]}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100]):
+    v1 = NewArrayWithCapacity v0
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: arrayStorage=
+
+function f4 name="storeThroughCasts" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: number):
+    v3 = NewArrayLike v0, v1
+    v4 = Upcast v3 castType=anything
+    v5 = Check v4 castType=Array<anything>
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v2
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v5, v6, v2 arrayStorage=Double
+
+function f5 name="storeThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=i32}, {type=string}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: i32, v3: string):
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    v6 = TryPutByValDirect v4, v5, v2
+    Branch v0 -> taken b1(), notTaken b2(v4)
+  b1():
+    v7 = NewArrayWithCapacity v1
+    Jump -> next b2(v7)
+  b2(v8):
+    v9 = Integer integer=1
+    v10 = TryPutByValDirect v8, v9, v3
+    Return v8
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: arrayStorage=
+
+function f6 name="oneKindThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=i32}, {type=number}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: i32, v3: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    v6 = TryPutByValDirect v4, v5, v2
+    Jump -> next b3(v4)
+  b2():
+    v7 = NewArrayWithCapacity v1
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Integer integer=1
+    v10 = TryPutByValDirect v8, v9, v3
+    Return v8
+}
+# CHECK-LABEL: function f6
+# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double
+# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 arrayStorage=Double
+# CHECK: v7: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double
+# CHECK: v10: {{*}} = TryPutByValDirect v8, v9, v3 arrayStorage=Double
+
+function f7 name="blockParameterThatMayNameAnotherArray" parameters=[{type=boolean}, {type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: Array<anything>, v3: i32):
+    Branch v0 -> taken b1(), notTaken b2(v2)
+  b1():
+    v4 = NewArrayWithCapacity v1
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v3
+    Return v5
+}
+# CHECK-LABEL: function f7
+# CHECK-NOT: arrayStorage=
+
+function f8 name="whatRareCodeStoresDoesNotDecide" parameters=[{type=boolean}, {type=int[0, 100]}, {type=i32}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: i32, v3: anything):
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v6 = TryPutByValDirect v4, v5, v2
+    Return v4
+  b2() frequency=Rare:
+    v7 = TryPutByValDirect v4, v5, v3
+    Return v4
+}
+# CHECK-LABEL: function f8
+# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Int32
+# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 arrayStorage=Int32
+# CHECK: v7: {{*}} = TryPutByValDirect v4, v5, v3 arrayStorage=Int32

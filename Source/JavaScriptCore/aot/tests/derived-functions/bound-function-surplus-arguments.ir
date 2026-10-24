@@ -1,0 +1,15 @@
+# A bound argument that the target has no parameter for is not captured, and the length does not go below zero
+# FORM: Prepared
+# RUN: derived-functions BoundFunction:f0:3
+# STATISTIC: BoundFunctions = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Receiver"
+layout L1 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+function f0 name="target" kind=Method flags=[HasThis] length=2 captures=[{type=env L1}] thisType={type=L0} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: env L1, v1: L0, v2: anything, v3: boolean):
+    Return v2
+}
+# CHECK: function f1 name="target" module=m0 kind=Method role=BoundFunction captures=[{type=env L1}, {type=L0}, {type=anything}, {type=boolean}, {type=function}] thisType={type=anything} results=[{type=anything}]{{*}}derivation={source=f0 parameter=3} creator=BoundFunction{target=f0 numberOfBoundArguments=3 numberOfCapturedArguments=2 capturesTargetClosure=true} {
+# CHECK-NEXT: b0([[scope]]: env L1, [[receiver]]: L0, [[first]]: anything, [[second]]: boolean, [[closure]]: function):
+# CHECK-NEXT: = CallDirect [[scope]], [[receiver]], [[first]], [[second]] function=f0

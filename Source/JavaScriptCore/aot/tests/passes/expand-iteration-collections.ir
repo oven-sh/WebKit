@@ -1,0 +1,182 @@
+# An iteration over a Map or a Set walks the table with MapNext or SetNext, and the pair of an entry is an ordinary array
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(SUNK): pass ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations SimplifyCasts EliminateDeadCode CompactBlocks
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 4
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="map" parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Map<string, number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="map"
+# CHECK: b0(v0: Map<string, number, pristine[Names]>):
+# CHECK-NEXT: [[firstTable0]]: anything = CollectionTable v0
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump
+# CHECK-NEXT: b1([[table0]]: anything, [[position0]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[step0]]: undefined = MapNext v0, [[table0]], [[position0]]
+# CHECK-NEXT: [[hasEntry0]]: boolean = ResultAt [[step0]]
+# CHECK-NEXT: [[entry0]]: int[0, 2147483647] = ResultAt [[step0]] index=1
+# CHECK-NEXT: [[key0]]: {{*}} = ResultAt [[step0]] index=2
+# CHECK-NEXT: [[value0]]: {{*}} = ResultAt [[step0]] index=3
+# CHECK-NEXT: Branch [[hasEntry0]] -> taken [[found0]](), notTaken [[end0]]()
+# CHECK: Jump -> next b1([[firstTable0]], [[zero0]])
+# CHECK: [[after0]](v4: boolean, v5: anything, [[carriedTable0]]: anything, [[carriedPosition0]]: int[0, 2147483648]):
+# CHECK: Branch v4 -> taken b2(), notTaken b1([[carriedTable0]], [[carriedPosition0]])
+# CHECK: [[found0]]():
+# CHECK-NEXT: [[nextTable0]]: anything = CollectionTable v0
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[nextPosition0]]: int[1, 2147483648] = Add [[entry0]], [[one0]]
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: [[pair0]]: Array = NewArray [[key0]], [[value0]] contents=anything
+# CHECK-NEXT: Jump -> next [[after0]]([[no0]], [[pair0]], [[nextTable0]], [[nextPosition0]])
+# CHECK-NEXT: [[end0]]():
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[after0]]([[yes0]], [[nothing0]], [[table0]], [[position0]])
+# ABSENT-LABEL: function f0 name="map"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# SUNK-LABEL: function f0 name="map"
+
+function f1 name="set" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="set"
+# CHECK: b0(v0: Set<number, pristine[Names]>):
+# CHECK-NEXT: = CollectionTable v0
+# CHECK: b1([[table1]]: anything, [[position1]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[step1]]: undefined = SetNext v0, [[table1]], [[position1]]
+# CHECK-NEXT: [[hasEntry1]]: boolean = ResultAt [[step1]]
+# CHECK-NEXT: [[entry1]]: int[0, 2147483647] = ResultAt [[step1]] index=1
+# CHECK-NEXT: [[element1]]: {{*}} = ResultAt [[step1]] index=2
+# CHECK-NEXT: Branch [[hasEntry1]] -> taken [[found1]](), notTaken
+# CHECK: [[found1]]():
+# CHECK-NEXT: [[nextTable1]]: anything = CollectionTable v0
+# CHECK-NEXT: [[one1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[nextPosition1]]: int[1, 2147483648] = Add [[entry1]], [[one1]]
+# CHECK-NEXT: [[no1]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no1]], [[element1]], [[nextTable1]], [[nextPosition1]])
+# ABSENT-LABEL: function f1 name="set"
+# ABSENT-NOT: NewArray
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# SUNK-LABEL: function f1 name="set"
+
+function f2 name="mapWithPattern" parameters=[{type=Map<string, number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Map<string, number, pristine[Names]>, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b8(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b7():
+    v7 = IteratorOpen v6 elementCount=2 [isDestructuring]
+    Jump -> next b4()
+  b4() handler=b6():
+    v8 = IteratorResume v7 stepIndex=0
+    v9 = ResultAt v8 index=1
+    v10 = IteratorResume v7 stepIndex=1
+    v11 = ResultAt v10 index=1
+    Jump -> next b5()
+  b5() handler=b7():
+    IteratorClose v7
+    v13 = Call v1, -, v9, v11
+    Jump -> next b1()
+  b6() role=IterationCleanup subject=v7 handler=b7():
+    v14 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v14
+  b7() role=IterationCleanup subject=v2:
+    v16 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v16
+  b8():
+    Return
+}
+# CHECK-LABEL: function f2 name="mapWithPattern"
+# CHECK: = MapNext v0,
+# CHECK: = NewArray
+# ABSENT-LABEL: function f2 name="mapWithPattern"
+# SUNK-LABEL: function f2 name="mapWithPattern"
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK-NOT: @@iterator
+# SUNK-NOT: [isNeverInlined]
+# SUNK: [[step2]]: undefined = MapNext v0,
+# SUNK: [[key2]]: {{*}} = ResultAt [[step2]] index=2
+# SUNK-NEXT: [[value2]]: {{*}} = ResultAt [[step2]] index=3
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK-NOT: @@iterator
+# SUNK-NOT: [isNeverInlined]
+# SUNK: = Call v1, -, [[key2]], [[value2]]
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK-NOT: @@iterator
+# SUNK-NOT: [isNeverInlined]
+
+function f3 name="weakSet" parameters=[{type=WeakSet}] results=[{type=anything}] {
+  b0(v0: WeakSet):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f3 name="weakSet"
+# CHECK: b0(v0: WeakSet):
+# CHECK-NEXT: = CallDirect v0 function=f4 [isNeverInlined]
+# ABSENT-LABEL: function f3 name="weakSet"
+# ABSENT-NOT: CollectionTable
+# ABSENT-NOT: SetNext
+# ABSENT-NOT: IsPristine
+# SUNK-LABEL: function f3 name="weakSet"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

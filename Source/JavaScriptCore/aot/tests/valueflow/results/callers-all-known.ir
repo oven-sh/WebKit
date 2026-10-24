@@ -1,0 +1,50 @@
+# The callers of a function are all known where its closure reaches calls and nothing else. A closure that is handed to native code has callers nobody knows.
+# No stamp lists a getter. The read that finds it is listed as an indirect call, so the callers of the getter are known too.
+# A function that only direct calls enter has only direct callers
+# RUN: valueflow-results
+# CHECK: function f1 callers=AllKnown
+# CHECK: function f2 cause=ReachesNativeCode
+# CHECK: function f3 callers=AllKnown
+# CHECK: function f4 callers=AllKnown
+# CHECK: indirect f0 S{{*}} -> f3 Accessor Once
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="called"{{*}}IsNeverCalledByHost
+# APPLY: function f4 name="calledDirectly"{{*}}HasOnlyDirectCallers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=GlobalThis
+    PropSet v3, v2 key="handler" [isFreeName]
+    v5 = NewObject layout=L0 fields=[]
+    v6 = NewClosure function=f3
+    DefineGetter v5, v6 key="size"
+    v8 = PropGet v5 key="size"
+    v9 = CallDirect function=f4
+    Return
+}
+function f1 name="called" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="escaped" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="size" kind=Getter results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}
+function f4 name="calledDirectly" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    Return v0
+}

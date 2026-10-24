@@ -1,0 +1,121 @@
+# A declared field that the constructor always fills has the slot of what the constructor stores: four bytes for an int32 and no marker for undefined. One path of the constructor without the store costs the field that slot
+# RUN: plan-slots
+# RUN(CODE): pipeline ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="count" declared={type=undefined|null|number} flags=[IsRequired]}, {key="ratio" declared={type=undefined|null|number} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0} flags=[IsRequired]}]
+layout L1 kind=Instance name="FilledOnOnePath" constructor=f3 fields=[{key="count" declared={type=undefined|null|number} flags=[IsRequired]}]
+variable g0 name="filled" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="filledOnOnePath" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Construct v9, -, v1
+    PutModuleVariable v10 variable=g1
+    v12 = PropGet v0 key="keep" [isFreeName]
+    v13 = NewClosure function=f5
+    v14 = NewClosure function=f6
+    v15 = NewClosure function=f7
+    v16 = Call v12, -, v13, v14, v15
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = Integer integer=0
+    v7 = BitOr v1, v6
+    PropSet v4, v7 key="count" mode=Strict
+    v9 = ToNumber v1
+    PropSet v4, v9 key="ratio" mode=Strict
+    PropSet v4, v4 key="next" mode=Strict
+    Return v4
+}
+function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    PropDefine v0, v1 key="ratio"
+    PropDefine v0, v1 key="next"
+    Return
+}
+function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PropSet v4, v8 key="count" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v4
+}
+function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    Return
+}
+function f5 name="readFilled" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="count"
+    v3 = Integer integer=5
+    v4 = BitXor v2, v3
+    Return v4
+}
+function f6 name="readFilledOnOnePath" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=5
+    v3 = BitXor v1, v2
+    Return v3
+}
+function f7 name="readRatio" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="ratio"
+    Return v1
+}
+
+# CHECK: L0 CompiledObject
+# CHECK: "count" Int32 @
+# CHECK: "ratio" Double @
+# CHECK: L1 CompiledObject
+# CHECK: "count" OptionalInt32 @
+# Only its entrypoint enters each reader, so the body is there
+# CODE-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
+# CODE: [[filled]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE-NEXT: [[next]]: undefined|L0 @JSValue = GetSlot [[filled]] key="next"
+# CODE-NEXT: L0 @JSValue = AssumeType [[next]] castType=L0
+# CODE-NOT: TypeTest
+# CODE: [[count]]: i32 @Int32 = GetSlot {{*}} key="count"
+# CODE-NOT: TypeTest
+# CODE: i32 @Int32 = BitXor [[count]],
+# CODE-LABEL: name="readFilledOnOnePath" module=m0 role=GenericEntrypoint
+# CODE: [[filledOnOnePath]]: L1 @Cell = GetModuleVariable variable=g1
+# CODE-NEXT: [[holdsNumber]]: boolean @Boolean = IsSlotFilled [[filledOnOnePath]] key="count" {{*}}[holdsDeclaredType]
+# CODE-NEXT: TestAndBranch [[holdsNumber]]
+# CODE: @Int32 = GetSlot [[filledOnOnePath]], {{*}} key="count" {{*}}[holdsDeclaredType]
+# CODE-LABEL: name="readRatio" module=m0 role=GenericEntrypoint
+# CODE: [[filledAgain]]: L0 @Cell = GetModuleVariable variable=g0
+# CODE-NEXT: number @Double = GetSlot [[filledAgain]] key="ratio"

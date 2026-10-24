@@ -1,0 +1,16 @@
+# Await needs an async function
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FunctionFlagMissing 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return
+}
+function f1 name="good" flags=[IsAsync] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return
+}

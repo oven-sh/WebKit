@@ -1,0 +1,52 @@
+# alone = [1, 2]    integers = [1, 2]; holdsIntegers = integers; holdsIntegers = other    fractions = [1.5]; holdsFractions = fractions; holdsFractions = other    besideText = [1, 2]; holdsText = besideText; holdsText = "x"
+# A position that holds an array beside an object of another kind may lie outside the type that was written for it. It then keeps that type, and typed code behind it tests the storage that the type declares:
+# where that is Double, an array of int32 that fails the test is converted (ConvertToDoubleStorage). So Int32 is proven for no literal that shares a set with an object that is no array.
+# No failed test converts Double or Contiguous storage, and a primitive beside the array is cut away behind the check of the position: those keep their kind
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="alone"
+# CHECK: declared={type=Array<int[1, 2], proven, Int32
+# CHECK-LABEL: variable g1 name="integers"
+# CHECK: declared={type=Array<int[1, 2], proven
+# CHECK-NOT: Int32
+# CHECK-LABEL: variable g2 name="holdsIntegers"
+# CHECK-LABEL: variable g3 name="fractions"
+# CHECK: declared={type=Array<fractional, proven, Double
+# CHECK-LABEL: variable g5 name="besideText"
+# CHECK: declared={type=Array<int[1, 2], proven, Int32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="alone" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="integers" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="holdsIntegers" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="fractions" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="holdsFractions" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="besideText" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="holdsText" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Double number=1.5
+    v3 = NewArray v0, v1 contents=anything
+    PutModuleVariable v3 variable=g0
+    v5 = NewArray v0, v1 contents=anything
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v5 variable=g2
+    v8 = NewArray v2 contents=anything
+    PutModuleVariable v8 variable=g3
+    PutModuleVariable v8 variable=g4
+    v11 = NewClosure function=f1
+    PutModuleVariable v11 variable=g2
+    PutModuleVariable v11 variable=g4
+    v14 = NewArray v0, v1 contents=anything
+    PutModuleVariable v14 variable=g5
+    PutModuleVariable v14 variable=g6
+    v17 = String string="x"
+    PutModuleVariable v17 variable=g6
+    Return
+}
+function f1 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

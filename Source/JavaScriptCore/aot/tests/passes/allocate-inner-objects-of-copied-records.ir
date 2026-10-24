@@ -1,0 +1,51 @@
+# A field is read as an address in the cell of its object only where every object of the layout is born with the inner object in its cell.
+# The copy of a record has the layout of the record and a cell of its own, and its field refers to what lies in the cell of the record: so the field of such a layout is read.
+# FORM: AsRead
+# RUN: pipeline AllocateInnerObjects
+# OPTIONS: check=VerifyEachPass disable=pass:InlineCalls,pass:SinkAllocations,pass:AllocateInFrames
+# STATISTIC: InnerObjectsAllocated = 2
+# STATISTIC: InnerObjectsAlwaysInPlace = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="NeverCopied" fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=L1} flags=[IsRequired]}]
+layout L1 name="InnerOfNeverCopied" fields=[{key="d" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Copied" fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=L3} flags=[IsRequired]}]
+layout L3 name="InnerOfCopied" fields=[{key="d" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=0.5
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f2
+    v3 = CopyObject v2
+    v4 = PropGet v1 key="c"
+    v5 = PropGet v4 key="d"
+    v6 = PropGet v3 key="c"
+    v7 = PropGet v6 key="d"
+    v8 = PropGet v2 key="c"
+    v9 = PropGet v8 key="d"
+    v10 = Add v5, v7
+    v11 = Add v10, v9
+    Return v11
+}
+
+function f1 name="neverCopied" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="neverCopied"
+# CHECK: outerLayout=L0
+# CHECK: [takesCellOfInnerObject]
+
+function f2 name="copied" parameters=[{type=number}] results=[{type=L2}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="copied"
+# CHECK: outerLayout=L2
+# CHECK: [takesCellOfInnerObject]

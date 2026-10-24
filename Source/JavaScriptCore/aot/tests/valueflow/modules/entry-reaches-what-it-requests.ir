@@ -1,0 +1,35 @@
+# The host evaluates the entry point, and with it what the entry point requests, and what that requests. The body of a module that nobody asks for is never reached,
+# and neither is a function that nobody calls
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f0
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NEXT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="second.js" displayPath="second.js" body=f2
+module m3 path="other.js" displayPath="other.js" body=f3
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    Return
+}
+function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="other" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="neverCalled" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

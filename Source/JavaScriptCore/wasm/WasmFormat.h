@@ -948,7 +948,7 @@ struct UnlinkedWasmToWasmCall {
 
 };
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 struct Entrypoint {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Entrypoint);
     std::unique_ptr<Compilation> compilation;
@@ -966,7 +966,7 @@ struct InternalFunction {
     StackMaps stackmaps;
 #endif
     Vector<UnlinkedHandlerInfo> exceptionHandlers;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     Vector<CCallHelpers::Label> bbqLoopEntrypoints;
     std::optional<CCallHelpers::Label> bbqSharedLoopEntrypoint;
     Entrypoint entrypoint;

@@ -1,0 +1,55 @@
+# function or(x: number, y: number) { return x | y }  and the same for & ^ << >> >>>: what the operators answer for numbers that arrive boxed: int32, -0, fractions, numbers beyond int32 and beyond 2^53, infinities, NaN
+# FORM: AsRead
+# RUN(IR): pipeline ChooseRepresentations
+# RUN: run-in-shell globalThis.register = (or, and, xor, left, right, unsignedRight) => { const values = [0, -0, 1, -1, 31, 32, 33, 0.5, -0.5, 1.75, 2147483647, 2147483648, -2147483648, -2147483649, 4294967295, 4294967296, 4294967301.75, -4294967301.75, 1e21, -1e21, 9007199254740991, 18446744073709552000, Infinity, -Infinity, NaN]; let wrong = 0; for (const x of values) for (const y of values) { const got = [or(x, y), and(x, y), xor(x, y), left(x, y), right(x, y), unsignedRight(x, y)]; const want = [x | y, x & y, x ^ y, x << y, x >> y, x >>> y]; for (let i = 0; i < 6; i++) if (!Object.is(got[i], want[i])) { wrong++; print(i, x, y, got[i], want[i]); } } print("wrong: " + wrong); };
+# IR-LABEL: name="or" module=m0 role=GenericEntrypoint
+# IR-NOT: = Unbox
+# IR: = BitOr {{*}} form=Numbers
+# CHECK: wrong: 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v0, v1, v2, v3, v4, v5
+    Return
+}
+function f1 name="or" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = BitOr v0, v1
+    Return v2
+}
+function f2 name="and" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = BitAnd v0, v1
+    Return v2
+}
+function f3 name="xor" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = BitXor v0, v1
+    Return v2
+}
+function f4 name="left" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = LShift v0, v1
+    Return v2
+}
+function f5 name="right" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = RShift v0, v1
+    Return v2
+}
+function f6 name="unsignedRight" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = URShift v0, v1
+    Return v2
+}

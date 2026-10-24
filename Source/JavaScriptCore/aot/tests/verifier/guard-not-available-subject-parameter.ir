@@ -1,0 +1,141 @@
+# a guard that entered a block with its subject ends where the object that was passed may be written, before the edge or after it.
+# The objects are arrays: a compiled object keeps its shape, so no write ends what a guard says about that
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="goodNothingWritten" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0, v0 contents=anything
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewArray v0, v0 contents=anything
+    v5 = AllGuards v4
+    v6 = Call v0
+    Jump -> next b3(v4, v5)
+  b3(v7, v8):
+    v9 = Call v0
+    v10 = GetArrayLength v7, v8
+    Return v10
+}
+function f1 name="badCallBeforeOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0, v0 contents=anything
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewArray v0, v0 contents=anything
+    v5 = AllGuards v4
+    v6 = Call v0, -, v4
+    Jump -> next b3(v4, v5)
+  b3(v7, v8):
+    v9 = GetArrayLength v7, v8
+    Return v9
+}
+function f2 name="badCallAfterTheEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0, v0 contents=anything
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewArray v0, v0 contents=anything
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = Call v0, -, v6
+    v9 = GetArrayLength v6, v7
+    Return v9
+}
+function f3 name="badCallBetweenTestAndOneEdge" parameters=[{type=Array}, {type=Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: Array, v2: boolean, v3: anything):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v4 -> taken b3(v0 | 0), notTaken b4()
+  b2():
+    v5 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    v6 = Call v3
+    Branch v5 -> taken b3(v1 | 0), notTaken b4()
+  b3(v7, v8):
+    v9 = GetArrayLength v7, v8
+    Return v9
+  b4():
+    Return
+}
+function f4 name="goodCallBeforeTheTests" parameters=[{type=Array}, {type=Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: Array, v2: boolean, v3: anything):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v3
+    v5 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b3(v0 | 0), notTaken b4()
+  b2():
+    v6 = Call v3
+    v7 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    Branch v7 -> taken b3(v1 | 0), notTaken b4()
+  b3(v8, v9):
+    v10 = GetArrayLength v8, v9
+    Return v10
+  b4():
+    Return
+}
+function f5 name="badCallInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0 contents=anything
+    v2 = AllGuards v1
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = GetArrayLength v3, v4
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = NewArray v6, v6 contents=anything
+    v9 = AllGuards v8
+    v10 = Call v0, -, v8
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v6
+}
+function f6 name="badCallBeforeTheOnlyEdgeThatPassesAnObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0, v0 contents=anything
+    v3 = AllGuards v2
+    v4 = Call v0, -, v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v5 = Unspecified valueType=Array
+    v6 = AllGuards
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    v9 = GetArrayLength v7, v8
+    Return v9
+}
+function f7 name="goodShapeOutlastsTheCalls" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: object, v2: boolean, v3: anything):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ShapeTest v0 layouts=[L0]
+    Branch v4 -> taken b3(v0 | 0), notTaken b4()
+  b2():
+    v5 = ShapeTest v1 layouts=[L0]
+    v6 = Call v3
+    Branch v5 -> taken b3(v1 | 0), notTaken b4()
+  b3(v7, v8):
+    v9 = Call v3, -, v7
+    v10 = GetSlotOrUndefined v7, v8 key="x" receivers=[L0] level=Proven
+    Return v10
+  b4():
+    Return
+}

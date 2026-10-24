@@ -1,0 +1,43 @@
+# A frame record holds a frame pointer only through a slot store, a frame environment also as an initial value
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FramePointerRetained 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="callback" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L1 kind=Environment name="scope" fields=[{key="callback" declared={type=anything}}]
+
+function f0 name="initialValueOfFrameRecord" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4 storage=Frame
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    Return
+}
+
+function f1 name="storedInSlotOfFrameRecord" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4 storage=Frame
+    v2 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    PutSlot v2, v2, v1 key="callback" receivers=[L0] level=Proven
+    Return
+}
+
+function f2 name="storedInSlotOfHeapRecord" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4 storage=Frame
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v2, v2, v1 key="callback" receivers=[L0] level=Proven
+    Return
+}
+
+function f3 name="initialValueOfFrameEnvironment" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4 storage=Frame
+    v1 = NewObject -, v0 layout=L1 fields=[0] storage=Frame
+    Return
+}
+
+function f4 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

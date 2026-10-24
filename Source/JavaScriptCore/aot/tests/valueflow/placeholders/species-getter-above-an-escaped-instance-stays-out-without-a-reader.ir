@@ -1,0 +1,39 @@
+# class List { static get [Symbol.species]() { return Array } }; Array.prototype.indexOf.call(input(new List), 1)
+# The instance has escaped and comes back as the unknown object. Whoever holds an instance is not handed the class above it, and indexOf makes no array: nothing reads `constructor` through the unknown
+# object, so nobody comes to the class and its getter stays unreached.
+# This holds for a class that extends no built-in class: one that does escapes with the object that the built-in constructor makes for it.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v8 -> unknown
+# CHECK-NEXT: f0 v11 -> ArrayPrototypeIndexOf
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static methodKind=Getter key=@@species
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = Integer integer=1
+    v10 = Builtin builtin=ArrayPrototypeIndexOf
+    v11 = Call v10, v8, v9
+    Return
+}
+function f1 name="List" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Array
+    Return v1
+}

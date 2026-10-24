@@ -1,0 +1,16 @@
+# toString of a global literal reads source and flags through getters of the locked RegExp.prototype and never lastIndex, so the literal is shared
+# TODO: nobody: `/a/g.toString()` makes its RegExp anew each time: toString is not among the uses that ignore lastIndex
+# FORM: Prepared
+# RUN: pass ShareRegExpLiterals
+# STATISTIC: ShareRegExpLiteralsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="globalToString" results=[{type=string}] {
+  b0():
+    v0 = NewRegExp pattern="a" regExpFlags=[Global]
+    v1 = CallBuiltin v0 overload=RegExpPrototypeToString/0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="globalToString"
+# CHECK: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp

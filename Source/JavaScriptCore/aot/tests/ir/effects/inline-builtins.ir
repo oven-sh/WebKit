@@ -1,0 +1,54 @@
+# An inline built-in has the effects its row declares, or those of its overload where the row says so, as a value and as a terminator alike
+# FORM: Selected
+# RUN: effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="declaredByRow" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=Map}] results=[{type=undefined}] {
+  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: Map):
+    v3 = CallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0
+    v4 = CallInline v1, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v5 = CallInline v2, v0 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v3 CallInline: none
+# CHECK-NEXT: v4 CallInline: reads(Elements, ArrayStorage, AllocatorState) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) throws collects
+# A lookup may move a table that lies in the image to the heap.
+# CHECK-NEXT: v5 CallInline: reads(CollectionStorage, CollectionEntries, StringStorage, AllocatorState) writes(CollectionStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+function f1 name="asOverload" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=L0}, {type=object}] results=[{type=undefined}] {
+  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: L0, v3: object):
+    v4 = CallBuiltin v1, v0, v0 overload=ArrayPrototypeSlice/0
+    v5 = CallInline v1, v0, v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0
+    v6 = CallBuiltin -, v2 overload=ObjectKeys/0
+    v7 = CallInline -, v2 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0
+    v8 = CallBuiltin -, v3 overload=ObjectKeys/0
+    v9 = CallInline -, v3 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v4 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 CallInline: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v7 CallInline: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v8 CallBuiltin: unknownCode
+# CHECK-NEXT: v9 CallInline: unknownCode
+function f2 name="terminators" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=object}] results=[{type=undefined}] {
+  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: object):
+    TryCallInline v1, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    TryCallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0 -> done b3(), miss b2()
+  b2():
+    Return
+  b3(v4):
+    TryCallInline -, v2 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b4(), miss b5()
+  b4(v5):
+    Return
+  b5():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 TryCallInline: reads(Elements, ArrayStorage, AllocatorState) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: b1 TryCallInline: none
+# CHECK-NEXT: b2 Return: none
+# CHECK-NEXT: b3 TryCallInline: unknownCode

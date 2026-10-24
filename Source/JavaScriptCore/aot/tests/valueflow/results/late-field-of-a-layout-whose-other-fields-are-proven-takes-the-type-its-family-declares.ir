@@ -1,0 +1,44 @@
+# interface Late { flags: number; owner: Owner }      function Known(this: Late, flags: number) { this.flags = flags }      function Open(this: Late, flags: number) { this.flags = flags }
+# known.owner = source(); open.owner = source(): every writer of `owner` is known, and nobody knows what source() answers. (open as any).flags = "none".
+# "owner" is no field of Known or Open as read, so flow appends it. What is stored there is not proven, so the field takes the type that the family declares, and a store is tested against it.
+# That all the other fields of Known are proven takes nothing away from that
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Known" {{*}}{key="owner" declared={type=undefined|null|L3} flags=[IsAddedLate
+# CHECK: layout L1 kind=Instance name="Open" {{*}}{key="owner" declared={type=undefined|null|L3} flags=[IsAddedLate
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Known" constructor=f1 fields=[{key="flags" declared={type=number}}] supertypes=[L2] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Open" constructor=f2 fields=[{key="flags" declared={type=number}}] supertypes=[L2] flags=[IsConstructorFunction]
+layout L2 name="Late" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="owner" declared={type=undefined|null|L3} flags=[IsRequired]}]
+layout L3 kind=Record name="Owner" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="source" [isFreeName]
+    v5 = Call v4
+    v6 = NewClosure function=f1
+    v7 = Construct v6, -, v0
+    PropSet v7, v5 key="owner" mode=Strict
+    v9 = NewClosure function=f2
+    v10 = Construct v9, -, v0
+    PropSet v10, v5 key="owner" mode=Strict
+    v12 = String string="none"
+    PropSet v10, v12 key="flags" mode=Strict
+    v14 = PropGet v7 key="owner"
+    v15 = PropGet v10 key="owner"
+    Return v14
+}
+function f1 name="Known" flags=[HasThis] thisType={type=undefined|null|L2} parameters=[{type=number}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: undefined|null|L2, v1: number):
+    PropSet v0, v1 key="flags" mode=Strict
+    Return
+}
+function f2 name="Open" flags=[HasThis] thisType={type=undefined|null|L2} parameters=[{type=number}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: undefined|null|L2, v1: number):
+    PropSet v0, v1 key="flags" mode=Strict
+    Return
+}

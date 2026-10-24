@@ -1,0 +1,206 @@
+# Function.prototype.call, Function.prototype.apply and Reflect.apply become the call they forward
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 12
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="receiver" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+
+function f1 name="call-without-arguments" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = CallBuiltin v0 overload=FunctionPrototypeCall/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="call-without-arguments"
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f2 name="call-with-three-arguments" parameters=[{type=function}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = CallBuiltin v0, v1, v2, v3 overload=FunctionPrototypeCall/0
+    Return v4
+}
+# CHECK-LABEL: function f2 name="call-with-three-arguments"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: anything = Call v0, v1, v2, v3
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+function f3 name="call-of-exact-function" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 accessSite=4
+    Return v2
+}
+# CHECK-LABEL: function f3 name="call-of-exact-function"
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, v1 accessSite=4
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f4 name="call-under-handler" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything) handler=b2():
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f4 name="call-under-handler"
+# CHECK-NEXT: b0(v0: function, v1: anything) handler=b2():
+# CHECK-NEXT: v2: anything = Call v0, v1
+# CHECK-NEXT: Jump -> next b1()
+function f5 name="call-in-any-receiver-form" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver
+    Return
+}
+# CHECK-LABEL: function f5 name="call-in-any-receiver-form"
+# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: = Call v0, v1
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f6 name="apply-without-list" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeApply/0
+    Return v2
+}
+# CHECK-LABEL: function f6 name="apply-without-list"
+# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f7 name="apply-undefined-list" parameters=[{type=function}, {type=anything}, {type=undefined}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: undefined):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v3
+}
+# CHECK-LABEL: function f7 name="apply-undefined-list"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined):
+# CHECK-NEXT: v3: anything = Call v0, v1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f8 name="apply-null-or-undefined-list" parameters=[{type=function}, {type=anything}, {type=undefined|null}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: undefined|null):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v3
+}
+# CHECK-LABEL: function f8 name="apply-null-or-undefined-list"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null):
+# CHECK-NEXT: v3: anything = Call v0, v1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f9 name="apply-array" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v3
+}
+# CHECK-LABEL: function f9 name="apply-array"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
+# CHECK-NEXT: v3: anything = CallList v0, v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f10 name="apply-nullable-array" parameters=[{type=function}, {type=anything}, {type=undefined|Array}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: undefined|Array):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v3
+}
+# CHECK-LABEL: function f10 name="apply-nullable-array"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|Array):
+# CHECK-NEXT: = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f11 name="apply-array-like-object" parameters=[{type=function}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: object):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v3
+}
+# CHECK-LABEL: function f11 name="apply-array-like-object"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: object):
+# CHECK-NEXT: = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f12 name="reflect-apply-array" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0
+    Return v3
+}
+# CHECK-LABEL: function f12 name="reflect-apply-array"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
+# CHECK-NEXT: v3: anything = CallList v0, v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f13 name="reflect-apply-array-like-object" parameters=[{type=function}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: object):
+    v3 = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0
+    Return v3
+}
+# CHECK-LABEL: function f13 name="reflect-apply-array-like-object"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: object):
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f14 name="other-built-in" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathAbs/0
+    Return v1
+}
+# CHECK-LABEL: function f14 name="other-built-in"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: = CallBuiltin -, v0 overload=MathAbs/0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f15 name="call-of-a-receiver-nobody-knows" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver accessSite=7
+    Return v3
+}
+# CHECK-LABEL: function f15 name="call-of-a-receiver-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: v3: anything = Call v0, v1, v2 accessSite=7
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f16 name="apply-array-to-a-receiver-nobody-knows" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f16 name="apply-array-to-a-receiver-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
+# CHECK-NEXT: v3: anything = CallList v0, v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f17 name="apply-array-like-object-to-a-receiver-nobody-knows" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f17 name="apply-array-like-object-to-a-receiver-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: object):
+# CHECK-NEXT: = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f18 name="bind-of-a-receiver-nobody-knows" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+# CHECK-LABEL: function f18 name="bind-of-a-receiver-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f19 name="reflect-apply-array-to-a-callee-nobody-knows" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array):
+    v3 = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f19 name="reflect-apply-array-to-a-callee-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

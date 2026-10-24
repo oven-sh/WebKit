@@ -1,0 +1,50 @@
+# a call also ends the guards that selected operations name, but not the guard of a case of SwitchOnShape: a compiled object keeps its shape
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Size" fields=[{key="w" declared={type=anything}}]
+function f0 name="goodCallAfterCase" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
+  b1(v2):
+    v3 = Call v1
+    PutSlots v0, v2, v1 placedKeys=[{key="x"}] receivers=[L0]
+    Return
+  b2():
+    Return
+}
+function f1 name="goodCase" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
+  b1(v2):
+    PutSlots v0, v2, v1 placedKeys=[{key="x"}] receivers=[L0]
+    v4 = Call v1
+    Return
+  b2():
+    Return
+}
+function f2 name="badCallBeforeFulfilling" parameters=[{type=Promise}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Promise, v1: anything):
+    v2 = IsNotThenable v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Call v1
+    FulfillFreshPromise v0, v1, v3
+    Return
+  b2():
+    Return
+}
+function f3 name="goodFulfilling" parameters=[{type=Promise}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Promise, v1: anything):
+    v2 = IsNotThenable v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    FulfillFreshPromise v0, v1, v3
+    v5 = Call v1
+    Return
+  b2():
+    Return
+}

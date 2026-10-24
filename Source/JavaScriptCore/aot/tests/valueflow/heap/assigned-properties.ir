@@ -1,0 +1,36 @@
+# source = { run: one }; target = { set run(value) { value() } }; Object.assign(target, source); plain = {}; Object.assign(plain, source); plain.run()
+# Object.assign stores, so a setter of the target takes what the source holds. A target without one finds it under its name.
+# RUN: valueflow-solve calls
+# CHECK: f0 v11 -> f1
+# CHECK: f2 v1 -> f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Target"
+layout L2 name="Plain"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1 fields=[]
+    v3 = NewClosure function=f2
+    DefineSetter v2, v3 key="run"
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, -, v2, v1
+    v7 = NewObject layout=L2 fields=[]
+    v8 = Call v5, -, v7, v1
+    v9 = Integer integer=0
+    v10 = PropGet v7 key="run"
+    v11 = Call v10, v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="run" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}

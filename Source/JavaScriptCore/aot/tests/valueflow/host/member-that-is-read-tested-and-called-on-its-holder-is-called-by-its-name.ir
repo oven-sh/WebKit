@@ -1,0 +1,26 @@
+# member = handedIn[someName]; method = handedIn.has; if (method != null) method.call(handedIn, 1)
+# So the library spells the protocols of the language: the member is read once, tested, and called on the object that it was read from. It is a call of what lies under that name:
+# of the built-ins that have escaped the members under `has` run, and every other one stays held.
+# RUN: valueflow-solve used
+# CHECK-NOT: run MapPrototypeGet
+# CHECK: used MapPrototypeGet
+# CHECK: run MapPrototypeHas
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = PropGet v1 key="has"
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6):
+    Return
+  b2(v7):
+    v8 = Integer integer=1
+    v9 = Call v7, v1, v8
+    Return
+}

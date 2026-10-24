@@ -1,0 +1,42 @@
+# (x ?? 0) + 1 where x arrives boxed and the sum leaves boxed: the constant comes in whatever form is asked for, so what the two ways join in stays boxed and the sum is made of the boxed words
+# Where every way brings a constant there is nothing boxed to keep
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneMoreThanNumberOrZero" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Integer
+    Jump -> next b3(v3)
+  b3(v4: number):
+    v5 = Integer integer=1
+    v6 = Add v4, v5 form=Numbers
+    Return v6
+}
+# CHECK-LABEL: function f0 name="oneMoreThanNumberOrZero"
+# CHECK: b3(v4: number @JSValue):
+# CHECK: v6: number @JSValue = Add v4, v5 form=Numbers
+# CHECK-NEXT: Return v6
+
+function f1 name="oneMoreThanOneOfTwoConstants" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Double number=0.5
+    Jump -> next b3(v1)
+  b2():
+    v2 = Integer
+    Jump -> next b3(v2)
+  b3(v3: number):
+    v4 = Integer integer=1
+    v5 = Add v3, v4 form=Numbers
+    Return v5
+}
+# CHECK-LABEL: function f1 name="oneMoreThanOneOfTwoConstants"
+# CHECK: number @Double = Add v3, v4 form=Numbers

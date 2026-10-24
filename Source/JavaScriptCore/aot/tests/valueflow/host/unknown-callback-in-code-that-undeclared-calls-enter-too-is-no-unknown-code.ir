@@ -1,0 +1,36 @@
+# Array.from([1], double)
+# The records of Array.from describe this call: `this` is Array. Its last overload is for calls that none declares (`Array.from.call(List, items)`) and names the same function of the library
+# (runtimefunction 48), which such a call enters with its own operands. That takes nothing from the calls that records describe: the function is entered with operands nobody knows for them,
+# and its call of the mapper among those is no sign of code that nobody compiles.
+# A call that no overload declares: undeclared-call-that-hands-over-an-unknown-callback-is-unknown-code.ir, undeclared-call-enters-the-library-with-its-own-operands.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f2
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=47 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = Builtin builtin=Array
+    v4 = PropGet v3 key="from"
+    v5 = Call v4, v3, v1, v2 calleeKey="from"
+    Return
+}
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Integer integer=0
+    v5 = ElemGet v1, v4
+    v6 = Call v2, v3, v5, v4
+    Return v6
+}
+function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

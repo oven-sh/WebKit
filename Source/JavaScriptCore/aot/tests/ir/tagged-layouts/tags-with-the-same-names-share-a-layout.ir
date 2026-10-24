@@ -1,0 +1,75 @@
+# interface Node { kind: number; pos: number }  interface Negate extends Node { kind: 1; operand: Node }  interface Num extends Node { kind: 2; value: number }  interface Not extends Node { kind: 3; operand: Node }
+# interface NotOrOther extends Node { kind: 3 | 4 }  function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }  (node as Negate).operand  (node as NotOrOther).pos
+# Negate and Not have the same names, so the front end sends one layout for both, L2, which every position of either names. Its `kind` only bounds what the two write: 1 to 3.
+# What each of them declares comes below it, L4 and L5: types that nothing allocates and no position names. They say which names an object with each literal has.
+# A layout is known by the set of its names, so an object made with 1 and one made with 3 have the same layout, L7. Num, whose literal lies between them, has another, L8.
+# Each integer that L2 admits has a layout, so no object with the layout of NodeObject itself is one of L2, though the assertion brings it there. L8 has no `operand`, which L2 requires.
+# An object made with 4 has the layout of NodeObject, which therefore stays in NotOrOther, beside L7 for 3. Neither tag of NotOrOther is that of L8
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+# RUN(MADE): pass AllocateTaggedLayouts
+# RUN(TYPED): pass AllocateTaggedLayouts TypeValues VerifyProgram
+# TYPED-COUNT-3: outcome:
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2, L6] flags=[IsNeverAllocated]
+layout L2 name="Negate" fields=[{key="kind" declared={type=int[1, 3]} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L3 name="Num" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L4 name="Negate" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2] flags=[IsNeverAllocated]
+layout L5 name="Not" fields=[{key="kind" declared={type=3} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2] flags=[IsNeverAllocated]
+layout L6 name="NotOrOther" fields=[{key="kind" declared={type=int[3, 4]} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+# CHECK: L0: members [L0, L7, L8]
+# CHECK-NEXT: L1: members [L0, L7, L8]
+# CHECK-NEXT: L2: members [L7]
+# CHECK-NEXT: L3: members [L8]
+# CHECK-NEXT: L4: members [L7]
+# CHECK-NEXT: L5: members [L7]
+# CHECK-NEXT: L6: members [L0, L7]
+# READ: layout L6 name="NotOrOther"
+# READ-NEXT: layout L7 kind=Instance name="NodeObject" fields=[{key="kind" {{*}}, {key="pos" {{*}}, {key="operand" declared={type=undefined|null|L0|L7|L8} flags=[IsRequired, IsAddedLate]}] flags=[IsDerived]
+# READ-NEXT: layout L8 kind=Instance name="NodeObject" fields=[{key="kind" {{*}}, {key="pos" {{*}}, {key="value" declared={type=number} flags=[IsRequired, IsAddedLate]}] flags=[IsDerived]
+# READ-NEXT: module m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: number, v2: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="operandOf" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+  b0(v0: undefined|null|L2):
+    v1 = PropGet v0 key="operand"
+    Return v1
+}
+function f3 name="take" parameters=[{type=undefined|null|L3}, {type=undefined|null|L6}] results=[{type=anything}] {
+  b0(v0: undefined|null|L3, v1: undefined|null|L6):
+    Return
+}
+# READ-LABEL: function f2 name="operandOf"
+# READ: parameters=[{type=undefined|null|L7}]
+# READ-LABEL: function f3 name="take"
+# READ: parameters=[{type=undefined|null|L8}, {type=undefined|null|L0|L7}]
+
+# MADE-LABEL: function f4 name="NodeObject"
+# MADE: [[prototype]] = GetConstructPrototype {{*}} layout=L0
+# MADE-NEXT: Switch [[tag]] cases=[1, 2, 3] -> case [[unary]](), case [[num]](), case [[unary]](), otherwise [[other]]()
+# MADE: [[num]]():
+# MADE-NEXT: = NewObject [[prototype]] layout=L8
+# MADE: [[unary]]():
+# MADE-NEXT: = NewObject [[prototype]] layout=L7
+# MADE: [[other]]():
+# MADE-NEXT: = NewObject [[prototype]] layout=L0
+
+# TYPED-LABEL: function f4 name="NodeObject"
+# TYPED: : L8 = NewObject
+# TYPED: : L7 = NewObject
+# TYPED: : L0 = NewObject
+# TYPED: ([[object]]: L0|L7|L8):
+# TYPED: Return [[object]]

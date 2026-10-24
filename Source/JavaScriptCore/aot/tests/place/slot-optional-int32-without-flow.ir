@@ -1,0 +1,32 @@
+# The slot of a field that is declared to hold int32s comes from its declared type alone: it takes 4 bytes without any result of flow
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow disable=flow-results
+# RUN: plan-slots
+# STATISTIC: InitialValuesStoredBehindAllocations = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Integers" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="maybe" declared={type=undefined|null|i32}}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}, {key="sign" declared={type=undefined|null|int[-1, 1]} flags=[IsRequired]}, {key="fifth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="sixth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="seventh" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}]
+layout L1 name="FilledWithNumbers" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = NewObject -, v3, v3, v3, v3, v3, v3, v3 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6]
+    v5 = FinishObject v4
+    v6 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    Return
+}
+# The cell of L0 has no 8 bytes left, with the word for extra properties or without it, so no slot is widened into free bytes.
+# CHECK: L0 CompiledObject size=48 fields=7
+# CHECK-NEXT: "flags" OptionalInt32 @
+# CHECK-NEXT: "maybe" OptionalInt32 @
+# CHECK-NEXT: "kind" OptionalInt32 @
+# CHECK-NEXT: "sign" OptionalInt32 @
+# An allocation lists only values of the field's type. A number that may be no int32 is stored behind the allocation, by a store that tests it, so the field keeps its 4 bytes.
+# CHECK: L1 CompiledObject size=32 fields=2
+# CHECK-NEXT: "flags" OptionalInt32 @
+# CHECK-NEXT: "kind" OptionalInt32 @

@@ -1,0 +1,66 @@
+# Equal field lists of one layout share an allocation, another order of the fields or another layout is another allocation, and only a class instance names its constructor
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place allocations
+# RUN(SITES): place program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Size" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Point" constructor=f1
+layout L3 kind=Environment name="scope" fields=[{key="captured" declared={type=number}}]
+variable g0 name="enumerated" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v2, v2 layout=L0 fields=[1, 0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g0
+    v12 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v13 = FinishObject v12
+    PutModuleVariable v13 variable=g0
+    v15 = GetModuleVariable variable=g0
+    v16 = ForInOpen v15
+    v17 = NewClosure function=f1
+    v18 = NewClass v17 layout=L2
+    v19 = FinishClass v18 layout=L2
+    v20 = Construct v19
+    v21 = NewObject -, v2 layout=L3 fields=[0]
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+
+# CHECK: allocation 0 L4 shape={{*}} fields=[] size=48 order=0x0 captures=1
+# CHECK-NEXT: allocation 1 L0 shape=[[pair]] fields=[0 1] size=32 order=0x10000
+# CHECK-NOT: constructedBy
+# CHECK: allocation 2 L0 shape=[[pair]] fields=[1 0] size=32 order=0x10001
+# CHECK-NEXT: allocation 3 L1 shape={{*}} fields=[0 1] size=32 order=0x10000
+# CHECK-NOT: constructedBy
+# CHECK: allocation 4 L2 shape={{*}} fields=[] size=16 order=0x0 constructedBy=f1
+# CHECK-NEXT: allocation 5 L3 shape={{*}} fields=[0] size=16 order=0x0
+# CHECK-NOT: constructedBy
+# CHECK-NOT: allocation
+
+# SITES-LABEL: function f0 name="main"
+# SITES: v3: L0 = NewObject {{*}} allocation=1
+# SITES: v6: L0 = NewObject {{*}} allocation=1
+# SITES: v9: L0 = NewObject {{*}} allocation=2
+# SITES: v12: L1 = NewObject {{*}} allocation=3
+# SITES: v17: f1 = NewClosure {{*}} allocation=0
+# SITES: v21: env L3 = NewObject {{*}} allocation=5
+# SITES-LABEL: function f1 name="Point"
+# SITES: = NewObject v1 layout=L2 {{*}}allocation=4

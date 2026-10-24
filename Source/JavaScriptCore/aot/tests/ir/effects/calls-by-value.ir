@@ -1,0 +1,85 @@
+# A call by value with a complete set of callees has the union of their summaries, and throws where the type of the callee admits a value that cannot be entered this way; without a complete set it is unknown code
+# FORM: Prepared
+# RUN: effects summaries f4 f5 f6
+# RUN(ONLY): effects summaries f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Counter" constructor=f2 flow={baseState=None members=[L0]}
+variable g0 name="first" declared={type=number} initialization=Undefined
+variable g1 name="second" declared={type=number} initialization=Undefined
+function f0 name="writesFirst" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="writesSecond" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L0
+    Return v3
+}
+function f3 name="arrow" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="calls" parameters=[{type=anything}, {type=f0|f1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: anything, v1: f0|f1, v2: number):
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v2
+    v5 = Call v0, -, v2 callees=[f0, ..]
+    v6 = Call v1, -, v2 callees=[f0, ..]
+    v7 = Call v1, -, v2 callees=[f0, f1]
+    v8 = Call v0, -, v2 callees=[f0, f1]
+    v9 = Call v1, -, v2 callees=[f0]
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v4 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v5 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v6 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v7 Call: writes(ModuleVariables/2)
+# CHECK-NEXT: v8 Call: writes(ModuleVariables/2) throws
+# CHECK-NEXT: v9 Call: writes(ModuleVariables/1)
+# CHECK-NEXT: b0 Return
+# ONLY-LABEL: function f4
+# ONLY-NOT: v7 Call:{{*}}throws
+# ONLY-NOT: v9 Call:{{*}}throws
+function f5 name="noCallee" parameters=[{type=anything}, {type=f0|f1}, {type=f2}, {type=f3}, {type=builtin(MathAbs)}] results=[{type=undefined}] {
+  b0(v0: anything, v1: f0|f1, v2: f2, v3: f3, v4: builtin(MathAbs)):
+    v5 = Call v0 callees=[]
+    v6 = Call v1 callees=[]
+    v7 = Call v3 callees=[]
+    v8 = Call v2 callees=[]
+    v9 = Construct v3 callees=[]
+    v10 = Construct v4 callees=[]
+    v11 = Construct v2 callees=[]
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v5 Call: throws
+# CHECK-NEXT: v6 Call: none
+# CHECK-NEXT: v7 Call: none
+# CHECK-NEXT: v8 Call: throws
+# CHECK-NEXT: v9 Construct: throws
+# CHECK-NEXT: v10 Construct: throws
+# CHECK-NEXT: v11 Construct: none
+function f6 name="constructs" parameters=[{type=anything}, {type=f2}] results=[{type=undefined}] {
+  b0(v0: anything, v1: f2):
+    v2 = Construct v1 callees=[f2]
+    v3 = Construct v0 callees=[f2]
+    v4 = Construct v0 callees=[f2, ..]
+    v5 = Construct v0
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v2 Construct: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) collects
+# CHECK-NEXT: v3 Construct: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throws collects
+# CHECK-NEXT: v4 Construct: {{*}}callsUnknownCode
+# CHECK-NEXT: v5 Construct: {{*}}callsUnknownCode

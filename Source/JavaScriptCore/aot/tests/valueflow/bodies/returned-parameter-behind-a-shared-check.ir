@@ -1,0 +1,13 @@
+# A checked parameter with two readers becomes a filter node. The result summary still sees the parameter behind that node.
+# RUN: valueflow-body f0
+# CHECK: body f0
+# CHECK: returns n0 : string as it came
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="usesAndReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=string
+    v2 = PropGet v1 key="length"
+    Return v1
+}

@@ -1,0 +1,32 @@
+# A build that excludes evaluated text: the run time refuses eval, Function and a direct eval every text, so a call of one throws and runs nothing. No record, no scope is opened,
+# and a function that only such text could find is not reached
+# OPTIONS: exclude=EvaluatedText
+# RUN: valueflow-results
+# CHECK: function f1 reachability=Unreached
+# CHECK-NOT: feature 1 Function
+# CHECK-NOT: feature 1 Eval
+# CHECK-NOT: unseen-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="helper" module=m0 declared={type=anything} initialization=Uninitialized
+evalscope e0 bindings=[{name="helper" variable=g0}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    v6 = Builtin builtin=Function
+    v7 = Construct v6, -, v3
+    v8 = Builtin builtin=Eval
+    v9 = Call v8, -, v3
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

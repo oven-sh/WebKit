@@ -1,0 +1,85 @@
+# A switch that is limited to one function as read holds in that function and in what is derived from it, and nowhere else
+# FORM: Prepared
+# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults disable-in=1:1
+# RUN: pass FoldConstants
+# RUN(PROGRAM): pass RemoveUnusedResults
+# CHECK: outcome: Changed
+# PROGRAM: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="foldsBefore" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="foldsBefore"
+# CHECK-NOT: = Add
+# CHECK: integer=3
+
+function f1 name="disabledFunction" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f7}
+
+function f2 name="trimmed" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f8}
+
+function f3 name="readsFirstOfDisabled" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+
+function f4 name="readsThirdOfDisabled" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=2
+    Return v2
+}
+# PROGRAM-LABEL: function f4 name="readsThirdOfDisabled"
+# PROGRAM: = ResultAt v1 index=2
+
+function f5 name="readsFirstOfTrimmed" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f8
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+
+function f6 name="readsThirdOfTrimmed" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f8
+    v2 = ResultAt v1 index=2
+    Return v2
+}
+# PROGRAM-LABEL: function f6 name="readsThirdOfTrimmed"
+# PROGRAM: = ResultAt v1 index=1
+
+function f7 name="disabledFunction" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Add v1, v2
+    v4 = Mul v0, v0
+    v5 = Sub v0, v0
+    v6 = Results v3, v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f7 name="disabledFunction"
+# CHECK: = Add v1, v2
+# PROGRAM-LABEL: function f7 name="disabledFunction" {{*}}results=[{type=number}, {type=number}, {type=number}]
+# PROGRAM: = Mul
+
+function f8 name="trimmed" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f2} creator=ResultWorker{origin=f2} {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Add v1, v2
+    v4 = Mul v0, v0
+    v5 = Sub v0, v0
+    v6 = Results v3, v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f8 name="trimmed"
+# CHECK-NOT: = Add
+# PROGRAM-LABEL: function f8 name="trimmed" {{*}}results=[{type=number}, {type=number}]
+# PROGRAM-NOT: = Mul

@@ -1,0 +1,21 @@
+# In a program that allocates nothing, only the closure layout gets a shape.
+# FORM: AsRead
+# RUN: place
+# STATISTIC: Shapes = 1
+# STATISTIC: Slots = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: shape 1 L0
+# CHECK-NOT: shape
+# CHECK: environments from 1
+# CHECK-NOT: access
+# CHECK: allocation 0 L0 shape=1 fields=[] order=0 count=0 size=48 captures=1
+# CHECK-NOT: allocation
+# CHECK: statics size=0 filledAtEntry=0 roots=0 cleared=[]
+# CHECK-NOT: moduleValue

@@ -1,0 +1,33 @@
+# base = { run: one }; derived = { __proto__: base }; derived.run(); created = Object-like allocation under base; created.run(); base.own = two; lone = {}; lone.run()
+# A read goes up the prototype links, whether the link comes with the allocation or is set on the literal. An object with another chain does not find the name.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> f1
+# CHECK-NEXT: f0 v8 -> f1
+# CHECK-NOT: f0 v11 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Base" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Derived"
+layout L2 name="Created"
+layout L3 name="Lone"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1 fields=[]
+    SetLiteralPrototype v2, v1
+    v4 = PropGet v2 key="run"
+    v5 = Call v4, v2
+    v6 = NewObject v1 layout=L2 fields=[]
+    v7 = PropGet v6 key="run"
+    v8 = Call v7, v6
+    v9 = NewObject layout=L3 fields=[]
+    v10 = PropGet v9 key="run"
+    v11 = Call v10, v9
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

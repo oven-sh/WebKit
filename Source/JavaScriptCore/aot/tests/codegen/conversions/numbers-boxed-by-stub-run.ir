@@ -1,0 +1,35 @@
+# function half(x: number, cold: boolean) { const h = x * 0.5; if (cold) return h; }   function twice(x: number, cold: boolean) { const t = Math.trunc(x) * 2 .. }
+# What the stub that boxes a number in a seldom entered block returns: an int32 for a whole number that fits, also 0; a double for -0, a fraction, a number beyond int32, an infinity; NaN for NaN
+# FORM: AsRead
+# RUN(IR): pipeline ChooseRepresentations
+# RUN: run-in-shell globalThis.register = (half) => { const show = (v) => Object.is(v, -0) ? "-0" : String(v); let text = ""; for (const x of [2, 1, 0, -0, -2, 4294967296, -4294967298, 4294967294, 1e300, Infinity, -Infinity, NaN, 3]) text += " " + show(half(x, true)); print(text); print(show(half(2, false))); };
+# IR-LABEL: name="half"
+# IR: [[product]]: number @Double = Mul
+# IR: frequency=Unlikely:
+# IR-NEXT: Jump -> next [[join]]([[product]])
+# IR: [[join]]({{*}}: undefined|number @JSValue):
+# CHECK: {{*}}1 0.5 0 -0 -1 2147483648 -2147483649 2147483647 5e+299 Infinity -Infinity NaN 1.5
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="half" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    v2 = Double number=0.5
+    v3 = Mul v0, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}

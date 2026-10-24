@@ -1,0 +1,61 @@
+# A field that a constructor stores behind the allocation has no absent state if nothing can read it before the store
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="StoresFirst" constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="IsReadFirst" constructor=f2 fields=[{key="late" declared={type=number} flags=[IsRequired]}]
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = NewClosure function=f2
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v5, -, v2
+    PutModuleVariable v9 variable=g0
+    v11 = Construct v8, -, v2
+    PutModuleVariable v11 variable=g1
+    v13 = PropGet v9 key="total"
+    v14 = PropGet v11 key="late"
+    Return
+}
+function f1 name="StoresFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropDefine v3, v1 key="total"
+    v5 = FinishObject v3
+    v6 = CallDirect v5 function=f3
+    Return v5
+}
+function f2 name="IsReadFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = CallDirect v3 function=f4
+    PropDefine v3, v1 key="late"
+    v6 = FinishObject v3
+    Return v6
+}
+function f3 name="readsTotal" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="total"
+    Return v1
+}
+function f4 name="readsLate" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK: "total" Double @
+# CHECK: "late" OptionalDouble @

@@ -1,0 +1,42 @@
+# A static field is a variable its class owns. It always has an absent state, because generic code may redefine the property
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: plan-slots variables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}, {key="label" variable=g1}]
+variable g0 name="count" module=m0 declared={type=number} owner=L0
+variable g1 name="label" module=m0 declared={type=string} owner=L0
+variable g2 name="moduleCount" module=m0 declared={type=number} initialization=Undefined
+variable g3 name="moduleLabel" module=m0 declared={type=string} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v3 variable=g1
+    v8 = FinishClass v5 layout=L0
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v3 variable=g3
+    v11 = GetModuleVariable variable=g0
+    v12 = GetModuleVariable variable=g1
+    v13 = GetModuleVariable variable=g2
+    v14 = GetModuleVariable variable=g3
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+# CHECK: g0 Statics Plain OptionalDouble
+# CHECK-NEXT: g1 Statics Plain JSValue
+# CHECK-NEXT: g2 Statics Plain Double
+# CHECK-NEXT: g3 Statics Plain Cell

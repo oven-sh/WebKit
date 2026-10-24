@@ -1,0 +1,116 @@
+# What is built at the end of a block goes in front of the condition of its branch, where the branch alone uses the condition and nothing stands behind it: the two stay together for selection, and a later cut behind the allocation does not part them
+# FORM: Prepared
+# RUN: pass SinkAllocations RemoveTrivialParameters EliminateGuards
+# STATISTIC: AllocationsSunk = 4
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Kept" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L2 name="Verdict" fields=[{key="a" declared={type=anything}}, {key="fits" declared={type=anything}}]
+
+function f0 name="shapeTestUnderHandler" parameters=[{type=object}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: anything, v2: number):
+    v3 = NewObject layout=L1
+    PropDefine v3, v2 key="a" receivers=[L1]
+    Jump -> next b1()
+  b1() handler=b8():
+    PropDefine v3, v2 key="b" receivers=[L1]
+    v6 = ShapeTest v0 layouts=[L0]
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+    Jump -> next b4()
+  b3():
+    v9 = Call v1, -, v3
+    Return v9
+  b4():
+    LoopHint
+    v11 = ShapeTest v3 layouts=[L1]
+    Branch v11 -> taken b5(| 0), notTaken b7()
+  b5(v12):
+    v13 = GetSlot v3, v12 key="a" receivers=[L1] level=Expected
+    v14 = ToBoolean v13
+    Branch v14 -> taken b4(), notTaken b6()
+  b6():
+    v15 = Call v1, -, v3
+    Return v15
+  b7():
+    Return v0
+  b8() role=CatchHandler:
+    v16 = CatchValue
+    Return v16
+}
+# CHECK-LABEL: function f0 name="shapeTestUnderHandler"
+# CHECK: b1() handler=b8():
+# CHECK-NEXT: [[kept]]:{{*}}= NewObject -, v2, v2 layout=L1 fields=[0, 1]
+# CHECK-NEXT: [[proof]]: guard = AllGuards [[kept]]
+# CHECK-NEXT: Jump -> next [[rest]]()
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+# CHECK-NOT: ShapeTest
+# CHECK: [[rest]]() handler=b8():
+# CHECK-NEXT: v6: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+
+function f1 name="comparison" parameters=[{type=number}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: number):
+    v3 = NewObject layout=L1
+    PropDefine v3, v2 key="a" receivers=[L1]
+    PropDefine v3, v0 key="b" receivers=[L1]
+    v6 = Less v0, v2
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v1, -, v3
+    Return v7
+  b2():
+    v8 = Call v1, v1, v3
+    Return v8
+}
+# CHECK-LABEL: function f1 name="comparison"
+# CHECK: b0(
+# CHECK-NEXT: = NewObject -, v2, v0 layout=L1 fields=[0, 1]
+# CHECK-NEXT: v6: boolean = Less v0, v2
+# CHECK-NEXT: Branch v6
+
+function f2 name="conditionIsAlsoStored" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewObject layout=L2
+    PropDefine v3, v2 key="a" receivers=[L2]
+    v5 = TypeTest v0 testedType=number
+    PropDefine v3, v5 key="fits" receivers=[L2]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    v8 = Call v1, -, v3, v7
+    Return v8
+  b2():
+    v9 = Call v1, -, v3
+    Return v9
+}
+# CHECK-LABEL: function f2 name="conditionIsAlsoStored"
+# CHECK: b0(
+# CHECK-NEXT: v5: boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: = NewObject -, v2, v5 layout=L2 fields=[0, 1]
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
+
+function f3 name="valueBehindCondition" parameters=[{type=number}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: number):
+    v3 = NewObject layout=L1
+    PropDefine v3, v2 key="a" receivers=[L1]
+    PropDefine v3, v0 key="b" receivers=[L1]
+    v6 = Less v0, v2
+    v7 = Add v0, v2
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Call v1, -, v3, v7
+    Return v8
+  b2():
+    v9 = Call v1, v1, v3, v7
+    Return v9
+}
+# CHECK-LABEL: function f3 name="valueBehindCondition"
+# CHECK: b0(
+# CHECK-NEXT: v6: boolean = Less v0, v2
+# CHECK-NEXT: v7: number = Add v0, v2
+# CHECK-NEXT: = NewObject -, v2, v0 layout=L1 fields=[0, 1]
+# CHECK-NEXT: Branch v6

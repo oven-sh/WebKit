@@ -1,0 +1,43 @@
+# An object that is made late has a state at each join: made, with the object in a parameter, or not yet made, with its fields in parameters. Where no way into the join has made it,
+# an Unspecified value is passed for the object on every one of them. Nobody reads that parameter, so it brings no object, and neither does the parameter of a later block that it is handed to:
+# what they meet still points to the allocations alone.
+# FORM: Prepared
+# RUN: analyses escape function=f0 alias-values=v9,v11,v13
+# CHECK: v11 points to: [o0]
+# CHECK: v11 may be untracked: no
+# CHECK: v13 points to: [o0 o1]
+# CHECK: v13 may be untracked: no
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="merge" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Integer integer=2
+    v2 = Integer integer=1
+    v3 = Unspecified valueType=Array
+    Jump -> next b3(v1, v2, v3)
+  b2():
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Unspecified valueType=Array
+    Jump -> next b3(v4, v5, v6)
+  b3(v7, v8, v9):
+    Switch v7 cases=[1] -> case b4(), otherwise b8()
+  b4():
+    Switch v8 cases=[1] -> case b5(), otherwise b6()
+  b5():
+    Jump -> next b7(v9)
+  b6():
+    v10 = NewArray contents=anything
+    Jump -> next b7(v10)
+  b7(v11):
+    Jump -> next b9(v11)
+  b8():
+    v12 = NewArray contents=anything
+    Jump -> next b9(v12)
+  b9(v13):
+    v14 = CallBuiltin v13 overload=ArrayPrototypeLength/0
+    Return v14
+}

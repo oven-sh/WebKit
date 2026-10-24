@@ -1,0 +1,62 @@
+# function createType() { return { flags: 1 } }   function createNamed(name) { const type = createType(); type.name = name; return type }   function createObject(name) { const type = createNamed(name); type.members = name; return type }
+# An object that a call has just made and returned is as fresh as one that the function allocates itself: what the function stores into nearly every such object is filled beside its creation.
+# It counts by how often that call runs among all the places that make objects of the layout: every object passes createNamed and createObject here, through a chain of two such functions.
+# A function that may return something else than an object made during the call (pick) hands out nothing fresh, and a store into a parameter (memoize) says nothing about how many objects get the field.
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,EstimateHeat heat=EverythingIsHot
+# RUN: plan-slots fill
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "flags" filled=100% likely
+# CHECK-NEXT: .1 "name" filled={{*}} besideCreation=100% byConstructor likely
+# CHECK-NEXT: .2 "members" filled={{*}} besideCreation=100% byConstructor likely
+# CHECK-NEXT: .3 "picked" filled=
+# CHECK-NOT: byConstructor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="flags" declared={type=anything}}, {key="name" declared={type=anything}}, {key="members" declared={type=anything}}, {key="picked" declared={type=anything}}, {key="memo" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f3
+    PutModuleVariable v2 variable=g0
+    v4 = CallDirect v2, v1 function=f4
+    v5 = Check v4 castType=L0
+    PropSet v5, v1 key="picked"
+    v7 = CallDirect v2, v1 function=f5
+    Return
+}
+function f1 name="createType" parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="createNamed" parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    PropSet v1, v0 key="name"
+    Return v1
+}
+function f3 name="createObject" parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    PropSet v1, v0 key="members"
+    Return v1
+}
+function f4 name="pick" parameters=[{type=L0}, {type=anything}] results=[{type=L0}] {
+  b0(v0: L0, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = CallDirect v1 function=f3
+    Return v3
+}
+function f5 name="memoize" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="memo"
+    Return
+}

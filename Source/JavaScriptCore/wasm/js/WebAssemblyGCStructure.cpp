@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebAssemblyGCStructure.h"
 
+#include "AOTRemovableFeature.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGC.h"
 #include "JSCInlines.h"
@@ -69,6 +70,12 @@ WebAssemblyGCStructure* WebAssemblyGCStructure::create(VM& vm, const TypeInfo& t
     });
 }
 
+NEVER_INLINE void WebAssemblyGCStructure::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyGCStructure::destroy);
+    static_cast<WebAssemblyGCStructure*>(cell)->WebAssemblyGCStructure::~WebAssemblyGCStructure();
+}
+
 void WebAssemblyGCStructure::finishCreation(VM& vm)
 {
     Structure::finishCreation(vm);
@@ -91,9 +98,11 @@ void WebAssemblyGCStructure::finishCreation(VM& vm)
 template<typename Visitor>
 void WebAssemblyGCStructure::visitAdditionalChildren(JSCell* cell, Visitor& visitor)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(WebAssembly, Abort, void)
     WebAssemblyGCStructure* thisObject = uncheckedDowncast<WebAssemblyGCStructure>(uncheckedDowncast<Structure>(cell));
     for (auto& slot : thisObject->m_inlinedDisplay)
         visitor.append(slot);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 template void WebAssemblyGCStructure::visitAdditionalChildren(JSCell*, AbstractSlotVisitor&);

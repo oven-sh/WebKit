@@ -1,0 +1,142 @@
+# function apply(x: number, f: (x: number) => number) { .. f(x) .. }   function caller(x: any) { return apply(x, y => y + y) }
+# The tests at the head of a typed function (role EntryChecks) only pass their arguments on. A caller that has not proven every argument calls the tests, and what it knows of the function behind them is lost there:
+# that the typed body calls the one function that the caller passes. Such a caller takes the tests in: its call then names the typed body, which gets a copy for that function as any callee does.
+# A caller that passes a function nobody knows decides as it does about any function behind tests
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="apply" role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = CallDirect v3, v1 function=f2
+    ReturnCall v4 requirement=Allowed
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0, v1 function=f3
+    ReturnCall v5 requirement=Allowed
+}
+function f2 name="apply" flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=function}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: number, v1: function):
+    v2 = Call v1, -, v0
+    v3 = Add v2, v0
+    v4 = Add v3, v0
+    v5 = Add v4, v0
+    v6 = Add v5, v0
+    v7 = Add v6, v0
+    v8 = Add v7, v0
+    v9 = Add v8, v0
+    v10 = Add v9, v0
+    v11 = Add v10, v0
+    v12 = Add v11, v0
+    v13 = Add v12, v0
+    v14 = Add v13, v0
+    v15 = Add v14, v0
+    v16 = Add v15, v0
+    v17 = Add v16, v0
+    v18 = Add v17, v0
+    v19 = Add v18, v0
+    v20 = Add v19, v0
+    v21 = Add v20, v0
+    v22 = Add v21, v0
+    v23 = Add v22, v0
+    v24 = Add v23, v0
+    v25 = Add v24, v0
+    v26 = Add v25, v0
+    v27 = Add v26, v0
+    v28 = Add v27, v0
+    v29 = Add v28, v0
+    v30 = Add v29, v0
+    v31 = Add v30, v0
+    v32 = Add v31, v0
+    v33 = Add v32, v0
+    v34 = Add v33, v0
+    v35 = Add v34, v0
+    v36 = Add v35, v0
+    v37 = Add v36, v0
+    v38 = Add v37, v0
+    v39 = Add v38, v0
+    v40 = Add v39, v0
+    v41 = Add v40, v0
+    v42 = Add v41, v0
+    Return v42
+}
+function f3 name="apply" role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything, v1: function) frequency=Unlikely:
+    v2 = Call v1, -, v0
+    v3 = Add v2, v0
+    v4 = Add v3, v0
+    v5 = Add v4, v0
+    v6 = Add v5, v0
+    v7 = Add v6, v0
+    v8 = Add v7, v0
+    v9 = Add v8, v0
+    v10 = Add v9, v0
+    v11 = Add v10, v0
+    v12 = Add v11, v0
+    v13 = Add v12, v0
+    v14 = Add v13, v0
+    v15 = Add v14, v0
+    v16 = Add v15, v0
+    v17 = Add v16, v0
+    v18 = Add v17, v0
+    v19 = Add v18, v0
+    v20 = Add v19, v0
+    v21 = Add v20, v0
+    v22 = Add v21, v0
+    v23 = Add v22, v0
+    v24 = Add v23, v0
+    v25 = Add v24, v0
+    v26 = Add v25, v0
+    v27 = Add v26, v0
+    v28 = Add v27, v0
+    v29 = Add v28, v0
+    v30 = Add v29, v0
+    v31 = Add v30, v0
+    v32 = Add v31, v0
+    v33 = Add v32, v0
+    v34 = Add v33, v0
+    v35 = Add v34, v0
+    v36 = Add v35, v0
+    v37 = Add v36, v0
+    v38 = Add v37, v0
+    v39 = Add v38, v0
+    v40 = Add v39, v0
+    v41 = Add v40, v0
+    v42 = Add v41, v0
+    Return v42
+}
+
+function f4 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f0
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="passesKnownFunction"
+# CHECK-NOT: function=f1
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: function=f2
+# CHECK: = CallDirect {{*}} function=[[forDouble]]
+# CHECK: = CallDirect {{*}} function=f3
+
+function f5 name="passesUnknownFunction" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="passesUnknownFunction"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f1
+
+# CHECK: function [[forDouble]] name="apply" {{*}}role=CalleeVersion {{*}}parameters=[{type=number}, {type=f0}] {{*}}derivation={source=f2{{*}}creator=Version{provenVersion=f2}
+# CHECK-NEXT: b0(v0: number, v1: f0):
+# CHECK-NOT: role=CalleeVersion

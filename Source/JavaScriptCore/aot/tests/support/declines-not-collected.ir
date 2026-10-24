@@ -1,0 +1,20 @@
+# without the report option no decline is kept
+# RUN: losses declines HotCallNotInlined,f1,at=0:10 LoopNotVersioned,f1,at=0:10
+# CHECK: declines 0 of 2 added
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="second" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="third" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

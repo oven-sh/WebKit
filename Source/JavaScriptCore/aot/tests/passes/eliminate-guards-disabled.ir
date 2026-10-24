@@ -1,0 +1,26 @@
+# With the pass switched off a test under the passed edge of an equal test stays
+# FORM: Prepared
+# OPTIONS: disable=pass:EliminateGuards
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 0
+# STATISTIC: EliminateGuardsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="underPassedTest" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b4()
+  b1(v2):
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
+    Return v5
+  b3():
+    Return v0
+  b4():
+    Return v0
+}
+# CHECK-COUNT-2: = ShapeTest v0 layouts=[L0]

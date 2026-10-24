@@ -1,0 +1,39 @@
+# For each name the form in which most objects hold a field of that name, for the reads by name to ask for first. "count" is a 32-bit integer in both layouts. "next" is a narrow reference.
+# "value" is an integer in the layout that is made once and any value in the layout that a loop makes: the loop decides. A name that no compiled object has a field of has no form
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ComputeEffectSummaries
+# RUN: plan-slots layouts expected-forms
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="MadeOnce" fields=[{key="count" declared={type=i32} flags=[IsRequired]}, {key="value" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="MadeInALoop" fields=[{key="count" declared={type=i32} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=L0} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = ToBoolean v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = NewObject -, v0, v4, v2 layout=L1 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    PutModuleVariable v8 variable=g0
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: L0 CompiledObject
+# CHECK: "value" {{*}}Int32 @
+# CHECK: L1 CompiledObject
+# CHECK: "value" {{*}}JSValue @
+# CHECK: "next" {{*}}Cell32 @
+# CHECK: "count" InlineInt32
+# CHECK: "value" InlineValue
+# CHECK: "next" InlineNarrowCell
+# CHECK-NOT: "input"

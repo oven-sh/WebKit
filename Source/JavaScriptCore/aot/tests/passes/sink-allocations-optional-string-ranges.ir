@@ -1,0 +1,122 @@
+# A substring that is undefined where its bounds are negative is a virtual object with two variants: undefined, and a range of the string
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 3
+# STATISTIC: AllocationsSunk = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="neverRead" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=string}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    Return v0
+}
+# CHECK-LABEL: function f0 name="neverRead"
+# CHECK-NOT: Substring
+# CHECK: Return v0
+
+function f1 name="testedAndMeasured" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=number}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = GetStringLength v5
+    Return v6
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="testedAndMeasured"
+# CHECK-NOT: Substring
+# CHECK: [[zero1]]: 0 = Integer
+# CHECK-NEXT: [[isPresent1]]: boolean = GreaterEq v1, [[zero1]]
+# CHECK: [[shift1]]: number = ToNumber [[isPresent1]]
+# CHECK-NEXT: [[tag1]]: i32 = LShift {{*}}, [[shift1]]
+# CHECK-NOT: TypeTest
+# CHECK: [[masked1]]:{{*}}= BitAnd [[tag1]],
+# CHECK-NEXT: [[isString1]]: boolean = ToBoolean [[masked1]]
+# CHECK-NEXT: v4: boolean = Upcast [[isString1]]
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NOT: Substring
+# CHECK-NOT: GetStringLength
+# CHECK: = Sub v2, v1
+
+function f2 name="coercibleCheckThrowsForUndefined" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=number}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = RequireObjectCoercible v3
+    v5 = GetStringLength v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="coercibleCheckThrowsForUndefined"
+# CHECK-NOT: Substring
+# CHECK: Branch {{*}} -> taken [[failing2]](), notTaken [[passing2]]()
+# CHECK-NEXT: [[failing2]]() frequency=Rare:
+# CHECK-NEXT: [[undefined2]]: undefined = Undefined
+# CHECK-NEXT: = RequireObjectCoercible [[undefined2]]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: [[passing2]]():
+# CHECK-NOT: Substring
+# CHECK: = Sub v2, v1
+
+function f3 name="neededWhereItIsAString" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100], v3: anything):
+    v4 = SubstringOrUndefined v0, v1, v2
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = Call v3, -, v6
+    Return v7
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="neededWhereItIsAString"
+# CHECK-NOT: Substring
+# CHECK: b1():
+# CHECK-NEXT: [[string3]]: string = Substring v0, v1, v2
+# CHECK-NEXT: = Call v3, -, [[string3]]
+# CHECK-NOT: Substring
+
+function f4 name="neededWhateverItIs" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100], v3: anything):
+    v4 = SubstringOrUndefined v0, v1, v2
+    v5 = Call v3, -, v4
+    Return v5
+}
+# CHECK-LABEL: function f4 name="neededWhateverItIs"
+# CHECK: b0(
+# CHECK-NEXT: v4: undefined|string = SubstringOrUndefined v0, v1, v2
+# CHECK-NEXT: = Call v3, -, v4
+
+function f5 name="comparedWithAString" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = String string="b"
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f5 name="comparedWithAString"
+# CHECK: b0(
+# CHECK-NEXT: v3: undefined|string = SubstringOrUndefined v0, v1, v2
+# CHECK: = StrictEq v3, v4
+
+function f6 name="comparedOnOnePath" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100], v3: boolean):
+    v4 = SubstringOrUndefined v0, v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = String string="a"
+    v6 = StrictEq v4, v5
+    Return v6
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f6 name="comparedOnOnePath"
+# CHECK-NOT: Substring
+# CHECK: b1():
+# CHECK-NOT: Switch
+# CHECK: [[value6]]: undefined|string = SubstringOrUndefined v0, v1, v2
+# CHECK-NOT: Switch
+# CHECK: = StrictEq [[value6]], v5
+# CHECK-NOT: Substring

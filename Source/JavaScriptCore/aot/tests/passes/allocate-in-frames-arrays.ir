@@ -1,0 +1,304 @@
+# An array literal that is only read, by the function that makes it and by those it is handed to, lies in the frame: the cell, the indexing header and the elements
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,ChooseCallingConventions,AllocateInFrames
+# STATISTIC: ArraysInFrames = 12
+# STATISTIC: ClosuresInFrames = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    v5 = CallDirect v1 function=f3
+    v6 = CallDirect v1 function=f4
+    v7 = CallDirect v1 function=f5
+    v8 = CallDirect v1 function=f6
+    v9 = CallDirect v1 function=f7
+    v10 = CallDirect v1 function=f8
+    v11 = CallDirect v1 function=f9
+    v12 = CallDirect v1 function=f10
+    v13 = CallDirect v1 function=f11
+    v14 = CallDirect v1 function=f12
+    v15 = CallDirect v1 function=f13
+    v16 = CallDirect v1 function=f14
+    v17 = CallDirect v1, v2 function=f15
+    v18 = CallDirect v1 function=f16
+    v19 = CallDirect v1 function=f17
+    v20 = CallDirect v1 function=f18
+    v21 = CallDirect v1 function=f26
+    Return
+}
+
+function f1 name="handedToReader" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0 contents=anything
+    v2 = CallDirect v1 function=f19
+    Return v2
+}
+# CHECK-LABEL: function f1 name="handedToReader"
+# CHECK: NewArray v0, v0 {{*}}storage=Frame
+
+function f2 name="emptyAndNamedByTheProgram" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallDirect v1 function=f19
+    Return v2
+}
+# CHECK-LABEL: function f2 name="emptyAndNamedByTheProgram"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray {{*}}storage=Frame
+
+function f3 name="handedToKeeper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f20
+    Return v2
+}
+# CHECK-LABEL: function f3 name="handedToKeeper"
+# CHECK-NOT: storage=Frame
+
+function f4 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f19
+    Return v1
+}
+# CHECK-LABEL: function f4 name="returned"
+# CHECK-NOT: storage=Frame
+
+function f5 name="appendedTo" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    AppendElement v1, v0
+    v3 = CallDirect v1 function=f19
+    Return v3
+}
+# CHECK-LABEL: function f5 name="appendedTo"
+# CHECK-NOT: storage=Frame
+
+function f6 name="tooLong" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    v2 = CallDirect v1 function=f19
+    Return v2
+}
+# CHECK-LABEL: function f6 name="tooLong"
+# CHECK-NOT: storage=Frame
+
+function f7 name="hasHole" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything holes=[1]
+    v2 = CallDirect v1 function=f19
+    Return v2
+}
+# CHECK-LABEL: function f7 name="hasHole"
+# CHECK-NOT: storage=Frame
+
+function f8 name="holdsNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray v1, v1 contents=number
+    v3 = CallDirect v2 function=f28
+    Return v3
+}
+# CHECK-LABEL: function f8 name="holdsNumbers"
+# CHECK-NOT: storage=Frame
+
+# The array holds values of the heap alone.
+function f9 name="holdsClosure" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f25
+    v2 = NewArray v1 contents=anything
+    v3 = CallDirect v2 function=f19
+    Return v3
+}
+# CHECK-LABEL: function f9 name="holdsClosure"
+# CHECK: NewClosure function=f25
+# CHECK-NOT: function=f25 {{*}}storage=Frame
+# CHECK: NewArray {{*}}storage=Frame
+
+function f10 name="handedToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="handedToUnknownCode"
+# CHECK-NOT: storage=Frame
+
+function f11 name="readHere" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = StrictEq v1, v0
+    v3 = CallList v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f11 name="readHere"
+# CHECK: NewArray {{*}}storage=Frame
+
+function f12 name="restParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0 contents=anything
+    v2 = CallDirect v0, v1 function=f21
+    Return v2
+}
+# CHECK-LABEL: function f12 name="restParameter"
+# CHECK: NewArray {{*}}storage=Frame
+
+function f13 name="surplusArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = NewArray v0 contents=anything
+    v3 = CallDirect v1, v0, v2 function=f22
+    Return v3
+}
+# CHECK-LABEL: function f13 name="surplusArgument"
+# CHECK: NewArray {{*}}storage=Frame
+
+function f14 name="oneInEachIteration" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewArray v0 contents=anything
+    v3 = CallDirect v2 function=f19
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f14 name="oneInEachIteration"
+# CHECK: NewArray {{*}}storage=Frame
+
+function f15 name="twoMeet" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewArray v0, v0 contents=anything
+    Jump -> next b3(v3)
+  b3(v4: Array):
+    v5 = CallDirect v4 function=f19
+    Return v5
+}
+# CHECK-LABEL: function f15 name="twoMeet"
+# CHECK: NewArray v0 {{*}}storage=Frame
+# CHECK: NewArray v0, v0 {{*}}storage=Frame
+
+function f16 name="carriedIntoTheNextIteration" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    Jump -> next b1(v1)
+  b1(v2: Array):
+    LoopHint
+    v4 = NewArray v0 contents=anything
+    v5 = StrictEq v2, v4
+    Branch v5 -> taken b2(), notTaken b1(v4)
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f16 name="carriedIntoTheNextIteration"
+# CHECK: b1(
+# CHECK-NOT: storage=Frame
+
+# The frame would go before the callee runs. It stays: the callee returns without another tail call, so no program can tell but by the depth of the stack, which grows by one frame and no more.
+function f17 name="tailCallOfFunctionThatReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f19
+    ReturnCall v2
+}
+# CHECK-LABEL: function f17 name="tailCallOfFunctionThatReturns"
+# CHECK: = NewArray {{*}}storage=Frame
+# CHECK: = CallDirect {{*}}function=f19 {{*}}[isDemotedTailCall]
+# CHECK-NOT: ReturnCall
+
+function f18 name="handedOnTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f23
+    v3 = NewArray v0 contents=anything
+    v4 = CallDirect v3 function=f24
+    Return v4
+}
+# CHECK-LABEL: function f18 name="handedOnTwice"
+# CHECK: v1:{{*}}= NewArray {{*}}storage=Frame
+# CHECK: v3:{{*}}= NewArray
+# CHECK-NOT: storage=Frame
+
+function f19 name="reader" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f20 name="keeper" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f21 name="readsRest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = CallList v0, -, v1
+    Return v2
+}
+function f22 name="makesArgumentsObject" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v3
+    Return v4
+}
+function f23 name="handsOnToReader" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = CallDirect v0 function=f19
+    Return v1
+}
+function f24 name="handsOnToKeeper" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = CallDirect v0 function=f20
+    Return v1
+}
+function f25 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# A program may count on tail calls that go round for ever.
+function f26 name="tailCallOfFunctionThatGoesOnInTailCalls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f27
+    ReturnCall v2
+}
+# CHECK-LABEL: function f26 name="tailCallOfFunctionThatGoesOnInTailCalls"
+# CHECK-NOT: storage=Frame
+# CHECK: ReturnCall
+function f27 name="readsAndGoesRound" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v0 function=f27
+    ReturnCall v4
+  b2():
+    Return v2
+}
+# Beside lists of any value the list of numbers would be given their storage.
+function f28 name="readerOfNumbers" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

@@ -1,0 +1,83 @@
+# How the declared result of a ramp and its Return come out for each declared result of the source
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsProvenPromise" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise<number, proven>}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="returnsProvenPromise"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise<number, proven>}]
+# CHECK: [[p0]]: Promise = NewPromise
+# CHECK-NEXT: [[r0]]: anything = CallDirect v0, [[p0]] function=f6
+# CHECK-NEXT: [[a0]]: Promise<number, proven> = AssumeType [[r0]] castType=Promise<number, proven>
+# CHECK-NOT: Return [[p0]]
+# CHECK: Return [[a0]]
+function f1 name="returnsPromise" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="returnsPromise"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise}]
+# CHECK: [[p1]]: Promise = NewPromise
+# CHECK-NEXT: [[r1]]: anything = CallDirect v0, [[p1]] function=f7
+# CHECK-NEXT: [[a1]]: Promise = AssumeType [[r1]] castType=Promise
+# CHECK-NOT: Return [[p1]]
+# CHECK: Return [[a1]]
+function f2 name="returnsAnything" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="returnsAnything"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise}]
+# CHECK: [[p2]]: Promise = NewPromise
+# CHECK-NEXT: [[r2]]: anything = CallDirect v0, [[p2]] function=f8
+# CHECK-NEXT: [[a2]]: Promise = AssumeType [[r2]] castType=Promise
+# CHECK-NOT: Return [[p2]]
+# CHECK: Return [[a2]]
+function f3 name="isExpectedToReturnNumber" flags=[IsAsync] parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# What is expected of the result has no promise in it. The ramp returns a promise all the same, and that is proven.
+# CHECK-LABEL: function f3 name="isExpectedToReturnNumber"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise}]
+# CHECK: [[p3]]: Promise = NewPromise
+# CHECK-NEXT: [[r3]]: anything = CallDirect v0, [[p3]] function=f9
+# CHECK-NEXT: [[a3]]: Promise = AssumeType [[r3]] castType=Promise
+# CHECK-NOT: Return [[p3]]
+# CHECK: Return [[a3]]
+function f4 name="generatorReturnsAnything" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    InitialYield
+    Return v1
+}
+# CHECK-LABEL: function f4 name="generatorReturnsAnything"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Generator}]
+# CHECK: [[g4]]: Generator = NewGenerator v0 function=f4
+# CHECK-NEXT: = CallDirect v0, v1, [[g4]] function=f10
+# CHECK-NOT: AssumeType
+# CHECK: Return [[g4]]
+function f5 name="callsRamps" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    Return v1
+}
+# CHECK-LABEL: function f5 name="callsRamps"
+# CHECK-NOT: role=
+# CHECK: v1: Promise = CallDirect v0 function=f2
+# CHECK-NEXT: v2: Promise = CallDirect v0 function=f3
+# CHECK-LABEL: function f6 name="returnsProvenPromise"

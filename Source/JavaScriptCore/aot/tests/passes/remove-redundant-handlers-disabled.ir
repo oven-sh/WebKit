@@ -1,0 +1,28 @@
+# With the pass disabled a block that cannot throw keeps its handler
+# FORM: Prepared
+# OPTIONS: disable=pass:RemoveRedundantHandlers
+# RUN: pass RemoveRedundantHandlers
+# STATISTIC: RemoveRedundantHandlersChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pureValues" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number) handler=b2():
+    v1 = Add v0, v0
+    Jump -> next b1()
+  b1():
+    Return v0
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: function f0 name="pureValues"
+# CHECK-NEXT: b0(v0: number) handler=b2():
+# CHECK-NEXT: v1: number = Add v0, v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

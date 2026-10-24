@@ -1,0 +1,73 @@
+# Comparisons of one character with literals that form an if chain compare one integer, the code unit, with constants: the form of which B3 makes a switch
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 7
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="three-characters" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+  b0(v0: string, v1: int):
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = String string="b"
+    v7 = StrictEq v2, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Integer integer=2
+    Return v8
+  b4():
+    v9 = String string="c"
+    v10 = StrictEq v2, v9
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    v11 = Integer integer=3
+    Return v11
+  b6():
+    v12 = Integer integer=4
+    Return v12
+}
+# CHECK-LABEL: function f0 name="three-characters"
+# CHECK-NOT: = ElemGet
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v4: boolean = StrictEq v2, {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch v4
+# CHECK: v7: boolean = StrictEq v2, {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch v7
+# CHECK: v10: boolean = StrictEq v2, {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch v10
+
+function f1 name="character-is-returned" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
+  b0(v0: string, v1: int):
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = String string="b"
+    v7 = StrictEq v2, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Integer integer=2
+    Return v8
+  b4():
+    v9 = String string="c"
+    v10 = StrictEq v2, v9
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    v11 = Integer integer=3
+    Return v11
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="character-is-returned"
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined {{*}}, -, -, v1
+# CHECK-COUNT-3: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne

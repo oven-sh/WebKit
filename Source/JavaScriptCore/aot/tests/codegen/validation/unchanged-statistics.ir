@@ -1,0 +1,163 @@
+# Validation adds checks beside the code of a release build: flow results, pass decisions, selected groups, accesses, slots, shapes and barriers are the same in both. Only the passes that sweep up a test of a proof that typing shows to hold change something once more
+# RUN: validation-differences check=validate-back-end
+# STATISTIC: TestAndBranchGroups >= 1
+# STATISTIC: AccessesProven >= 1
+# STATISTIC: AccessesUnknown >= 1
+# STATISTIC: StackChecksCoveredByCallers >= 1
+# STATISTIC: EnvironmentsInFrames >= 1
+# STATISTIC: BarriersOnUnmarkableOwners >= 1
+# STATISTIC: FlowProvenContentsSites >= 1
+# CHECK: release image not empty
+# CHECK-NEXT: validate image not empty
+# CHECK-NOT: statistic Flow
+# CHECK-NOT: statistic InlineDecision
+# CHECK-NOT: statistic StackChecks
+# CHECK-NOT: statistic Environments
+# CHECK-NOT: statistic Closures
+# CHECK-NOT: statistic Accesses
+# CHECK-NOT: statistic Slots
+# CHECK-NOT: statistic SharedSlots
+# CHECK-NOT: statistic Shapes
+# CHECK-NOT: statistic Barriers
+# CHECK-NOT: statistic ResolveBuiltinsChanges
+# CHECK-NOT: statistic ResolveCallsChanges
+# CHECK-NOT: statistic ResolveAccessesChanges
+# CHECK-NOT: statistic SplitUnionsChanges
+# CHECK-NOT: statistic PlaceTypeTestsChanges
+# CHECK-NOT: statistic ExpandIterationChanges
+# CHECK-NOT: statistic ExpandOwnKeysChanges
+# CHECK-NOT: statistic SelectTypedResultsChanges
+# CHECK-NOT: statistic RetypeValuesChanges
+# CHECK-NOT: statistic InlineCallsChanges
+# CHECK-NOT: statistic SinkAllocationsChanges
+# CHECK-NOT: statistic EliminateRedundantReadsChanges
+# CHECK-NOT: statistic EliminateGuardsChanges
+# CHECK-NOT: statistic ConvertCountersToIntegersChanges
+# CHECK-NOT: statistic RemoveDeadCountedLoopsChanges
+# CHECK-NOT: statistic FuseArrayChainsChanges
+# CHECK-NOT: statistic FuseGeneratorLoopsChanges
+# CHECK-NOT: statistic CreateStringBuildersChanges
+# CHECK-NOT: statistic FuseConcatenationsChanges
+# CHECK-NOT: statistic ExpandDataChanges
+# CHECK-NOT: statistic FoldConstantsChanges
+# CHECK-NOT: statistic RemoveTrivialParametersChanges
+# CHECK-NOT: statistic PropagateBranchConditionsChanges
+# CHECK-NOT: statistic HoistTestsIntoPredecessorsChanges
+# CHECK-NOT: statistic ThreadJumpsChanges
+# CHECK-NOT: statistic InferSwitchesChanges
+# CHECK-NOT: statistic RemoveRedundantHandlersChanges
+# CHECK-NOT: statistic HoistLoopInvariantReadsChanges
+# CHECK-NOT: statistic SimplifyBuiltinCallsChanges
+# CHECK-NOT: statistic PromoteEnvironmentsToVariablesChanges
+# CHECK-NOT: statistic RemoveUnreadFieldsChanges
+# CHECK-NOT: statistic RemoveUnusedResultsChanges
+# CHECK-NOT: statistic RemoveUnusedParametersChanges
+# CHECK-NOT: statistic RemoveUnreachableFunctionsChanges
+# CHECK-NOT: statistic AllocateInFramesChanges
+# CHECK-NOT: statistic ReuseEnvironmentsChanges
+# CHECK-NOT: statistic SelectChanges
+# CHECK-NOT: Groups release=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Parameter
+typesite w5 module=m0 position=60 kind=Parameter
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Environment fields=[{key="total" declared={type=anything}}]
+variable g0 module=m0 declared={type=undefined|L0} initialization=Undefined
+variable g1 name="list" module=m0 declared={type=anything|absent} initialization=Uninitialized
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Convert v1 declared={type=undefined|L0}
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f4
+    v7 = NewClosure function=f5
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v9, v9, v4, v5, v6, v7
+    v11 = NewArray v0 contents=anything holes=[]
+    PutModuleVariable v11 variable=g1
+    Return v10
+}
+function f1 name="everyRepresentation" parameters=[{type=anything}, {type=number site=w0}, {type=boolean site=w1}, {type=int site=w2}, {type=undefined|number site=w3}, {type=undefined|int site=w4}, {type=string site=w5}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean, v3: int, v4: undefined|number, v5: undefined|int, v6: string):
+    v7 = Add v1, v1
+    v8 = TypeTest v0 testedType=undefined|null
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="use" [isFreeName]
+    v11 = Call v10, -, v7, v2, v3, v4, v5, v6
+    Return v11
+}
+function f2 name="provenLayout" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b2(), notTaken b1(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="x" @30
+    v4 = Double number=2.5
+    v5 = CallDirect v4 function=f6 [isNeverInlined]
+    v6 = Add v3, v5
+    Return v6
+  b2():
+    Return
+}
+function f3 name="walk" captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    PutEnvironmentField v0, v1 layout=L1 field=0
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetEnvironmentField v0 layout=L1 field=0
+    Return v4
+  b2():
+    v5 = Undefined
+    v6 = CallDirect v0, v5 function=f3
+    Return v6
+}
+function f4 name="environmentInFrame" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = NewObject layout=L1 fields=[]
+    v3 = CallDirect v2, v0 function=f3
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = PropGet v5 key="y" @40
+    Return v3
+}
+function f5 name="provenContents" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="list"
+    v2 = Integer integer=0
+    v3 = ElemGet v1, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="use" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = GetModuleVariable variable=g1
+    v8 = CheckInitialized v7 name="list"
+    v9 = ElemGet v8, v2
+    Return v9
+}
+function f6 name="coveredByCaller" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Pow v0, v0
+    Return v1
+}

@@ -1,0 +1,29 @@
+# A store of a number has no barrier, so it covers no earlier store.
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 1
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="later-store-of-number" captures=[{type=env L0}] parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue, v2: number @JSValue):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v5 @JSValue = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f0 name="later-store-of-number"
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK-NOT: laterBarrierCovers
+function f1 name="later-store-of-string" captures=[{type=env L0}] parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue, v2: string @JSValue):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v5 @JSValue = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f1 name="later-store-of-string"
+# CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
+# CHECK-NEXT: PutEnvironmentField v0, v2 layout=L0 field=1
+# CHECK-NOT: laterBarrierCovers

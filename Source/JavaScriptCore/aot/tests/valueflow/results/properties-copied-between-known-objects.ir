@@ -1,0 +1,41 @@
+# Object.assign between objects that the analysis follows is a store under each name that a source may hold: the other fields of the target stay as the allocation has filled them, and no store names the fields of the target.
+# A source that is itself the target of a copy hands on what was copied onto it. The source of a copy onto an object nobody knows is handed to nobody
+# RUN: valueflow-apply
+# RUN(WHY): valueflow-why escaped-layout=L4
+# CHECK: layout L0 name="First" fields=[{key="a"{{*}}location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK: layout L1 name="Second" fields=[{key="a"{{*}}location={writers=AllKnown}{{*}}{key="b"{{*}}location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation isUnchangedDuringActivation=true}
+# CHECK: layout L2 name="Third" fields=[{key="a" declared={type="a"}{{*}}location={writers=AllKnown}{{*}}{key="b"{{*}}location={writers=AllKnown reads=NeverRead}{{*}}{key="c"{{*}}location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true}
+# CHECK: layout L3 name="Same" fields=[{key="s" declared={type=fractional|"a"}{{*}}location={writers=AllKnown initialization=SetAtCreation}
+# CHECK: layout L4 name="SourceForUnknown" fields=[{key="n"{{*}}location={writers=AllKnown stores=AtMostOnce
+# WHY: escaped-layout=L4
+# WHY-NOT: object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Third" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Same" fields=[{key="s" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="SourceForUnknown" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=ObjectAssign
+    v3 = Double number=1.5
+    v4 = String string="a"
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewObject -, v3 layout=L1 fields=[1]
+    v7 = NewObject -, v3 layout=L2 fields=[2]
+    v8 = Call v2, -, v7, v6
+    v9 = Call v2, -, v6, v5
+    v10 = NewObject -, v3 layout=L3 fields=[0]
+    v11 = NewObject -, v4 layout=L3 fields=[0]
+    v12 = Call v2, -, v10, v11
+    v13 = NewObject -, v3 layout=L4 fields=[0]
+    v14 = Call v2, -, v1, v13
+    v15 = PropGet v7 key="a"
+    v16 = PropGet v10 key="s"
+    Return
+}

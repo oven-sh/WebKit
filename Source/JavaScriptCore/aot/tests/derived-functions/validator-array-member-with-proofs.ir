@@ -1,0 +1,51 @@
+# What the type of a field proves about arrays is assumed for the copy a validator creates and for the array a validating parser creates, and for no array that comes from elsewhere: the caller's own, which code that runs during the validation can reach, or the generic parser's
+# FORM: Prepared optimizing
+# OPTIONS: report=Declines
+# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 ValidatingParser:x0.0 ValidatingParser:x1.0
+# CHECK: decline ResultNodeInterpreted - - None [0] reason=FieldTypeIsNotTestable
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=FieldTypeIsNotTestable
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="items" node=1 field=0}]} type=L0}, {shape=Array{element=2} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="items" node=1 field=0}]} type=L1}, {shape=AnyObject type=object}]
+expectedresult x2 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="items" node=1 field=0}]} type=L2}, {shape=Union{arms=[2, 4]} type=object}, {shape=Array{element=3} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}, {shape=AnyObject type=object}]
+expectedresult x3 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="items" node=1 field=0}]} type=L3}, {shape=Union{arms=[2, 3]} type=null|Array<number>}, {shape=Null type=null}, {shape=Array{element=4} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x4 type=L4 layouts=[L4] validation=[{shape=Object{layout=L4 members=[{key="items" node=1 field=0 isOptional=true}]} type=L4}, {shape=Array{element=2} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="CopiedArray" module=m0 position=10 fields=[{key="items" declared={type=Array<anything, proven, pristine[Storage, Names]>}}]
+layout L1 name="ObjectOfTheCaller" module=m0 position=20 fields=[{key="items" declared={type=Array<anything, proven, pristine[Storage, Names]>}}]
+layout L2 name="CopiedArrayOrObjectOfTheCaller" module=m0 position=30 fields=[{key="items" declared={type=Array<anything, proven, pristine[Storage, Names]>}}]
+layout L3 name="CopiedArrayOrNull" module=m0 position=40 fields=[{key="items" declared={type=null|Array<anything, proven, pristine[Storage, Names]>}}]
+layout L4 name="OptionalCopiedArray" module=m0 position=50 fields=[{key="items" declared={type=undefined|Array<anything, proven, pristine[Storage, Names]>}}]
+
+# CHECK: function {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x0}
+# CHECK: [[parsedArray]]:{{*}}= AssumeType {{*}} castType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: = NewObject -, [[parsedArray]] layout=L0 fields=[0]
+# CHECK: function {{*}}creator=Parser{type=L1 layout=L1 form=ParsedText expectedResult=x1}
+# CHECK-NOT: AssumeType
+# CHECK: function {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
+# CHECK: [[raw0]]: anything = GetOwnDataProperty {{*}} key="items"
+# CHECK-NEXT: [[results0]]:{{*}}= CallDirect [[raw0]] function=[[validatorOfNumbers]]
+# CHECK: [[copy0]]: undefined|Array<number> = ResultAt [[results0]] index=1
+# CHECK-NEXT: [[isArray0]]: boolean = TypeTest [[copy0]] testedType=Array<number>
+# CHECK: ([[array0]]: Array<number>):
+# CHECK-NEXT: [[assumed0]]:{{*}}= AssumeType [[array0]] castType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK: = CloneAs {{*}}, [[assumed0]] layout=L0 fields=[0]
+# CHECK: function [[validatorOfNumbers]] {{*}}creator=Validator{type=Array<number> expectedResult=x0 node=1}
+# CHECK: [[created]]:{{*}}= NewArray
+# CHECK: AppendElement [[created]],
+# CHECK: function {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x1}
+# CHECK-NOT: AssumeType
+# CHECK: function {{*}}creator=Validator{type=L2 layout=L2 expectedResult=x2}
+# CHECK-NOT: AssumeType
+# CHECK: function {{*}}creator=Validator{type=L3 layout=L3 expectedResult=x3}
+# CHECK: [[assumed3]]:{{*}}= AssumeType {{*}} castType=null|Array<anything, proven, pristine[Storage, Names]>
+# CHECK: = NewObject -, [[assumed3]] layout=L3 fields=[0]
+# CHECK: [[assumedAgain3]]:{{*}}= AssumeType {{*}} castType=null|Array<anything, proven, pristine[Storage, Names]>
+# CHECK: = CloneAs {{*}}, [[assumedAgain3]] layout=L3 fields=[0]
+# CHECK: function {{*}}creator=Validator{type=L4 layout=L4 expectedResult=x4}
+# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=undefined|Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: PutSlot {{*}}, [[assumed4]] key="items"
+# CHECK-NOT: AssumeType
+# CHECK: PropDefine {{*}} key="items"
+# CHECK-NOT: AssumeType

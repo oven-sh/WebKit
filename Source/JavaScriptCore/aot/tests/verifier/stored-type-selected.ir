@@ -1,0 +1,33 @@
+# Each value of a run of slot stores fits the field of its key in every receiver
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: StoredTypeMismatch 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=string} flags=[IsRequired]}]
+layout L1 fields=[{key="x" declared={type=number|string} flags=[IsRequired]}, {key="y" declared={type=string} flags=[IsRequired]}]
+function f0 name="badOnlyValue" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PutSlots v2, v2, v1 placedKeys=[{key="x"}] receivers=[L0]
+    Return
+}
+function f1 name="badSecondValue" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PutSlots v2, v2, v0, v0 placedKeys=[{key="x"}, {key="y"}] receivers=[L0]
+    Return
+}
+function f2 name="badValueForOneReceiver" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    PutSlots v2, v2, v1 placedKeys=[{key="x"}] receivers=[L0, L1]
+    Return
+}
+function f3 name="good" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    PutSlots v2, v2, v0, v1 placedKeys=[{key="x"}, {key="y"}] receivers=[L0, L1]
+    PutSlots v2, v2, v1 placedKeys=[{key="x"}] receivers=[L1]
+    Return
+}

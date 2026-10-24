@@ -1,0 +1,35 @@
+# An await that takes a turn more than others (`for await` over an array, a Map or a Set awaits each element so) stays as it is: the forms that enter the callee without a promise have no such turn
+# FORM: Prepared
+# RUN: pass ResolveAwaitedCalls
+# STATISTIC: AwaitedCallsResolved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0} {
+  b0():
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f2
+    v2 = AssumeType v1 castType=Promise
+    Return v2
+}
+function f1 name="awaitsWithOneMoreTurn" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+  b0():
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f3
+    v2 = AssumeType v1 castType=Promise
+    Return v2
+}
+function f2 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0} {
+  b0(v0: undefined|Promise):
+    v1 = Undefined
+    v2 = ReturnAsyncResult v0, v1
+    Return v2
+}
+function f3 name="awaitsWithOneMoreTurn" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+  b0(v0: undefined|Promise):
+    v1 = CallDirect function=f0
+    v2 = AssumeType v1 castType=Promise<undefined, proven, pristine[Storage, Names]>
+    v3 = AwaitBySavingFrame v2, v0 [takesExtraTurn]
+    v4 = ReturnAsyncResult v0, v3
+    Return v4
+}

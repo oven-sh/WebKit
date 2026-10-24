@@ -1,0 +1,59 @@
+# An allocation that lists no key has the order word of an object without keys, so a store of the constructor that creates a field of an enumerated layout records the key
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place key-orders program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Enumerated" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+variable g0 name="keys" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Construct v5, -, v2
+    v7 = Builtin builtin=ObjectKeys
+    v8 = Call v7, -, v6
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L1
+    v12 = FinishClass v11 layout=L1
+    v13 = Construct v12, -, v2
+    Return
+}
+function f1 name="Enumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4, v1 function=f2
+    PropSet v4, v1 key="b"
+    Return v4
+}
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropDefine v0, v1 key="a"
+    Return
+}
+function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PropSet v4, v1 key="a"
+    Return v4
+}
+
+# CHECK: L0 orders=1: [0 1]
+# CHECK: allocation {{*}} L0 fields=[] order=0 count=0
+# CHECK-LABEL: function f1 name="Enumerated"
+# CHECK: PutSlotOrAdd v4, -, v1 key="b"
+# CHECK-LABEL: function f2 name="initialize"
+# CHECK: PutSlotOrAdd [[this]], -, v1 key="a"
+# CHECK-LABEL: function f3 name="NeverEnumerated"
+# CHECK: PutSlot v4, -, v1 key="a"

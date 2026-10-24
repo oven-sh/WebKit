@@ -1,0 +1,22 @@
+# In compact code a part is one call. A string goes to the call that takes the string itself: it fills no list of values and is not asked what it is. Any other value goes to the call that takes any value
+# FORM: Prepared
+# RUN: pass Select
+# RUN(SHAPES): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="describe" parameters=[{type=string}, {type=number}, {type=null|string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: number, v2: null|string, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = StringBuilderBegin
+    StringBuilderAppend v4, v0, v1, v2
+    v6 = StringBuilderFinish v4
+    Return v6
+  b2():
+    Return v0
+}
+# SHAPES: f0 b1 Compact
+# CHECK-LABEL: function f0 name="describe"
+# CHECK: StringBuilderAppendString v4, v0
+# CHECK-NEXT: StringBuilderAppendValue v4, v1
+# CHECK-NEXT: StringBuilderAppendValue v4, v2

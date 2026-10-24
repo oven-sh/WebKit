@@ -1,0 +1,65 @@
+# map = new Map; map.set(key, value); for (const [k, v] of map) { k(); v() }  for (const [k, v] of Object.entries({ name: member })) { k(); v() }
+# A step over a map allocates a pair, and so does Object.entries. While nobody has touched the pair, the first step of a pattern over it reads the key and the second the value, and neither finds the end.
+# RUN: valueflow-solve calls
+# CHECK: f0 v15 -> f1
+# CHECK: f0 v16 -> f2
+# CHECK: f0 v31 -> f3
+# RUN(KEY): valueflow-solve calls
+# KEY-NOT: f0 v30 -> f3
+# RUN(KINDS): valueflow-why values=f0:v15 values=f0:v16
+# KINDS: Call
+# KINDS: operand 0 {{*}} 1 members: f1
+# KINDS: Call
+# KINDS: operand 0 {{*}} 1 members: f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="set"
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v2, v1, v3, v4 calleeKey="set"
+    v6 = IteratorOpen v1
+    v7 = IteratorResume v6
+    v8 = ResultAt v7 index=1
+    v9 = IteratorOpen v8 elementCount=2 [isDestructuring]
+    v10 = IteratorResume v9 stepIndex=0
+    v11 = ResultAt v10 index=1
+    v12 = IteratorResume v9 stepIndex=1
+    v13 = ResultAt v12 index=1
+    v14 = Undefined
+    v15 = Call v11
+    v16 = Call v13
+    v17 = NewClosure function=f3
+    v18 = NewObject -, v17 layout=L0 fields=[0]
+    v19 = Builtin builtin=Object
+    v20 = Builtin builtin=ObjectEntries
+    v21 = Call v20, v19, v18
+    v22 = IteratorOpen v21
+    v23 = IteratorResume v22
+    v24 = ResultAt v23 index=1
+    v25 = IteratorOpen v24 elementCount=2 [isDestructuring]
+    v26 = IteratorResume v25 stepIndex=0
+    v27 = ResultAt v26 index=1
+    v28 = IteratorResume v25 stepIndex=1
+    v29 = ResultAt v28 index=1
+    v30 = Call v27
+    v31 = Call v29
+    Return
+}
+function f1 name="key" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="value" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="member" results=[{type=anything}] {
+  b0():
+    Return
+}

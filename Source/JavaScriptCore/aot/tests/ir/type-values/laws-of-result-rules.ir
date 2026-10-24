@@ -1,0 +1,57 @@
+# Two laws of the result rules, asked of every operation with each operand typed in turn as each part of its type, and as any value where it may be one.
+# A narrower operand gives no wider result: a pass narrows operands behind a test, on its failed side and in a copy, and what was resolved by the result must go on to hold.
+# And the rule by type ids, which the propagation of types asks, answers what the rule answers that the verifier and the passes ask.
+# The three functions are what once broke a law: a read by name of undefined alone was any value; a call with a resolved target was any value by type ids; a group call through no closure was any value
+# FORM: Prepared
+# RUN: laws-of-result-rules f1 f2 f3 f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Explanation" fields=[{key="lines" declared={type=Array<string>} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="isWanted" kind=Arrow parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f1 name="read-by-name" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="lines"
+    Return v1
+}
+function f2 name="call-of-one-known-function" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="operators" parameters=[{type=anything}, {type=number}, {type=undefined|null|string}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: undefined|null|string):
+    v3 = Add v0, v1
+    v4 = Sub v0, v1
+    v5 = Add v2, v1
+    v6 = ToBoolean v0
+    v7 = TypeOf v0
+    v8 = StrictEq v0, v2
+    v9 = Less v0, v1
+    v10 = ToNumber v0
+    v11 = ToString v2
+    v12 = Negate v0
+    v13 = BitOr v0, v1
+    v14 = TypeTest v0 testedType=number
+    v15 = RequireObjectCoercible v2 name="x"
+    v16 = Upcast v1 castType=anything
+    v17 = AssumeType v0 castType=undefined|number
+    Return v3
+}
+function f4 name="reads" parameters=[{type=anything}, {type=anything}, {type=Array<number>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<number>):
+    v3 = ElemGet v0, v1
+    v4 = ElemGet v2, v1
+    v5 = PropGet v2 key="length"
+    v6 = PropGet v0 key="lines"
+    v7 = InstanceOf v0, v1
+    Return v3
+}
+# CHECK: function f1: every rule keeps both laws
+# CHECK-NEXT: function f2: every rule keeps both laws
+# CHECK-NEXT: function f3: every rule keeps both laws
+# CHECK-NEXT: function f4: every rule keeps both laws

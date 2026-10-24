@@ -1,0 +1,221 @@
+# A call without surplus arguments hands the one empty list of the instance to a function that takes the list of them, if that function and those it hands the list to only read it
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,ChooseCallingConventions,AllocateInFrames
+# STATISTIC: EmptyArgumentListsShared = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    v5 = CallDirect v1 function=f3
+    v6 = CallDirect v1 function=f4
+    v7 = CallDirect v1 function=f5
+    v8 = CallDirect v1 function=f6
+    v9 = CallDirect v1 function=f7
+    v10 = CallDirect v1 function=f8
+    v11 = CallDirect v1 function=f9
+    v12 = CallDirect v1 function=f10
+    v13 = CallDirect v1, v2 function=f11
+    v14 = CallDirect v1 function=f12
+    Return
+}
+
+function f1 name="calleeMakesArgumentsObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f13
+    Return v3
+}
+# CHECK-LABEL: function f1 name="calleeMakesArgumentsObject"
+# CHECK-NOT: NewArray
+# CHECK: [[list1]]:{{*}}= EmptyArgumentList valueType=Array
+# CHECK: CallDirect v1, v0, [[list1]] function=f13
+
+function f2 name="surplusArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = NewArray v0 contents=anything
+    v3 = CallDirect v1, v0, v2 function=f13
+    Return v3
+}
+# CHECK-LABEL: function f2 name="surplusArgument"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray v0
+
+function f3 name="calleeAppends" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f14
+    Return v3
+}
+# CHECK-LABEL: function f3 name="calleeAppends"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f4 name="calleeKeeps" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f15
+    Return v3
+}
+# CHECK-LABEL: function f4 name="calleeKeeps"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f5 name="calleeReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f16
+    Return v3
+}
+# CHECK-LABEL: function f5 name="calleeReturns"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f6 name="calleeHandsOnToReader" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f17
+    Return v3
+}
+# CHECK-LABEL: function f6 name="calleeHandsOnToReader"
+# CHECK-NOT: NewArray
+# CHECK: EmptyArgumentList
+
+function f7 name="calleeHandsOnToWriter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f18
+    Return v3
+}
+# CHECK-LABEL: function f7 name="calleeHandsOnToWriter"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+# The program names this array, and may compare it with another.
+function f8 name="ordinaryParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallDirect v1 function=f19
+    Return v2
+}
+# CHECK-LABEL: function f8 name="ordinaryParameter"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f9 name="restParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallDirect v1 function=f20
+    Return v2
+}
+# CHECK-LABEL: function f9 name="restParameter"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f10 name="alsoUsedByCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f13
+    v4 = StrictEq v2, v0
+    Return v4
+}
+# CHECK-LABEL: function f10 name="alsoUsedByCaller"
+# CHECK-NOT: EmptyArgumentList
+# CHECK: NewArray
+
+function f11 name="meetsAnotherList" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    v3 = NewArray contents=anything
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = Integer integer=2
+    v5 = NewArray v0 contents=anything
+    Jump -> next b3(v4, v5)
+  b3(v6: int[1, 2], v7: Array):
+    v8 = CallDirect v6, v0, v7 function=f13
+    Return v8
+}
+# CHECK-LABEL: function f11 name="meetsAnotherList"
+# CHECK: b1():
+# CHECK: EmptyArgumentList
+# CHECK: b2():
+# CHECK: NewArray v0
+
+function f12 name="calleeCallsWithTheList" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewArray contents=anything
+    v3 = CallDirect v1, v0, v2 function=f21
+    Return v3
+}
+# CHECK-LABEL: function f12 name="calleeCallsWithTheList"
+# CHECK-NOT: NewArray
+# CHECK: EmptyArgumentList
+
+function f13 name="makesArgumentsObject" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v3
+    Return v4
+}
+function f14 name="appends" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    AppendElement v2, v1
+    v4 = CreateUnmappedArguments v0, v2, v1
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f15 name="keeps" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+function f16 name="returns" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    Return v2
+}
+function f17 name="handsOnToReader" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CallDirect v0, v1, v2 function=f13
+    Return v3
+}
+function f18 name="handsOnToWriter" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CallDirect v0, v1, v2 function=f14
+    Return v3
+}
+function f19 name="readsParameter" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f20 name="readsRest" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+function f21 name="callsWithTheList" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CallList v1, -, v2
+    Return v3
+}

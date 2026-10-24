@@ -1,0 +1,483 @@
+# A number counter with integer entries, constant steps and an integer bound becomes an integer
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# STATISTIC: CountersConverted = 16
+# LOSS: MaxCounterStep x1 f10 v2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countsUpBelowBound" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="countsUpBelowBound"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[up0]]: int[0, 2147483646]):
+# CHECK: v6: int[1, 2147483647] = Add [[up0]], v5
+
+function f1 name="countsUpInclusive" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = LessEq v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="countsUpInclusive"
+# CHECK: b1(v2: int[0, 101]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[up1]]: int[0, 100]):
+# CHECK: v6: int[1, 101] = Add [[up1]], v5
+
+function f2 name="countsDown" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = Greater v2, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Sub v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2 name="countsDown"
+# CHECK: b1(v2: int[0, 100]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[down2]]: int[1, 100]):
+# CHECK: v6: int[0, 99] = Sub [[down2]], v5
+
+function f3 name="countsDownInclusive" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Sub v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3 name="countsDownInclusive"
+# CHECK: b1(v2: int[-1, 100]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[down3]]: int[0, 100]):
+# CHECK: v6: int[-1, 99] = Sub [[down3]], v5
+
+function f4 name="boundOnLeft" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Greater v0, v2
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4 name="boundOnLeft"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: Branch v4 -> taken b2(| 1), notTaken b3()
+# CHECK-NEXT: b2([[left4]]: int[0, 2147483646]):
+# CHECK: Add [[left4]], v5
+
+function f5 name="stepThroughToNumeric" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = ToNumeric v2
+    v7 = Add v6, v5
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f5 name="stepThroughToNumeric"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: b2([[numeric5]]: int[0, 2147483646]):
+# CHECK: v6: int[0, 2147483646] = ToNumeric [[numeric5]]
+# CHECK-NEXT: v7: int[1, 2147483647] = Add v6, v5
+
+function f6 name="testOnToNumeric" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = ToNumeric v2
+    v5 = Less v4, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Integer integer=1
+    v7 = Add v2, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f6 name="testOnToNumeric"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: v4: int[0, 2147483647] = ToNumeric v2
+# CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[tested6]]: int[0, 2147483646]):
+# CHECK: Add [[tested6]], v6
+
+function f7 name="staysOnNotTakenEdge" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+}
+# CHECK-LABEL: function f7 name="staysOnNotTakenEdge"
+# CHECK: b1(v2: int|whole):
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+
+function f8 name="stepAtLimit" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1024
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f8 name="stepAtLimit"
+# CHECK: b1(v2: int[0, 2147484670]):
+# CHECK: b2([[up8]]: int[0, 2147483646]):
+# CHECK: v6: int[1024, 2147484670] = Add [[up8]], v5
+
+function f9 name="fractionalStart" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Double number=0.5
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f9 name="fractionalStart"
+# CHECK: b1(v2: number):
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+
+function f10 name="stepAboveLimit" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1025
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f10 name="stepAboveLimit"
+# CHECK: b1(v2: int|whole):
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+
+function f11 name="numberBound" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f11 name="numberBound"
+# CHECK: b1(v2: int|whole):
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+
+function f12 name="boundIsAnyInteger" parameters=[{type=int}] results=[{type=undefined}] {
+  b0(v0: int):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = LessEq v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1024
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f12 name="boundIsAnyInteger"
+# CHECK: b1(v2: int|whole):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[up12]]: int|whole):
+
+function f13 name="stepOnUnboundedEdge" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+}
+# CHECK-LABEL: function f13 name="stepOnUnboundedEdge"
+# CHECK: b1(v2: int|whole):
+# CHECK: Branch v4 -> taken b2(), notTaken b3()
+
+function f14 name="undominatedStep" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: i32, v1: boolean):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v6 = Integer integer=1
+    v7 = Add v3, v6
+    Branch v1 -> taken b1(v7), notTaken b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f14 name="undominatedStep"
+# CHECK: b1(v3: int|whole):
+# CHECK: Branch v5 -> taken b2(), notTaken b3()
+
+function f15 name="productOnBackEdge" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=2
+    v6 = Mul v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f15 name="productOnBackEdge"
+# CHECK: b1(v2: int[1, 4294967292]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[compared15]]: int[1, 2147483646]):
+
+function f16 name="outerCounterAsBound" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v1)
+  b3(v6):
+    LoopHint
+    v8 = Less v6, v3
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = Add v6, v2
+    Jump -> next b3(v9)
+  b5():
+    v10 = Add v3, v2
+    Jump -> next b1(v10)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f16 name="outerCounterAsBound"
+# CHECK: b1(v3: int[0, 100]):
+# CHECK: b2([[outer16]]: int[0, 99]):
+# CHECK: b3(v6: int[0, 99]):
+# CHECK: v8: boolean = Less v6, [[outer16]]
+# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4([[inner16]]: int[0, 98]):
+# CHECK-NEXT: Add [[inner16]], v2
+# CHECK: Add [[outer16]], v2
+
+function f17 name="outerCounterAsStart" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v3)
+  b3(v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = Add v6, v2
+    Jump -> next b3(v9)
+  b5():
+    v10 = Add v3, v2
+    Jump -> next b1(v10)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f17 name="outerCounterAsStart"
+# CHECK: b1(v3: int[0, 100]):
+# CHECK: b2([[outer17]]: int[0, 99]):
+# CHECK-NEXT: Jump -> next b3([[outer17]])
+# CHECK-NEXT: b3(v6: int[0, 100]):
+# CHECK: Branch v8 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4([[inner17]]: int[0, 99]):
+# CHECK-NEXT: Add [[inner17]], v2
+
+function f18 name="stepsWithIncrement" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f18 name="stepsWithIncrement"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: b2([[incremented18]]: int[0, 2147483646]):
+# CHECK-NEXT: v5: int[1, 2147483647] = Increment [[incremented18]]
+
+function f19 name="stepsWithDecrement" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = Greater v2, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Decrement v2
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f19 name="stepsWithDecrement"
+# CHECK: b1(v2: int[0, 100]):
+# CHECK: b2([[decremented19]]: int[1, 100]):
+# CHECK-NEXT: v5: int[0, 99] = Decrement [[decremented19]]
+
+function f20 name="stayingEdgeIsNeverTaken" parameters=[{type=int[0, 5]}] results=[{type=undefined}] {
+  b0(v0: int[0, 5]):
+    v1 = Integer integer=10
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f20 name="stayingEdgeIsNeverTaken"
+# CHECK: b1(v2: 10):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2({{*}}: never):
+# CHECK-NEXT: Unreachable
+
+function f21 name="testThroughUpcast" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Upcast v2 castType=undefined|number
+    v5 = ToNumeric v4
+    v6 = Less v5, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Integer integer=1
+    v8 = Add v2, v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f21 name="testThroughUpcast"
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[tested21]]: int[0, 2147483646]):
+# CHECK: Add [[tested21]], v7

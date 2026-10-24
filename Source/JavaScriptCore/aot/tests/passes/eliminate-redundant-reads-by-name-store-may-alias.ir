@@ -1,0 +1,87 @@
+# A store by name through a receiver that may be the object read from changes the field, so the read stays
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L1 name="Size" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+variable g0 name="shared" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="receiverHasTheSameLayout" parameters=[{type=L0}, {type=L0}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f0 name="receiverHasTheSameLayout"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = GetSlot v0 key="x"
+
+function f1 name="receiverMayHaveTheLayout" parameters=[{type=L0}, {type=L0|L1}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0|L1, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict receivers=[L0, L1]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f1 name="receiverMayHaveTheLayout"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = GetSlot v0 key="x"
+
+function f2 name="receiverIsTheObject" parameters=[{type=L0}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: anything):
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v0, v1 key="x" mode=Strict receivers=[L0]
+    v4 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="receiverIsTheObject"
+# CHECK: PropSet v0, v1 key="x"
+# CHECK-NEXT: v4: anything = GetSlot v0 key="x"
+
+function f3 name="receiverIsUnknown" parameters=[{type=L0}, {type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f3 name="receiverIsUnknown"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = GetSlot v0 key="x"
+
+function f4 name="receiverIsUnknownAndVariableHoldsTheObject" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    PutModuleVariable v3 variable=g0
+    PropSet v0, v2 key="x" mode=Strict
+    v6 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v6
+}
+# CHECK-LABEL: function f4 name="receiverIsUnknownAndVariableHoldsTheObject"
+# CHECK: PropSet v0, v2 key="x"
+# CHECK-NEXT: v6: anything = GetSlot v3 key="x"
+
+function f5 name="receiverIsTheAllocationOnOnePath" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything, v2: boolean):
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    PropSet v4, v2 key="x" mode=Strict receivers=[L0]
+    v6 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v6
+}
+# CHECK-LABEL: function f5 name="receiverIsTheAllocationOnOnePath"
+# CHECK: PropSet v4, v2 key="x"
+# CHECK-NEXT: v6: anything = GetSlot v3 key="x"

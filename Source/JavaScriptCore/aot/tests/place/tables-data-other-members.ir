@@ -1,0 +1,30 @@
+# The members of an object that are no fields lie in a node of their own before the object: a header, their values in the order of their creation, their identifier numbers, two to a word. The object's last word names it
+# RUN: tables data requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal" supertypes=[L2]
+layout L1 name="NamedLiteral" fields=[{key="name" declared={type=string} flags=[IsRequired]}] supertypes=[L3]
+layout L2 name="DeclaredDictionaryType"
+layout L3 name="DeclaredTypeWithIndexSignature" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Data data=d1
+    v5 = Call v2, -, v4
+    Return
+}
+data d0 root=Object{layout=L0 members=[{key="content-type" value=String{value="text"}}, {key="404" value=Number{value=4}}, {key="nested" value=Object{layout=L0 members=[{key="deep" value=Boolean{value=true}}]}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="name" value=String{value="plum"}}, {key="other" value=Null}]} module=m0
+
+# CHECK: otherMembers 1 keys=["deep"] values=[true]
+# CHECK-NEXT: object 4 allocation=[[dictionary]] fields=[] values=[] otherMembers=@1
+# CHECK-NEXT: otherMembers 6 keys=["content-type" "404" "nested"] values=["text" 4 @4]
+# CHECK-NEXT: object 12 allocation=[[dictionary]] fields=[] values=[] otherMembers=@6
+# CHECK-NEXT: otherMembers 14 keys=["other"] values=[null]
+# CHECK-NEXT: object 17 allocation=[[named]] fields=[0] values=["plum"] otherMembers=@14
+# CHECK-NEXT: request 4 Data root=12 sharedStorage=-
+# CHECK-NEXT: request 12 Data root=17 sharedStorage=-

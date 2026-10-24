@@ -1,0 +1,32 @@
+# On x86-64 a frame is addressed off the stack pointer, with no frame record, where that costs no bytes of code: nothing is pushed, moved or popped for the frame pointer register.
+# An address off the stack pointer is a byte longer than one off the frame pointer, so a cold function that goes to its slots keeps the record.
+# A walk finds a frame without a record by the return address and the size of the frame: the summary of the code says which kind the frame is of
+# FORM: Selected
+# OPTIONS: heat=everything-is-cold
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keepsNothing" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Boolean boolean=true
+    Return v2
+}
+function f1 name="keepsTwoValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0
+    v3 = Call v0
+    Return v1
+}
+function f2 name="callsNothing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f0: size={{*}}
+# X64: f0: size={{*}} frame=0@{{*}} noFrameRecord
+# X64: f1: size={{*}} frame=16@
+# X64-NOT: f1: size={{*}} noFrameRecord
+# X64: f2: size={{*}} frame=none
+# X64-NOT: f2: size={{*}} noFrameRecord

@@ -1,0 +1,117 @@
+# The machine call site of a demoted tail call is recorded as a tail call's, whichever row makes the call
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code
+# CHECK: f0: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f1: size={{*}} tailCallSites=1
+# CHECK-NEXT: f2: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f3: size={{*}} tailCallSites=1
+# CHECK-NEXT: f4: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f5: size={{*}} tailCallSites=1
+# CHECK-NEXT: f6: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f7: size={{*}} tailCallSites=1
+# CHECK-NEXT: f8: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f9: size={{*}} tailCallSites=1
+# CHECK-NEXT: f10: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f11: size={{*}} tailCallSites=1
+# CHECK-NEXT: f12: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f13: size={{*}} tailCallSites=1
+# CHECK-NEXT: f14: size=
+# CHECK-NOT: tailCallSites
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="target" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Add v1, v1 form=Generic
+    Return v2
+}
+function f1 name="markedCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 [isDemotedTailCall]
+    Return v2
+}
+function f2 name="call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f3 name="markedCallList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = CallList v0, -, v1 [isDemotedTailCall]
+    Return v2
+}
+function f4 name="callList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = CallList v0, -, v1
+    Return v2
+}
+function f5 name="markedCallDirect" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0 [isDemotedTailCall]
+    Return v1
+}
+function f6 name="callDirect" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+function f7 name="markedCallMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallMethod v0, v1 key="m" [isDemotedTailCall]
+    Return v2
+}
+function f8 name="callMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallMethod v0, v1 key="m"
+    Return v2
+}
+function f9 name="markedCallResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ResolveCallTarget v0 argumentCount=1
+    v3 = CallResolved v0, v2, -, v1 [isDemotedTailCall]
+    Return v3
+}
+function f10 name="callResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ResolveCallTarget v0 argumentCount=1
+    v3 = CallResolved v0, v2, -, v1
+    Return v3
+}
+function f11 name="markedCallForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    v2 = CallForwardVarargs v1, v1 firstArgument=1 [isDemotedTailCall]
+    Return v2
+}
+function f12 name="callForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    v2 = CallForwardVarargs v1, v1 firstArgument=1
+    Return v2
+}
+function f13 name="markedCallMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = CallMethod v0, v1 key="m" [isDemotedTailCall]
+    Return v3
+  b2():
+    Return v1
+}
+function f14 name="callMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = CallMethod v0, v1 key="m"
+    Return v3
+  b2():
+    Return v1
+}

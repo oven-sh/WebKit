@@ -1,0 +1,27 @@
+# intl = await Promise.resolve(Intl); new intl.Collator(); intl.getCanonicalLocales()
+# No object of the table is a promise, so Promise.resolve() makes a promise that holds the namespace, and whoever awaits it has the namespace itself: its members are followed, a class among them too
+# RUN: valueflow-solve calls
+# CHECK: f1 v3 -> IntlCollator
+# CHECK-NEXT: f1 v5 -> IntlGetCanonicalLocales
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Intl
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v1, v0
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    Return
+}
+function f1 name="awaits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    v2 = PropGet v1 key="Collator"
+    v3 = Construct v2, -
+    v4 = PropGet v1 key="getCanonicalLocales"
+    v5 = Call v4, v1
+    Return v3
+}

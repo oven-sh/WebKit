@@ -1,0 +1,37 @@
+# Live sets in nested loops: values used only after the inner loop stay live around both back edges
+# FORM: Prepared
+# RUN: analyses liveness
+# RUN(TRACKED): analyses liveness tracked-values=v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nested" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean, v2: boolean):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    Jump -> next b2(v4)
+  b2(v6):
+    LoopHint
+    v8 = Add v6, v0
+    Branch v1 -> taken b2(v8), notTaken b3()
+  b3():
+    Branch v2 -> taken b1(v8), notTaken b4()
+  b4():
+    v9 = Add v8, v4
+    Return v9
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0 v1 v2]
+# CHECK-NEXT: b2 live at head: [v0 v1 v2 v4]
+# CHECK-NEXT: b3 live at head: [v0 v1 v2 v4 v8]
+# CHECK-NEXT: b4 live at head: [v4 v8]
+# TRACKED: function f0
+# TRACKED-NEXT: liveness:
+# TRACKED-NEXT: b0 live at head: []
+# TRACKED-NEXT: b1 live at head: []
+# TRACKED-NEXT: b2 live at head: [v4]
+# TRACKED-NEXT: b3 live at head: [v4]
+# TRACKED-NEXT: b4 live at head: [v4]

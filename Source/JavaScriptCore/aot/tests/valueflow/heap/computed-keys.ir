@@ -1,0 +1,63 @@
+# table = {}; table["first"] = one; table.second = two; table[name()] = three; table["first"]();  other = {}; other.first = four; other["first"]();  bag = { a: one, b: two }; bag[name()]()
+# A key that is a constant names its property. A store under a key nobody knows may lie under every name, and a read under such a key finds whatever the object holds or inherits.
+# RUN: valueflow-solve calls
+# CHECK: f0 v13 -> f1 f3
+# CHECK: f0 v18 -> f4
+# CHECK: f0 v24 -> Object {{*}} f1 f2
+# CHECK-NOT: f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table"
+layout L1 name="Other"
+layout L2 name="Bag" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = String string="first"
+    ElemSet v0, v4, v1 mode=Strict
+    PropSet v0, v2 key="second" mode=Strict
+    v7 = NewClosure function=f5
+    v8 = Call v7
+    v9 = ToPropertyKey v8
+    ElemSet v0, v9, v3 mode=Strict
+    v11 = String string="first"
+    v12 = ElemGet v0, v11
+    v13 = Call v12, v0
+    v14 = NewObject layout=L1 fields=[]
+    v15 = NewClosure function=f4
+    PropSet v14, v15 key="first" mode=Strict
+    v17 = ElemGet v14, v11
+    v18 = Call v17, v14
+    v19 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    v20 = Call v7
+    v21 = Integer integer=0
+    v22 = Integer integer=0
+    v23 = ElemGet v19, v20
+    v24 = Call v23, v19
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="name" results=[{type=string}] {
+  b0():
+    v0 = String string="some text that names no property of the program"
+    Return v0
+}

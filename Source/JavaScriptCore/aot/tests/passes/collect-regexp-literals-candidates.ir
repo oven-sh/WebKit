@@ -1,0 +1,169 @@
+# The texts that can reach a call of RegExp are candidates: every valid pair of a pattern and flags once, numbered behind the literals. A text of plain characters is none: it needs no code
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# DIAGNOSTIC: RegExpWithoutCode 3
+# STATISTIC: CollectRegExpLiteralsChanges = 27
+# CHECK: regexp requests: 27
+# CHECK-NEXT: 0 literal "lit+" flags=- sites=f11:v1, f11:v3
+# CHECK-NEXT: 1 candidate "x+" flags=i sites=f1:v3
+# CHECK-NEXT: 2 candidate "x+" flags=m sites=f1:v3
+# CHECK-NEXT: 3 candidate "x+" flags=s sites=f1:v3
+# CHECK-NEXT: 4 candidate "x+" flags=u sites=f1:v3
+# CHECK-NEXT: 5 candidate "y+" flags=i sites=f1:v3
+# CHECK-NEXT: 6 candidate "y+" flags=m sites=f1:v3
+# CHECK-NEXT: 7 candidate "y+" flags=s sites=f1:v3
+# CHECK-NEXT: 8 candidate "y+" flags=u sites=f1:v3
+# CHECK-NEXT: 9 candidate "p1+" flags=i sites=f2:v3
+# CHECK-NEXT: 10 candidate "p1+" flags=m sites=f2:v3
+# CHECK-NEXT: 11 candidate "p1+" flags=s sites=f2:v3
+# CHECK-NEXT: 12 candidate "p2+" flags=i sites=f2:v3
+# CHECK-NEXT: 13 candidate "p2+" flags=m sites=f2:v3
+# CHECK-NEXT: 14 candidate "p2+" flags=s sites=f2:v3
+# CHECK-NEXT: 15 candidate "p3+" flags=i sites=f2:v3
+# CHECK-NEXT: 16 candidate "p3+" flags=m sites=f2:v3
+# CHECK-NEXT: 17 candidate "p3+" flags=s sites=f2:v3
+# CHECK-NEXT: 18 candidate "z+" flags=- sites=f3:v3
+# CHECK-NEXT: 19 candidate "z+" flags=m sites=f3:v3
+# CHECK-NEXT: 20 candidate "ok+" flags=- sites=f4:v2
+# CHECK-NEXT: 21 candidate "r+" flags=i sites=f6:v3
+# CHECK-NEXT: 22 candidate "r+" flags=m sites=f6:v3
+# CHECK-NEXT: 23 candidate "w+" flags=- sites=f7:v2
+# CHECK-NEXT: 24 candidate "k+" flags=- sites=f9:v3
+# CHECK-NEXT: 25 candidate "a+" flags=- sites=f10:v2
+# CHECK-NEXT: 26 candidate "b+" flags=- sites=f10:v2
+# CHECK-NEXT: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="x+"
+    v1 = String string="y+"
+    v2 = String string="i"
+    v3 = String string="m"
+    v4 = String string="s"
+    v5 = String string="u"
+    v6 = CallDirect v0, v2 function=f1
+    v7 = CallDirect v1, v3 function=f1
+    v8 = CallDirect v0, v4 function=f1
+    v9 = CallDirect v1, v5 function=f1
+    v10 = String string="p1+"
+    v11 = String string="p2+"
+    v12 = String string="p3+"
+    v13 = CallDirect v10, v2 function=f2
+    v14 = CallDirect v11, v3 function=f2
+    v15 = CallDirect v12, v4 function=f2
+    v16 = String string="z+"
+    v17 = Undefined
+    v18 = CallDirect v16, v3 function=f3
+    v19 = CallDirect v16, v17 function=f3
+    v20 = String string="("
+    v21 = String string="ok+"
+    v22 = CallDirect v20 function=f4
+    v23 = CallDirect v21 function=f4
+    v24 = String string="q+"
+    v25 = String string="gg"
+    v26 = CallDirect v24, v25 function=f5
+    v27 = String string="r+"
+    v28 = CallDirect v27, v2 function=f6
+    v29 = CallDirect v27, v25 function=f6
+    v30 = CallDirect v27, v3 function=f6
+    v31 = String string="w+"
+    v32 = CallDirect v31 function=f7
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="input" [isFreeName]
+    v35 = ToString v34
+    v36 = CallDirect v35 function=f8
+    v37 = String string="k+"
+    v38 = CallDirect v37, v35 function=f9
+    v39 = String string="a+"
+    v40 = String string="b+"
+    v41 = CallDirect v39 function=f10
+    v42 = CallDirect v40 function=f10
+    v43 = CallDirect v35 function=f10
+    v44 = String string="lit+"
+    v45 = CallDirect v44 function=f11
+    v46 = String string="plain"
+    v47 = CallDirect v46 function=f7
+    Return
+}
+
+function f1 name="twoByFour" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f2 name="threeByThree" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f3 name="flagsMayBeAbsent" parameters=[{type=string}, {type=undefined|string}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f4 name="oneInvalidPattern" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f5 name="invalidFlags" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f6 name="oneInvalidFlagsText" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f7 name="calledWithoutNew" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Call v1, -, v0
+    Return v2
+}
+
+function f8 name="unknownPattern" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f9 name="unknownFlags" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+}
+
+function f10 name="knownAndUnknownPatterns" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f11 name="equalsLiteral" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="lit+"
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0
+    Return v3
+}

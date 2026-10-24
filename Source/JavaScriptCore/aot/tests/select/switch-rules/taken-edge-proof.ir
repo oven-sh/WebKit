@@ -1,0 +1,94 @@
+# A case whose edge passed the narrowed subject goes through a block of its own that receives it from the switch
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchStringGroups = 1
+# STATISTIC: SwitchNumberGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="second-case-passes-proof" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(v1 | 0), notTaken b4()
+  b3(v5, v6):
+    v7 = Add v5, v6
+    Return v7
+  b4():
+    v8 = String string="c"
+    v9 = StrictEq v0, v8
+    Branch v9 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="second-case-passes-proof"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: [[first]]: "a" = String string="a"
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case [[stub]](| 0), case [[third]](), otherwise [[rest]]()
+# CHECK: [[stub]]([[narrowed]]: "b"):
+# CHECK-NEXT: Jump -> next [[target]]([[first]], [[narrowed]])
+# CHECK-NEXT: [[target]]([[left]]: "a", [[right]]: "b"):
+# CHECK-NEXT: = Add [[left]], [[right]]
+
+function f1 name="zero-passes-proof" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    v4 = Integer integer=1
+    v5 = StrictEq v0, v4
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4():
+    v7 = Integer integer=2
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="zero-passes-proof"
+# CHECK: Switch v0 cases=[0, 1, 2] -> case [[zeroStub]](| 0), case [[oneStub]](| 0), case [[two]](), otherwise [[other]]()
+# CHECK: [[zeroStub]]([[zero]]: 0|whole):
+# CHECK-NEXT: Jump -> next [[zeroTarget]]([[zero]])
+# CHECK-NEXT: [[zeroTarget]]([[zeroResult]]: 0|whole):
+# CHECK: [[oneStub]]([[one]]: 1):
+# CHECK-NEXT: Jump -> next [[oneTarget]]([[one]])
+# CHECK-NEXT: [[oneTarget]]([[oneResult]]: 1):
+
+function f2 name="proof-about-constant" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(| 1), notTaken b4()
+  b3(v5):
+    Return v5
+  b4():
+    v6 = String string="c"
+    v7 = StrictEq v0, v6
+    Branch v7 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="proof-about-constant"
+# CHECK-NOT: Switch

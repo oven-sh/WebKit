@@ -1,0 +1,33 @@
+# With store counts switched off no variable and no field has known writers or a number of stores, and each variable names the switch as the cause. What the switch for mutations gates stays: what never happens to the objects of the layout,
+# and that the field is never deleted and never redefined
+# OPTIONS: disable=flow:StoreCounts
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: field L0.0 "x" {{*}}stability=[IsNeverDeleted, IsNeverRedefined
+# CHECK: variable g0 {{*}}cause=ResultDisabled
+# CHECK-NEXT: variable g1 {{*}}cause=ResultDisabled
+# CHECK-NEXT: variable g2 {{*}}cause=ResultDisabled
+# RUN(NOWHERE): flow
+# NOWHERE-NOT: writers=
+# NOWHERE-NOT: stores=
+# NOWHERE-NOT: storeNaming=
+# NOWHERE-NOT: isUnchangedDuringActivation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="once" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="twice" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="never" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g1
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g2
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = PropGet v6 key="x"
+    Return
+}

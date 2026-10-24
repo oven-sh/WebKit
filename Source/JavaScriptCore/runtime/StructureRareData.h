@@ -34,6 +34,7 @@
 
 namespace JSC {
 
+class ImmutablePropertyNames;
 class JSPropertyNameEnumerator;
 class LLIntOffsetsExtractor;
 class Structure;
@@ -87,6 +88,7 @@ public:
 
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey) const;
     void cacheSpecialProperty(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
+    void clearCachedSpecialProperty(CachedSpecialPropertyKey);
 
     TriState cachedHasDefaultToPrimitiveFastAndNonObservable() const { return static_cast<TriState>(m_cachedHasDefaultToPrimitiveFastAndNonObservable); }
     void setCachedHasDefaultToPrimitiveFastAndNonObservable(TriState mode) { m_cachedHasDefaultToPrimitiveFastAndNonObservable = static_cast<unsigned>(mode); }
@@ -105,6 +107,9 @@ public:
     const Box<InlineWatchpointSet>& sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
     void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint) { m_polyProtoWatchpoint = WTF::move(sharedPolyProtoWatchpoint); }
     bool hasSharedPolyProtoWatchpoint() const { return static_cast<bool>(m_polyProtoWatchpoint); }
+
+    inline ImmutablePropertyNames* immutablePropertyNames() const; // Defined in StructureRareDataInlines.h
+    void setImmutablePropertyNames(ImmutablePropertyNames&);
 
     static JSCellButterfly* cachedPropertyNamesSentinel() { return std::bit_cast<JSCellButterfly*>(static_cast<uintptr_t>(1)); }
 
@@ -153,7 +158,6 @@ private:
 
     StructureRareData(VM&, Structure*);
 
-    void clearCachedSpecialProperty(CachedSpecialPropertyKey);
     void cacheSpecialPropertySlow(JSGlobalObject*, VM&, Structure* baseStructure, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
 
     SpecialPropertyCache& ensureSpecialPropertyCache();

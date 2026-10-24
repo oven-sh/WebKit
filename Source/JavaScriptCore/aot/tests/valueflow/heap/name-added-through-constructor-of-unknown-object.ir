@@ -1,0 +1,37 @@
+# unknown = somethingNoTableLists; unknown.constructor.extra = one; Array.extra(); Math.extra()
+# The unknown object stands for what has escaped, and nothing has handed `Array` or `Math` to anybody: as long as no code runs that the build has not seen,
+# what the program stores through the unknown object is not found on one of them.
+# The function that was stored has escaped with the store. name-added-through-constructor-of-unknown-object-once-unseen-code-runs.ir has the same program with such code
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 ->
+# CHECK-NEXT: f0 v10 ->
+# RUN(NOTHING): valueflow-solve calls
+# NOTHING-NOT: f0 v7 -> {{*}}
+# NOTHING-NOT: f0 v10 -> {{*}}
+# RUN(ESCAPED): valueflow-why escaped=f1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: n0 escaped
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = PropGet v1 key="constructor"
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="extra" mode=Strict
+    v5 = Builtin builtin=Array
+    v6 = PropGet v5 key="extra"
+    v7 = Call v6, v5
+    v8 = Builtin builtin=Math
+    v9 = PropGet v8 key="extra"
+    v10 = Call v9, v8
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

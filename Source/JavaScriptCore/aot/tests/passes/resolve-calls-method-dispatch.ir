@@ -1,0 +1,239 @@
+# A member call on a proven union of layouts is a chain of type tests with one direct call per arm, and the members nothing is known about share one rest
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 10
+# STATISTIC: DispatchArms = 18
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=5 kind=Assertion text="Function"
+layout L0 kind=Instance name="Add" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Subtract" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Multiply" constructor=f4 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
+layout L3 kind=Instance name="Plugin" constructor=f6 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="AddChecked" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Custom" constructor=f8 fields=[{key="run" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Buffer" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}, {key="size" kind=Setter function=f11 mutability=Fixed}, {key="level" kind=Setter function=f12 mutability=Fixed}]}
+function f0 name="Add" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0|L4} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L4, v1: anything):
+    Return
+}
+function f2 name="Subtract" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    Return
+}
+function f4 name="Multiply" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="run" kind=Method flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L2, v1: anything):
+    Return
+}
+function f6 name="Plugin" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="AddChecked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="Custom" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="Buffer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f10 name="size" kind=Getter flags=[HasThis] thisType={type=L6} results=[{type=anything}] {
+  b0(v0: L6):
+    Return
+}
+function f11 name="size" kind=Setter flags=[HasThis] thisType={type=L6} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L6, v1: anything):
+    Return
+}
+function f12 name="level" kind=Setter flags=[HasThis] thisType={type=L6} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L6, v1: anything):
+    Return
+}
+
+function f13 name="three-methods" parameters=[{type=L0|L1|L2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f13 name="three-methods"
+# CHECK-NEXT: b0(v0: L0|L1|L2, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: [[isAdd]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isAdd]] -> taken [[addArm]](| 0), notTaken [[notAdd]](| 0)
+# CHECK-NEXT: [[join]](v3: anything):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[addArm]]([[add]]: L0):
+# CHECK-NEXT: [[sum]]: anything = CallDirect [[add]], v1 function=f1
+# CHECK-NEXT: Jump -> next [[join]]([[sum]])
+# CHECK-NEXT: [[notAdd]]([[subtractOrMultiply]]: L1|L2):
+# CHECK-NEXT: [[isSubtract]]: boolean = TypeTest [[subtractOrMultiply]] testedType=L1
+# CHECK-NEXT: Branch [[isSubtract]] -> taken [[subtractArm]](| 0), notTaken [[multiplyArm]](| 0)
+# CHECK-NEXT: [[subtractArm]]([[subtract]]: L1):
+# CHECK-NEXT: [[difference]]: anything = CallDirect [[subtract]], v1 function=f3
+# CHECK-NEXT: Jump -> next [[join]]([[difference]])
+# CHECK-NEXT: [[multiplyArm]]([[multiply]]: L2):
+# CHECK-NEXT: [[product]]: anything = CallDirect [[multiply]], v1 function=f5
+# CHECK-NEXT: Jump -> next [[join]]([[product]])
+# CHECK-NEXT: }
+function f14 name="three-methods-and-a-rest" parameters=[{type=L0|L1|L2|L3}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f14 name="three-methods-and-a-rest"
+# CHECK-NEXT: b0(v0: L0|L1|L2|L3, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = CallDirect {{*}}, v1 function=f1
+# CHECK: ([[withoutAdd]]: L1|L2|L3):
+# CHECK-NEXT: = TypeTest [[withoutAdd]] testedType=L1
+# CHECK: = CallDirect {{*}}, v1 function=f3
+# CHECK: ([[withoutSubtract]]: L2|L3):
+# CHECK-NEXT: = TypeTest [[withoutSubtract]] testedType=L2
+# CHECK: = CallDirect {{*}}, v1 function=f5
+# CHECK: ([[plugin]]: L3) frequency=Unlikely:
+# CHECK-NEXT: [[pluginMethod]]: anything = PropGet [[plugin]] key="run" receivers=[L3]
+# CHECK-NEXT: = Call [[pluginMethod]], [[plugin]], v1 calleeKey="run"
+# CHECK-NOT: TypeTest
+function f15 name="members-sharing-an-inherited-method" parameters=[{type=L0|L1|L4}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L4, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f15 name="members-sharing-an-inherited-method"
+# CHECK-NEXT: b0(v0: L0|L1|L4, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L4
+# CHECK-NOT: TypeTest
+# CHECK: ([[eitherAdd]]: L0|L4):
+# CHECK-NEXT: = CallDirect [[eitherAdd]], v1 function=f1
+# CHECK: ([[onlySubtract]]: L1):
+# CHECK-NEXT: = CallDirect [[onlySubtract]], v1 function=f3
+function f16 name="field-among-the-arms" parameters=[{type=L0|L5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L5, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f16 name="field-among-the-arms"
+# CHECK-NEXT: b0(v0: L0|L5, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect {{*}}, v1 function=f1
+# CHECK: ([[custom]]: L5):
+# CHECK-NEXT: [[customMethod]]: anything = PropGet [[custom]] key="run" receivers=[L5]
+# CHECK-NEXT: = Call [[customMethod]], [[custom]], v1 calleeKey="run"
+function f17 name="field-among-the-arms-after-unknown-code" parameters=[{type=L0|L5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L5, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f17 name="field-among-the-arms-after-unknown-code"
+# CHECK-NEXT: b0(v0: L0|L5, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = Call v2, v0, v3 calleeKey="run"
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+function f18 name="only-a-field" parameters=[{type=L5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L5, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f18 name="only-a-field"
+# CHECK-NEXT: b0(v0: L5, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f19 name="nullable-receiver" parameters=[{type=undefined|L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|L0|L1, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f19 name="nullable-receiver"
+# CHECK-NEXT: b0(v0: undefined|L0|L1, v1: anything):
+# CHECK-NEXT: v2: L0|L1 = RequireObjectCoercible v0 name="run"
+# CHECK-NEXT: = TypeTest v2 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect {{*}}, v1 function=f1
+# CHECK: = CallDirect {{*}}, v1 function=f3
+# CHECK-NOT: = Call v
+function f20 name="casts-are-copied-into-the-rest" parameters=[{type=L0|L3}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L3, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Check v2 castType=function site=w0
+    v4 = Call v3, v0, v1 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f20 name="casts-are-copied-into-the-rest"
+# CHECK-NEXT: b0(v0: L0|L3, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = CallDirect {{*}}, v1 function=f1
+# CHECK: ([[otherPlugin]]: L3) frequency=Unlikely:
+# CHECK-NEXT: [[uncheckedMethod]]: anything = PropGet [[otherPlugin]] key="run" receivers=[L3]
+# CHECK-NEXT: [[checkedMethod]]: function = Check [[uncheckedMethod]] castType=function site=w0
+# CHECK-NEXT: = Call [[checkedMethod]], [[otherPlugin]], v1 calleeKey="run"
+function f21 name="read-from-another-object" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+  b0(v0: L0, v1: L0):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f21 name="read-from-another-object"
+# CHECK-NEXT: b0(v0: L0, v1: L0):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = Call v2, v1 calleeKey="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f22 name="under-handler" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything) handler=b2():
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Jump -> next b1()
+  b1():
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f22 name="under-handler"
+# CHECK: ({{*}}: L0) handler=b2():
+# CHECK-NEXT: = CallDirect {{*}}, v1 function=f1
+# CHECK: ({{*}}: L1) handler=b2():
+# CHECK-NEXT: = CallDirect {{*}}, v1 function=f3
+function f23 name="getter-and-setter" parameters=[{type=L6}] results=[{type=anything}] {
+  b0(v0: L6):
+    v1 = PropGet v0 key="size"
+    PropSet v0, v1 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f23 name="getter-and-setter"
+# CHECK: = CallDirect v0 function=f10
+# CHECK: = CallDirect v0, v1 function=f11
+# CHECK-NOT: PropSet
+function f24 name="setter-on-nullable-receiver" parameters=[{type=undefined|L6}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|L6, v1: anything):
+    PropSet v0, v1 key="size"
+    Return
+}
+# CHECK-LABEL: function f24 name="setter-on-nullable-receiver"
+# CHECK-NEXT: b0(v0: undefined|L6, v1: anything):
+# CHECK-NEXT: PropSet v0, v1 key="size"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f25 name="read-of-accessor-without-getter" parameters=[{type=L6}] results=[{type=anything}] {
+  b0(v0: L6):
+    v1 = PropGet v0 key="level"
+    Return v1
+}
+# CHECK-LABEL: function f25 name="read-of-accessor-without-getter"
+# CHECK: : undefined = Undefined
+# CHECK-NOT: PropGet
+# CHECK-NOT: CallDirect

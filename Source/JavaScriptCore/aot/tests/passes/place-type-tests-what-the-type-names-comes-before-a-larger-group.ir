@@ -1,0 +1,49 @@
+# class Pool { get(index) { .. } }   const first = { get, port }, second = { get, port, secure }
+# `pool.get(index)`, where the type of `pool` is only expected. On the way flow has seen two records with a field `get` as well. Each group finds the name in a place of its own, and one test is made,
+# for one group. The group that holds what the type names is the one, however many layouts another group has: a test for the two records fails for every Pool, and what stands behind a failed test
+# runs in the copy.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Pool" module=m0 constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="get" function=f1 mutability=Fixed}]}
+layout L1 name="First" module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="port" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Second" module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="port" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="secure" declared={type=boolean} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Pool" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: L0, v1: anything):
+    v2 = Integer integer=1
+    Return v2
+}
+
+function f2 name="flowHasSeenWhatTheTypeNames" module=m0 parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    v2 = PropGet v0 key="get" receivers=[L0, L1, L2, ..]
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="flowHasSeenWhatTheTypeNames"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: testedType=L1|L2
+
+# The list of what flow has seen is open: what it has not followed is what the type speaks of
+function f3 name="flowHasSeenOthersOnly" module=m0 parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    v2 = PropGet v0 key="get" receivers=[L1, L2, ..]
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="flowHasSeenOthersOnly"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: testedType=L1|L2
+
+# Without a type the larger group is tested for
+function f4 name="noType" module=m0 parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = PropGet v0 key="get" receivers=[L0, L1, L2, ..]
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="noType"
+# CHECK: = TypeTest v0 testedType=L1|L2

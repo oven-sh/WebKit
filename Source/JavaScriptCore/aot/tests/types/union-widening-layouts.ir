@@ -1,0 +1,24 @@
+# Eight layouts are the limit and no hit. Nine widen every object part to object, because no wider proven set exists, and the primitives and literals stay.
+# OPTIONS: limit=MaxLayoutsInType:8
+# RUN: union-widening
+# LOSS: MaxLayoutsInType x4 f0
+# CHECK: t0 | t1 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t0 | t2 = L0|L1|L2|L3|L8
+# CHECK-NEXT: t0 | t3 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t0 | t4 = undefined|"a"|L0|L1|L2|L3|L8|Array<number>
+# CHECK: t2 | t3 = object
+# CHECK: t3 | t4 = undefined|object|"a"
+# CHECK: loss MaxLayoutsInType x4
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+layout L1
+layout L2
+layout L3
+layout L4
+layout L5
+layout L6
+layout L7
+layout L8
+function f0 name="types" parameters=[{type=L0|L1|L2|L3}, {type=L4|L5|L6|L7}, {type=L8}, {type=L0|L1|L2|L3|L4|L5|L6|L7}, {type=undefined|"a"|L8|Array<number>}] results=[{type=undefined}]

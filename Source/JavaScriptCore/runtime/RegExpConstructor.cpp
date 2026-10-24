@@ -22,6 +22,8 @@
 #include "config.h"
 #include "RegExpConstructor.h"
 
+#include "AOTRemovableFeature.h"
+#include "AOTRuntimeValidation.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
@@ -83,7 +85,7 @@ static JSC_DECLARE_HOST_FUNCTION(callRegExpConstructor);
 static JSC_DECLARE_HOST_FUNCTION(constructWithRegExpConstructor);
 
 RegExpConstructor::RegExpConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callRegExpConstructor, constructWithRegExpConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callRegExpConstructor), JSC_REGISTERED_HOST_FUNCTION(constructWithRegExpConstructor))
 {
 }
 
@@ -197,6 +199,9 @@ JSC_DEFINE_CUSTOM_GETTER(regExpConstructorInput, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue::decode(thisValue) != globalObject->regExpConstructor())
         return throwVMTypeError(globalObject, scope, "RegExp.input getter requires RegExp constructor as |this|"_s);
+#if ENABLE(AOT)
+    AOT::willReadLegacyRegExpStatics(vm);
+#endif
     return JSValue::encode(globalObject->regExpGlobalData().input());
 }
 
@@ -340,8 +345,43 @@ RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSVa
     RELEASE_AND_RETURN(scope, regExpCreate(globalObject, newTarget, pattern, flags));
 }
 
-JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JSObject* callee, JSValue newTarget)
+static RegExpObject* regExpCreateFromRegExp(JSGlobalObject* globalObject, JSValue newTarget, RegExp* regExp, JSValue flagsArg)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Structure* structure = getRegExpStructure(globalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (!flagsArg.isUndefined()) {
+        auto flags = toFlags(globalObject, flagsArg);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+
+        regExp = RegExp::create(vm, regExp->pattern(), flags);
+        if (!regExp->isValid()) [[unlikely]] {
+            throwException(globalObject, scope, regExp->errorToThrow(globalObject));
+            return nullptr;
+        }
+    }
+
+    return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
+}
+
+RegExpObject* constructRegExpWithFlags(JSGlobalObject* globalObject, RegExpObject* pattern, JSValue flagsArg)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The answer changes nothing for a RegExpObject, but a program can observe the read of pattern[Symbol.match].
+    isRegExp(vm, globalObject, pattern);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    RELEASE_AND_RETURN(scope, regExpCreateFromRegExp(globalObject, globalObject->regExpConstructor(), pattern->regExp(), flagsArg));
+}
+
+NEVER_INLINE JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JSObject* callee, JSValue newTarget)
+{
+    JSC_REMOVABLE_DEFINITION(RegExpFromString, constructRegExp);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue patternArg = args.at(0);
@@ -360,24 +400,8 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
         }
     }
 
-    if (isPatternRegExp) {
-        RegExp* regExp = uncheckedDowncast<RegExpObject>(patternArg)->regExp();
-        Structure* structure = getRegExpStructure(globalObject, newTarget);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-
-        if (!flagsArg.isUndefined()) {
-            auto flags = toFlags(globalObject, flagsArg);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-
-            regExp = RegExp::create(vm, regExp->pattern(), flags);
-            if (!regExp->isValid()) [[unlikely]] {
-                throwException(globalObject, scope, regExp->errorToThrow(globalObject));
-                return nullptr;
-            }
-        }
-
-        return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
-    }
+    if (isPatternRegExp)
+        RELEASE_AND_RETURN(scope, regExpCreateFromRegExp(globalObject, newTarget, uncheckedDowncast<RegExpObject>(patternArg)->regExp(), flagsArg));
 
     if (constructAsRegExp) {
         JSValue pattern = patternArg.get(globalObject, vm.propertyNames->source);
@@ -394,6 +418,7 @@ JSObject* constructRegExp(JSGlobalObject* globalObject, const ArgList& args,  JS
 
 JSC_DEFINE_HOST_FUNCTION(esSpecRegExpCreate, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_REMOVABLE_HOST_FUNCTION_DEFINITION(RegExpFromString, esSpecRegExpCreate);
     JSValue patternArg = callFrame->argument(0);
     JSValue flagsArg = callFrame->argument(1);
     return JSValue::encode(regExpCreate(globalObject, JSValue(), patternArg, flagsArg));

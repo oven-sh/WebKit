@@ -1,0 +1,51 @@
+# What the pass leaves behind it does not resolve again: the second run changes nothing
+# FORM: Prepared
+# RUN: pass ResolveCalls ResolveCalls
+# STATISTIC: CallsResolved = 6
+# STATISTIC: DispatchArms = 1
+# STATISTIC: ConstructsResolved = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Task" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}, {key="make" side=Static function=f2 mutability=Fixed}]}
+layout L1 kind=Instance name="Plugin" constructor=f3 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = AssumeType v2 castType=L0
+    Return v3
+}
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f2 name="make" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Plugin" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="helper" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f5 name="one-site-of-each-plan" parameters=[{type=L0|L1}, {type=f0}, {type=undefined|f4}, {type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: f0, v2: undefined|f4, v3: anything, v4: function):
+    v5 = PropGet v0 key="run"
+    v6 = Call v5, v0 calleeKey="run"
+    v7 = PropGet v1 key="make"
+    v8 = Call v7, v1 calleeKey="make"
+    v9 = Call v2, -, v3
+    v10 = Construct v1
+    v11 = InstanceOf v3, v1
+    v12 = CallBuiltin v4, v3 overload=FunctionPrototypeCall/0
+    v13 = NewArray v6, v8, v9, v10, v11, v12 contents=anything
+    Return v13
+}
+# CHECK-LABEL: function f5 name="one-site-of-each-plan"
+# CHECK-NOT: = Construct
+# CHECK-NOT: overload=FunctionPrototypeCall/0

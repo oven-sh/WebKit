@@ -1,0 +1,152 @@
+# A test of a joined value moves onto the edges where the type of the argument makes it cheap. The constants of the test stand before it and go with it
+# FORM: Prepared
+# RUN: pass HoistTestsIntoPredecessors
+# STATISTIC: HoistTestsIntoPredecessorsChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="truthinessOfJoinedValue" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="truthinessOfJoinedValue"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: [[S0]]:{{*}}= ToBoolean v1
+# CHECK-NEXT: Jump -> next b3([[S0]])
+# CHECK: b3(v3: boolean):
+# CHECK-NEXT: Branch v3 -> taken b4(), notTaken b5()
+
+function f1 name="comparisonOfJoinedValue" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Less v3, v0
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="comparisonOfJoinedValue"
+# CHECK: b1():
+# CHECK-NEXT: [[S1]]:{{*}}= Less v0, v0
+# CHECK-NEXT: Jump -> next b3([[S1]])
+# CHECK: b2():
+# CHECK-NEXT: [[S2]]:{{*}}= Less v1, v0
+# CHECK-NEXT: Jump -> next b3([[S2]])
+# CHECK: b3([[S3]]: boolean):
+# CHECK-NEXT: Branch [[S3]] -> taken b4(), notTaken b5()
+
+function f2 name="parameterHasSecondUse" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="parameterHasSecondUse"
+# CHECK: b3(v3:
+# CHECK-NEXT: ToBoolean v3
+
+function f3 name="noEdgeIsCheap" parameters=[{type=undefined|number}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|number, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f3 name="noEdgeIsCheap"
+# CHECK: b3(v3:
+# CHECK-NEXT: ToBoolean v3
+
+function f4 name="truthinessOfUntypedValue" parameters=[{type=boolean}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f4 name="truthinessOfUntypedValue"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: [[S4]]:{{*}}= ToBoolean v1
+# CHECK-NEXT: Jump -> next b3([[S4]])
+# CHECK: b3(v3: boolean):
+# CHECK-NEXT: Branch v3 -> taken b4(), notTaken b5()
+
+function f5 name="sourceEndsInBranch" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b3(v1)
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Return v1
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b4()
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f5 name="sourceEndsInBranch"
+# CHECK: b3(v3:
+# CHECK-NEXT: ToBoolean v3
+
+function f6 name="testHasSecondUse" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v4
+}
+# CHECK-LABEL: function f6 name="testHasSecondUse"
+# CHECK: b3(v3:
+# CHECK-NEXT: ToBoolean v3

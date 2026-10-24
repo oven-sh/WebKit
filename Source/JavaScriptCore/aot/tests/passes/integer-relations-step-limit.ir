@@ -1,0 +1,17 @@
+# A query that runs out of steps answers Unknown
+# FORM: Prepared
+# OPTIONS: limit=MaxIntegerRelationSteps:0
+# RUN: integer-relations function=f0 at-most=v0,v1,-1,b1
+# LOSS: MaxIntegerRelationSteps x1 f0
+# CHECK: v0 <= v1 + -1 at b1: Unknown
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="less" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}

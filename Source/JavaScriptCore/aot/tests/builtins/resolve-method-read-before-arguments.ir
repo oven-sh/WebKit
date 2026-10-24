@@ -1,0 +1,141 @@
+# A method read and the call of what was read are resolved each by itself: code that runs between them cannot change the function that was read, and what the call needs of its receiver is asked at the call
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
+# RUN(TESTS): pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stringReadThenCall" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = PropGet v0 key="indexOf"
+    v3 = Call v1
+    v4 = ToString v3
+    v5 = Call v2, v0, v4 calleeKey="indexOf"
+    Return v5
+}
+# CHECK-LABEL: function f0 name="stringReadThenCall"
+# CHECK: v2: builtin(StringPrototypeIndexOf) = Builtin builtin=StringPrototypeIndexOf
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: v4: string = ToString v3
+# CHECK-NEXT: v5: {{*}} = CallBuiltin v0, v4 overload=StringPrototypeIndexOf/
+
+function f1 name="arrayProvenByType" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v1, -, v0
+    v4 = Call v2, v0, v3 calleeKey="push"
+    Return v4
+}
+# CHECK-LABEL: function f1 name="arrayProvenByType"
+# CHECK: v2: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v3: anything = Call v1, -, v0
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v0, v3 overload=ArrayPrototypePush/0
+# CHECK-NOT: needsPristineReceiver
+
+function f2 name="storageNotProvenAtCall" parameters=[{type=Array<anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Names]>, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v1, -, v0
+    v4 = Call v2, v0, v3 calleeKey="push"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="storageNotProvenAtCall"
+# CHECK: v2: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v3: anything = Call v1, -, v0
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v4: int[0, 9007199254740991] = CallBuiltin v0, v3 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+# PLACED-LABEL: function f2 name="storageNotProvenAtCall"
+# PLACED-NOT: IsPristine
+# PLACED: v3: anything = Call v1, -, v0
+# PLACED: int[0, 4294967295] = CallBuiltin v0, v3 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+# PLACED: frequency=Unlikely
+# PLACED-NEXT: int[0, 9007199254740991] = CallBuiltin v0, v3 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+# A generic copy may come back behind a call, in front of the test that stands there. So the test has a block of its own, which is printed behind the call that it guards
+# TESTS-LABEL: function f2 name="storageNotProvenAtCall"
+# TESTS: v3: anything = Call v1, -, v0
+# TESTS: [[hasStorage]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
+# TESTS-NEXT: Branch [[hasStorage]] -> taken
+# TESTS-LABEL: function f3 name="freshArrayWithPureArgument"
+
+function f3 name="freshArrayWithPureArgument" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=anything
+    v2 = PropGet v1 key="push"
+    v3 = Add v0, v0
+    v4 = Call v2, v1, v3 calleeKey="push"
+    Return v4
+}
+# CHECK-LABEL: function f3 name="freshArrayWithPureArgument"
+# CHECK: v2: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v3: number = Add v0, v0
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v1, v3 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+
+function f4 name="freshArraySeenByArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = PropGet v1 key="push"
+    v3 = Call v0, -, v1
+    v4 = Call v2, v1, v3 calleeKey="push"
+    Return v4
+}
+# CHECK-LABEL: function f4 name="freshArraySeenByArgument"
+# CHECK: v2: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v3: anything = Call v0, -, v1
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: v4: int[0, 9007199254740991] = CallBuiltin v1, v3 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+
+function f5 name="otherThis" parameters=[{type=string}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: i32):
+    v3 = PropGet v0 key="slice"
+    v4 = Call v3, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f5 name="otherThis"
+# CHECK: v3: builtin(StringPrototypeSlice) = Builtin builtin=StringPrototypeSlice
+# CHECK-NEXT: v4: string = CallBuiltin v1, v2 overload=StringPrototypeSlice/0 builtinCallForm=AnyReceiver
+
+function f6 name="missingThis" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
+  b0(v0: string, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Call v2, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="missingThis"
+# CHECK: v2: builtin(StringPrototypeSlice) = Builtin builtin=StringPrototypeSlice
+# CHECK-NEXT: v3: anything = Call v2, -, v1
+
+function f7 name="methodValueReused" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="toLowerCase"
+    v2 = Call v1, v0 calleeKey="toLowerCase"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="methodValueReused"
+# CHECK: v1: builtin(StringPrototypeToLowerCase) = Builtin builtin=StringPrototypeToLowerCase
+# CHECK-NEXT: v2: string = CallBuiltin v0 overload=StringPrototypeToLowerCase/0
+# CHECK-NEXT: Return v1
+
+function f8 name="checkedMethod" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="toLowerCase"
+    v2 = Check v1 castType=function
+    v3 = Call v2, v0 calleeKey="toLowerCase"
+    Return v3
+}
+# CHECK-LABEL: function f8 name="checkedMethod"
+# CHECK: v1: builtin(StringPrototypeToLowerCase) = Builtin builtin=StringPrototypeToLowerCase
+# CHECK-NEXT: v2: builtin(StringPrototypeToLowerCase) = Check v1 castType=function
+# CHECK-NEXT: v3: string = CallBuiltin v0 overload=StringPrototypeToLowerCase/0
+
+function f9 name="nullableReceiver" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    v1 = PropGet v0 key="toLowerCase"
+    v2 = Call v1, v0 calleeKey="toLowerCase"
+    Return v2
+}
+# CHECK-LABEL: function f9 name="nullableReceiver"
+# CHECK: string = RequireObjectCoercible v0 name="toLowerCase"
+# CHECK-NEXT: v1: builtin(StringPrototypeToLowerCase) = Builtin builtin=StringPrototypeToLowerCase
+# The call is direct, and waits so for the test of its receiver, which is expected to be there: resolve-receiver-expected-to-be-present.ir
+# CHECK-NEXT: v2: string = CallBuiltin v0 overload=StringPrototypeToLowerCase/0 builtinCallForm=AnyReceiver

@@ -1,0 +1,49 @@
+# m1.cjs: exports.c = 1; exports.f = function f() { return exports.c }        main.cjs: const a = require("./m1.cjs"); exports.g = function g() { return a.f() + a.c }; exports.g()
+# The names that a CommonJS module exports are variables, and there is no object. The body of a module of the image runs at most once and owns its variables like the body of an ES module:
+# each is stored at most once, by an operation that names it. Whoever reads one in another module stands behind the operation that evaluates m1.cjs, which has run to its end by then:
+# the variables are stored before every read, and the call through the variable is a call of the one function
+# RUN: valueflow-apply
+# CHECK: variable g0 name="c" {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead
+# CHECK: variable g1 name="f" {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f3 v1 -> f2
+# RUN(RESULTS): valueflow-results
+# RESULTS: function f0 {{*}}executions=AtMostOnce
+# RESULTS: function f1 {{*}}executions=AtMostOnce
+
+variable g0 name="c" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="f" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="g" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/m1.cjs" displayPath="m1.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v1 = NewClosure function=f3
+    PutModuleVariable v1 variable=g2
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v3
+    Return
+}
+function f1 name="m1" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f2 name="f" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="g" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g0
+    v3 = Add v1, v2
+    Return v3
+}

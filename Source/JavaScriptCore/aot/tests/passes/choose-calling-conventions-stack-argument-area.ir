@@ -1,0 +1,46 @@
+# A function that jumps to a function with stack arguments has callers that reserve as many words, and a generic entrypoint has no such callers
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# RUN(COUNTED): pass ChooseCallingConventions
+# STATISTIC: ReturnCallsDemoted = 0
+# COUNTED-COUNT-4: reserved=2
+# COUNTED-NOT: reserved=
+# CHECK: f0 Direct ({{*}}stack0:Double, stack1:Double) -> ({{*}}:JSValue) boxed-result reserved=2
+# CHECK-NEXT: f1 Direct ({{*}}:Cell, {{*}}:Double) -> ({{*}}:JSValue) reserved=2
+# CHECK-NEXT: f2 GenericRegisters ({{*}}) -> ({{*}}:JSValue)
+# CHECK-NEXT: f3 Direct ({{*}}:Double) -> ({{*}}:JSValue) reserved=2
+# CHECK-NEXT: f4 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result reserved=2
+# CHECK-NEXT: f5 Direct ({{*}}:Double) -> ({{*}}:JSValue)
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="wide" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number):
+    Return v0
+}
+function f1 name="wide" role=BoundFunction captures=[{type=function}] parameters=[{type=number}] results=[{type=anything}] derivation={source=f0} creator=BoundFunction{target=f0 capturesTargetClosure=true} {
+  b0(v0: function, v1: number):
+    v2 = CallDirect v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 function=f0
+    ReturnCall v2 requirement=Allowed
+}
+function f2 name="narrow" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+  b0(v0: f4, v1: anything, v2: anything):
+    v3 = AssumeType v2 castType=number
+    v4 = CallDirect v3, v3, v3, v3, v3, v3, v3, v3, v3, v3 function=f0
+    ReturnCall v4 requirement=Allowed
+}
+function f3 name="jumpsToJumper" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f4
+    ReturnCall v1 requirement=Allowed
+}
+function f4 name="narrow" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 function=f0
+    ReturnCall v1 requirement=Allowed
+}
+function f5 name="returnsFromCall" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}

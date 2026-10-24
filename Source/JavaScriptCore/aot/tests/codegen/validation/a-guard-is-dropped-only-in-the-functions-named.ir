@@ -1,0 +1,52 @@
+# Under drop-guard each guard is tested as ever and says so where it fails; the dropped one then goes on as if it had passed. disable-in limits both to a range of functions:
+# the other functions are compiled as in any other build
+# FORM: Placed
+# RUN: generate-code calls
+# OPTIONS: drop-guard=TypeTest:1 disable-in=1:1
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operationAOTNoteFailedGuard
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTNoteFailedGuard x2
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: operationAOTNoteFailedGuard
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="in-front-of-the-range" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+function f1 name="in-the-range" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = TypeTest v0 testedType=i32
+    TestAndBranch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=2
+    Return v4
+  b4():
+    v5 = Integer integer=3
+    Return v5
+}
+function f2 name="behind-the-range" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}

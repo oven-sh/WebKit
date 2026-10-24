@@ -1,0 +1,27 @@
+# The record that a built-in returns is an object, and its layout is not expected of it: the built-in's own code makes an ordinary object. The intrinsic that compiled code allocates the record of a step with has the layout. A tuple of the table is an array
+# FORM: Prepared optimizing
+# RUN: result-types
+# CHECK: v3: object
+# CHECK-NEXT: v4: undefined|object
+# CHECK-NEXT: v5: builtin(Promise)
+# CHECK-NEXT: v6: object
+# CHECK-NEXT: v7: true
+# CHECK-NEXT: v8: L(IteratorResult)
+# CHECK-NEXT: v9: Array<Array>
+# RUN(PLAIN): result-types
+# PLAIN: v2: string
+# PLAIN-NOT: ~
+# PLAIN: v7: true
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="records" parameters=[{type=MapIterator}, {type=object}, {type=string}] results=[{type=undefined}] {
+  b0(v0: MapIterator, v1: object, v2: string):
+    v3 = CallBuiltin v0 overload=MapIteratorPrototypeNext/0
+    v4 = CallBuiltin -, v1, v2 overload=ObjectGetOwnPropertyDescriptor/0
+    v5 = Builtin builtin=Promise
+    v6 = CallBuiltin v5 overload=PromiseWithResolvers/0
+    v7 = Boolean boolean=true
+    v8 = CreateIteratorResult v2, v7
+    v9 = CallBuiltin -, v1 overload=ObjectEntries/0
+    Return
+}

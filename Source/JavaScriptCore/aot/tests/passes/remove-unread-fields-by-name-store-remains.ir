@@ -1,0 +1,78 @@
+# A field that nothing reads stays while a store by name to it remains: without a slot that store would add the key as an extra property
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="StoredByName" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="DefinedByName" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="DefinedWithoutStamp" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="DefinedByBuiltin" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="StoredBySlot" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="AddedBySlot" fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L0 name="StoredByName" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L1 name="DefinedByName" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 name="DefinedWithoutStamp" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L3 name="DefinedByBuiltin" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L4 name="StoredBySlot" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L5 name="AddedBySlot"{{*}}{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="storedByName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v0 key="id" mode=Strict receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f0 name="storedByName"
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v1, v0 key="id"
+
+function f1 name="definedByName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    PropDefine v1, v0 key="id" receivers=[L1]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="definedByName"
+# CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+# CHECK-NEXT: PropDefine v1, v0 key="id"
+
+function f2 name="definedWithoutStamp" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    PropDefine v1, v0 key="id"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="definedWithoutStamp"
+# CHECK: = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+# CHECK-NEXT: PropDefine v1, v0 key="id"
+
+function f3 name="definedByBuiltin" parameters=[{type=anything}, {type=string}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: object):
+    v3 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v4 = CallBuiltin -, v3, v1, v2 overload=ObjectDefineProperty/0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="definedByBuiltin"
+# CHECK: = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+# CHECK-NEXT: = CallBuiltin
+
+function f4 name="storedBySlot" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
+    PutSlot v1, v1, v0 key="id" receivers=[L4] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f4 name="storedBySlot"
+# CHECK: = NewObject -, v0 layout=L4 fields=[1]
+# CHECK-NEXT: Return
+
+function f5 name="addedBySlot" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L5 fields=[0]
+    PutSlotOrAdd v1, v1, v0 key="id" receivers=[L5] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f5 name="addedBySlot"
+# CHECK: = NewObject -, v0 layout=L5 fields=[0]
+# CHECK-NEXT: Return

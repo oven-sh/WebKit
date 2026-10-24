@@ -1,0 +1,39 @@
+# A constructor function is there before its first construction defines its class, so a set of guards waits for the guards of its static side: a site that constructs takes its failing side
+# until the class exists. The set does not wait for the guards of the prototype side, which speak of no object until then.
+# FORM: AsRead
+# RUN(TABLES): tables layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" module=m0 constructor=f1 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Made" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    PutModuleVariable v2 variable=g0
+    v4 = Call v1, -, v2
+    v5 = NewClosure function=f2
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="Made" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="a"
+    Return
+}
+function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+# TABLES: class index=L0
+# TABLES: guard name="a" kind=PassedByStores side=Prototype
+# The stores of the constructor where `this` is handed in, then the site that allocates.
+# TABLES-NEXT: set bit={{*}} members=[64 65] awaitedBeforeClassExists=[]
+# TABLES-NEXT: set bit={{*}} members=[64 65 128] awaitedBeforeClassExists=[128]
+# TABLES: guard name="prototype" kind=Member side=Static
+# TABLES-NEXT: set bit={{*}} members=[64 65 128] awaitedBeforeClassExists=[128]

@@ -32,6 +32,7 @@
 #include "Scribble.h"
 #include "SuperSampler.h"
 #include "VM.h"
+#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -99,11 +100,30 @@ inline bool MarkedBlock::Handle::isAllocated()
 // Whether the cell survived the last collection or was allocated after it. Cells the last
 // collection found unreachable are dead: not live, even though their memory is not freed
 // until the block is swept. Must not be called while the block is free-listed.
+#if ASAN_ENABLED
+inline bool MarkedBlock::Handle::hasRedZoneCells()
+{
+    return Options::runsCompiledImage();
+}
+
+inline bool MarkedBlock::Handle::isRedZoneCell(const void* cell)
+{
+    return hasRedZoneCells() && (block().candidateAtomNumber(cell) - m_startAtom) / m_atomsPerCell % 2;
+}
+#endif
+
 ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
+#if ASAN_ENABLED
+    if (isRedZoneCell(cell))
+        return false;
+#endif
     if (m_directory->isAllocated(this))
         return true;
+
+    if (this->block().hasInnerCells()) [[unlikely]]
+        cell = this->block().outerCellOf(cell);
 
     // We need to do this while holding the lock because marks might be stale. In that case, newly
     // allocated will not yet be valid. Consider this interleaving.
@@ -213,6 +233,52 @@ inline bool MarkedBlock::Handle::isLiveCell(const void* p)
 inline bool MarkedBlock::Handle::areMarksStaleForSweep()
 {
     return marksMode() == MarksStale;
+}
+
+template<typename Func>
+ALWAYS_INLINE void MarkedBlock::Handle::forEachFreeIntervalByWord(const WTF::BitSet<atomsPerBlock>& live, NOESCAPE const Func& func)
+{
+    auto words = live.storage();
+    using Word = std::remove_cvref_t<decltype(words[0])>;
+    constexpr unsigned wordSize = sizeof(Word) * 8;
+    ASSERT(m_atomsPerCell < wordSize);
+
+    bool validatesIntervals = ASSERT_ENABLED || Options::verifyGC();
+    Vector<std::pair<unsigned, unsigned>, 16> intervals;
+    auto didFindInterval = [&](unsigned begin, unsigned end) ALWAYS_INLINE_LAMBDA {
+        if (validatesIntervals) [[unlikely]]
+            intervals.append({ begin, end - begin });
+        func(begin, end - begin);
+    };
+
+    Word everyCell = 1;
+    for (unsigned shift = m_atomsPerCell; shift < wordSize; shift *= 2)
+        everyCell |= everyCell << shift;
+    unsigned remainder = wordSize % m_atomsPerCell;
+    unsigned offset = m_startAtom % wordSize;
+    Word precedingCellsInLastWord = static_cast<Word>(1) << offset;
+    unsigned intervalBegin = m_startAtom;
+    for (unsigned i = m_startAtom / wordSize; i < words.size(); ++i) {
+        Word word = words[i];
+        Word precedingCellIsAlive = word << m_atomsPerCell | precedingCellsInLastWord;
+        precedingCellsInLastWord = word >> (wordSize - m_atomsPerCell);
+        for (Word changes = (word ^ precedingCellIsAlive) & everyCell << offset; changes; changes &= changes - 1) {
+            unsigned bit = WTF::ctz(changes);
+            unsigned index = i * wordSize + bit;
+            if (word >> bit & 1)
+                didFindInterval(intervalBegin, index);
+            else
+                intervalBegin = index;
+        }
+        if (offset >= m_atomsPerCell)
+            offset %= m_atomsPerCell;
+        offset = offset >= remainder ? offset - remainder : offset + m_atomsPerCell - remainder;
+    }
+    if (!live.get(endAtom - m_atomsPerCell))
+        didFindInterval(intervalBegin, endAtom);
+
+    if (validatesIntervals) [[unlikely]]
+        validateFreeIntervals(live, intervals.span());
 }
 
 // The following has to be true for specialization to kick in:
@@ -333,6 +399,25 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         if (sweepMode == SweepToFreeList) {
             if (scribbleMode == Scribble) [[unlikely]]
                 scribble(payloadBegin, payloadEnd - payloadBegin);
+#if ASAN_ENABLED
+            if (hasRedZoneCells()) {
+                FreeCell* cursor = nullptr;
+                size_t freedBytes = 0;
+                for (char* cell = payloadBegin; cell < payloadEnd; cell += cellSize) {
+                    if (isRedZoneCell(cell)) {
+                        std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+                        continue;
+                    }
+                    if (cursor)
+                        cursor->setNext(reinterpret_cast_ptr<FreeCell*>(cell), cellSize, secret);
+                    cursor = reinterpret_cast_ptr<FreeCell*>(cell);
+                    freedBytes += cellSize;
+                }
+                cursor->makeLast(cellSize, secret);
+                freeList->initialize(reinterpret_cast_ptr<FreeCell*>(payloadBegin), secret, freedBytes);
+                return;
+            }
+#endif
             FreeCell* interval = reinterpret_cast_ptr<FreeCell*>(payloadBegin);
             interval->makeLast(payloadEnd - payloadBegin, secret);
             freeList->initialize(interval, secret, payloadEnd - payloadBegin);
@@ -349,6 +434,8 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         live = header.m_marks;
     else
         live = header.m_newlyAllocated;
+    if (block.hasInnerCells()) [[unlikely]]
+        block.clearBitsOfInnerCells(live);
 
     // We only want to discard the newlyAllocated bits if we're creating a FreeList,
     // otherwise we would lose information on what's currently alive.
@@ -362,7 +449,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     if (isMarking)
         header.m_lock.unlock();
 
-    auto sweepBlock = [&]<bool needsDestruction>() ALWAYS_INLINE_LAMBDA {
+    auto sweepBlock = [&]<bool needsDestruction, bool scansByWord>() ALWAYS_INLINE_LAMBDA {
         size_t freedBytes = 0;
         FreeCell* head = nullptr;
         FreeCell* cursor = nullptr;
@@ -377,31 +464,51 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
                 if (scribbleMode == Scribble) [[unlikely]]
                     scribble(cell, intervalBytes);
 
-                if (!head)
-                    head = cell;
+                auto append = [&](FreeCell* interval, size_t bytes) {
+                    if (!head)
+                        head = interval;
 
-                if (cursor) [[likely]]
-                    cursor->setNext(cell, cursorIntervalBytes, secret);
+                    if (cursor) [[likely]]
+                        cursor->setNext(interval, cursorIntervalBytes, secret);
 
-                cursor = cell;
-                cursorIntervalBytes = intervalBytes;
-                freedBytes += intervalBytes;
+                    cursor = interval;
+                    cursorIntervalBytes = bytes;
+                    freedBytes += bytes;
+                };
+#if ASAN_ENABLED
+                if (hasRedZoneCells()) {
+                    for (char* target = std::bit_cast<char*>(cell); target < (std::bit_cast<char*>(cell) + intervalBytes); target += cellSize) {
+                        if (isRedZoneCell(target))
+                            std::bit_cast<HeapCell*>(target)->zap(HeapCell::StopAllocating);
+                        else
+                            append(std::bit_cast<FreeCell*>(target), cellSize);
+                    }
+                    return;
+                }
+#endif
+                append(cell, intervalBytes);
             }
         };
 
-        unsigned potentiallyFreeCell = m_startAtom;
-        auto handleLiveCell = [&](unsigned index) {
-            ASSERT(!((index - m_startAtom) % m_atomsPerCell));
-            if (potentiallyFreeCell != index) {
-                FreeCell* cell = std::bit_cast<FreeCell*>(&block.atoms()[potentiallyFreeCell]);
-                pushInterval(cell, (index - potentiallyFreeCell) * atomSize);
-            }
-            potentiallyFreeCell = index + m_atomsPerCell;
-        };
-        live.forEachSetBit([&](unsigned index) {
-            handleLiveCell(index);
-        });
-        handleLiveCell(endAtom);
+        if constexpr (scansByWord) {
+            forEachFreeIntervalByWord(live, [&](unsigned firstAtom, unsigned numberOfAtoms) ALWAYS_INLINE_LAMBDA {
+                pushInterval(std::bit_cast<FreeCell*>(&block.atoms()[firstAtom]), numberOfAtoms * atomSize);
+            });
+        } else {
+            unsigned potentiallyFreeCell = m_startAtom;
+            auto handleLiveCell = [&](unsigned index) {
+                ASSERT(!((index - m_startAtom) % m_atomsPerCell));
+                if (potentiallyFreeCell != index) {
+                    FreeCell* cell = std::bit_cast<FreeCell*>(&block.atoms()[potentiallyFreeCell]);
+                    pushInterval(cell, (index - potentiallyFreeCell) * atomSize);
+                }
+                potentiallyFreeCell = index + m_atomsPerCell;
+            };
+            live.forEachSetBit([&](unsigned index) {
+                handleLiveCell(index);
+            });
+            handleLiveCell(endAtom);
+        }
 
         if (sweepMode == SweepToFreeList) {
             if (cursor)
@@ -410,10 +517,17 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         }
     };
 
-    if (destructionMode == BlockHasNoDestructors || !wasUnswept)
-        sweepBlock.template operator()</* needsDestruction */ false>();
+    constexpr unsigned wordSize = sizeof(WTF::BitSet<atomsPerBlock>::WordType) * 8;
+    constexpr int minMarkCountForWordScan = 48;
+    if (marksMode == MarksNotStale && Options::runsCompiledImage() && m_atomsPerCell < wordSize && header.m_biasedMarkCount - header.m_markCountBias >= minMarkCountForWordScan) {
+        if (destructionMode == BlockHasNoDestructors || !wasUnswept)
+            sweepBlock.template operator()</* needsDestruction */ false, /* scansByWord */ true>();
+        else
+            sweepBlock.template operator()</* needsDestruction */ true, /* scansByWord */ true>();
+    } else if (destructionMode == BlockHasNoDestructors || !wasUnswept)
+        sweepBlock.template operator()</* needsDestruction */ false, /* scansByWord */ false>();
     else
-        sweepBlock.template operator()</* needsDestruction */ true>();
+        sweepBlock.template operator()</* needsDestruction */ true, /* scansByWord */ false>();
 
     dataLogLnIf(verbose, "Slowly swept block ", RawPointer(&block), " with cell size ", cellSize, " and attributes ", m_attributes, ": ", pointerDump(freeList), " isMarking: ", isMarking, " sweepMode: ", sweepMode);
 }
@@ -601,8 +715,11 @@ inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(NOESCAPE const Fun
     if (areMarksStale)
         return IterationStatus::Continue;
     IterationStatus result = IterationStatus::Continue;
+    bool hasInnerCells = block.hasInnerCells();
     block.header().m_marks.forEachSetBit([&](size_t i) ALWAYS_INLINE_LAMBDA {
         HeapCell* cell = reinterpret_cast_ptr<HeapCell*>(&m_block->atoms()[i]);
+        if (hasInnerCells && block.isInnerCell(cell)) [[unlikely]]
+            return IterationStatus::Continue;
         result = functor(i, cell, kind);
         return result;
     });

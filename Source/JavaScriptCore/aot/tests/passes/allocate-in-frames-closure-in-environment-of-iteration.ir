@@ -1,0 +1,56 @@
+# A closure stored in a field of a frame environment is on the heap, also where both are allocated in the same iteration of a loop: no environment field holds a frame pointer
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,AllocateInFrames
+# STATISTIC: EnvironmentsMaterializedLate = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="storedInIteration" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    Return
+}
+# CHECK-NOT: holds frame pointers
+
+function f1 name="bothAllocatedInIteration" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewClosure function=f2
+    PutEnvironmentField v2, v3 layout=L0 field=0
+    v5 = CallDirect v2 function=f3
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1 name="bothAllocatedInIteration"
+# CHECK: layout=L0 {{*}}storage=Frame
+# CHECK: NewClosure function=f2
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f1
+# PLAN-NEXT: v2: Frame
+# PLAN-NEXT: v3: Heap SeveralLiveInstances
+
+function f2 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK-LABEL: function f2 name="callback"
+# PLAN-LABEL: function f2
+
+function f3 name="callsStoredInIteration" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Call v1
+    Return v2
+}

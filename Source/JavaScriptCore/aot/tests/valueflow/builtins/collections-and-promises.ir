@@ -1,0 +1,49 @@
+# What is put into a collection comes out of that collection, and a reaction gets what its promise was resolved with. Nothing escapes on the way, so no callee is unknown.
+# RUN: valueflow-solve calls
+# CHECK: f0 v1 -> Map
+# CHECK-NEXT: f0 v5 -> MapPrototypeSet
+# CHECK-NEXT: f0 v7 -> MapPrototypeGet
+# CHECK-NEXT: f0 v8 -> f1
+# CHECK-NEXT: f0 v12 -> PromiseResolve
+# CHECK-NEXT: f0 v15 -> PromisePrototypeThen
+# CHECK-NEXT: f3 v1 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = NewClosure function=f1
+    v3 = String string="key"
+    v4 = Builtin builtin=MapPrototypeSet
+    v5 = Call v4, v1, v3, v2
+    v6 = Builtin builtin=MapPrototypeGet
+    v7 = Call v6, v1, v3
+    v8 = Call v7
+    v9 = Builtin builtin=PromiseResolve
+    v10 = Builtin builtin=Promise
+    v11 = NewClosure function=f2
+    v12 = Call v9, v10, v11
+    v13 = Builtin builtin=PromisePrototypeThen
+    v14 = NewClosure function=f3
+    v15 = Call v13, v12, v14
+    Return
+}
+function f1 name="storedInMap" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="resolvedWith" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="reaction" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}

@@ -49,8 +49,10 @@ enum B3CompilationMode {
 
 JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldDumpIR(Procedure&, B3CompilationMode);
 bool LEGACY_NODELETE shouldDumpIRAtEachPhase(B3CompilationMode);
-bool LEGACY_NODELETE shouldValidateIR();
-bool LEGACY_NODELETE shouldValidateIRAtEachPhase();
+JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIR();
+JS_EXPORT_PRIVATE bool LEGACY_NODELETE shouldValidateIRAtEachPhase();
+JS_EXPORT_PRIVATE bool shouldValidateIR(const Procedure&);
+JS_EXPORT_PRIVATE bool shouldValidateIRAtEachPhase(const Procedure&);
 bool LEGACY_NODELETE shouldSaveIRBeforePhase();
 
 template<typename IntType>

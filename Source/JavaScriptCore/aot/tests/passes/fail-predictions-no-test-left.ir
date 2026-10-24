@@ -1,0 +1,42 @@
+# Where no test is left behind the branch, the branch goes too
+# FORM: Prepared
+# OPTIONS: testing=FailPredictions:2
+# RUN: pass SimplifyControlFlow VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="noTestIsLeft" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = ShouldFailPrediction
+    Branch v1 -> taken b2(), notTaken b1()
+  b1():
+    v2 = Mul v0, v0
+    Return v2
+  b2() frequency=Unlikely:
+    v3 = ToNumber v0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="noTestIsLeft"
+# CHECK-NOT: Branch
+# CHECK-NOT: ToNumber
+# CHECK: = Mul v0, v0
+
+function f1 name="oneTestIsLeft" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = ShouldFailPrediction
+    Branch v1 -> taken b3(), notTaken b1()
+  b1():
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3: number):
+    v4 = Mul v3, v3
+    Return v4
+  b3() frequency=Unlikely:
+    v5 = ToNumber v0
+    Return v5
+}
+# CHECK-LABEL: function f1 name="oneTestIsLeft"
+# CHECK: Branch v1 -> taken [[failed]](), notTaken
+# CHECK: Branch v2 -> taken {{*}}(| 0), notTaken [[failed]]()
+# CHECK: [[failed]]() frequency=Unlikely:
+# CHECK-NEXT: = ToNumber v0

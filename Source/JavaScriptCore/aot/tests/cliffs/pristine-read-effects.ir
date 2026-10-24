@@ -1,0 +1,148 @@
+# A read of a pristine array runs no other code in any form, so one test of the array and one read of a field in front of the loop serve every turn
+# TODO: nobody: a proven slot read stays inside the fast loop: what is available ends where the generic copy comes back, and slots are not hoisted
+# RUN: pipeline CheckPlacement
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Scale" fields=[{key="factor" declared={type=number} flags=[IsRequired]}]
+variable g0 name="scale" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="weights" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewArray v2, v2 contents=number
+    PutModuleVariable v6 variable=g1
+    v8 = PropGet v0 key="publish" [isFreeName]
+    v9 = NewClosure function=f1
+    v10 = Call v8, -, v9
+    v11 = NewClosure function=f2
+    v12 = Call v8, -, v11
+    v13 = NewClosure function=f3
+    v14 = Call v8, -, v13
+    v15 = NewClosure function=f4
+    v16 = Call v8, -, v15
+    Return
+}
+function f1 name="setFactor" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0
+    PropSet v1, v0 key="factor"
+    Return
+}
+
+function f2 name="testedArray" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="factor"
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b4()
+  b2():
+    v8 = Integer integer=1
+    v9 = BitAnd v5, v8
+    v10 = ElemGet v0, v9
+    v11 = PropGet v2 key="factor"
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b4(), notTaken b3()
+  b3():
+    v13 = Add v5, v8
+    v14 = BitOr v13, v4
+    Jump -> next b1(v14)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="testedArray"
+# CHECK: [[factor2]]:{{*}}= GetSlot {{*}}key="factor"
+# CHECK: [[test2]]:{{*}}= IsPristine v0 builtinClass=Array
+# CHECK-NEXT: [[test2]] -> taken [[entry2]](| 0)
+# CHECK-NEXT: [[entry2]]([[guard2]]: guard)
+# CHECK: LoopHint
+# CHECK-NOT: GetSlot
+# CHECK-NOT: IsPristine
+# CHECK: = GetArrayElement v0, [[position2]], [[guard2]]
+# CHECK-NOT: GetSlot
+# CHECK-NOT: IsPristine
+# CHECK: = StrictEq {{*}}[[factor2]]
+# CHECK-NOT: GetSlot
+# CHECK: = ElemGet v0,
+# CHECK: = GetSlot {{*}}key="factor"
+
+function f3 name="provenArray" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="factor"
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(), notTaken b4()
+  b2():
+    v8 = Integer integer=1
+    v9 = BitAnd v5, v8
+    v10 = ElemGet v1, v9
+    v11 = PropGet v2 key="factor"
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b4(), notTaken b3()
+  b3():
+    v13 = Add v5, v8
+    v14 = BitOr v13, v4
+    Jump -> next b1(v14)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: function f3 name="provenArray"
+# CHECK: [[weights]]: Array<number, proven{{*}}pristine[Storage{{*}}= GetModuleVariable variable=g1
+# CHECK: [[factor3]]:{{*}}= GetSlot {{*}}key="factor"
+# CHECK-NOT: IsPristine
+# CHECK: LoopHint
+# CHECK-NOT: GetSlot
+# CHECK-NOT: IsPristine
+# CHECK: = GetArrayElement [[weights]],
+# CHECK-NOT: GetSlot
+# CHECK-NOT: IsPristine
+# CHECK: = StrictEq {{*}}[[factor3]]
+
+function f4 name="unknownReceiver" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="factor"
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b4()
+  b2():
+    v8 = Integer integer=1
+    v9 = BitAnd v5, v8
+    v10 = ElemGet v0, v9
+    v11 = PropGet v2 key="factor"
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b4(), notTaken b3()
+  b3():
+    v13 = Add v5, v8
+    v14 = BitOr v13, v4
+    Jump -> next b1(v14)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: function f4 name="unknownReceiver"
+# CHECK: = GetSlot {{*}}key="factor"
+# CHECK-NOT: IsPristine
+# CHECK: LoopHint
+# CHECK-NOT: GetArrayElement
+# CHECK: = ElemGet v0,
+# CHECK: [[again4]]:{{*}}= GetSlot {{*}}key="factor"
+# CHECK: = StrictEq {{*}}[[again4]]

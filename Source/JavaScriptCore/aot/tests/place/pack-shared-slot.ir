@@ -1,0 +1,77 @@
+# A read through a set asks for one offset in every member, and gets the lowest one whose bytes are free in all of them
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 3
+# STATISTIC: SharesRefused = 0
+# STATISTIC: FieldsOutOfLine = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Small" fields=[{key="shared" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Large" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="shared" declared={type=number} flags=[IsRequired]}]
+layout L2 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Both" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Second" fields=[{key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="smallOrLarge" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="firstOrBoth" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="bothOrSecond" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2, v2, v2 layout=L1 fields=[0, 1, 2, 3]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v2 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g1
+    v12 = NewObject -, v2, v2 layout=L3 fields=[0, 1]
+    v13 = FinishObject v12
+    PutModuleVariable v13 variable=g1
+    PutModuleVariable v13 variable=g2
+    v16 = NewObject -, v2 layout=L4 fields=[0]
+    v17 = FinishObject v16
+    PutModuleVariable v17 variable=g2
+    v19 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="shared"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="x"
+    v4 = GetModuleVariable variable=g2
+    v5 = PropGet v4 key="y"
+    v6 = Add v1, v3
+    v7 = Add v6, v5
+    Return v7
+}
+
+# The last field of the large layout comes first in the cell, so the small layout does not grow.
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: .0 "shared" Double @16
+# CHECK-NEXT: L1 CompiledObject size=48
+# CHECK-NEXT: .0 "a" Double @24
+# CHECK-NEXT: .1 "b" Double @32
+# CHECK-NEXT: .2 "c" Double @40
+# CHECK-NEXT: .3 "shared" Double @16
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: .0 "x" Double @16
+# CHECK-NEXT: L3 CompiledObject size=32
+# CHECK-NEXT: .0 "x" Double @16
+# CHECK-NEXT: .1 "y" Double @24
+# "y" cannot take the first 8 bytes, which "x" has in L3, so they stay free in L4.
+# CHECK-NEXT: L4 CompiledObject size=32
+# CHECK-NEXT: .0 "y" Double @24
+# CHECK: "shared" {L0 L1} read
+# CHECK-NEXT: one location Double @16
+# CHECK-NEXT: "x" {L2 L3} read
+# CHECK-NEXT: one location Double @16
+# CHECK-NEXT: "y" {L3 L4} read
+# CHECK-NEXT: one location Double @24

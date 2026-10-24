@@ -1,0 +1,31 @@
+# holder.a = node; holder.b = symbol; function setParent(o: Node) { o.parent = 1.5 }  setParent(holder.a); symbol.parent
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Node" fields=[{key="parent" declared={type=int|fractional}
+# CHECK: layout L1 name="Symbol" fields=[{key="parent" declared={type=string}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Node" fields=[{key="parent" declared={type=anything} flags=[IsRequired]}, {key="pos" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Symbol" fields=[{key="parent" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="holder" [isFreeName]
+    v2 = Integer integer=1
+    v3 = String string="s"
+    v4 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v5 = NewObject -, v3, v3 layout=L1 fields=[0, 1]
+    PropSet v1, v4 key="a"
+    PropSet v1, v5 key="b"
+    v8 = NewClosure function=f1
+    v9 = PropGet v1 key="a"
+    v10 = Call v8, -, v9
+    v11 = PropGet v5 key="parent"
+    Return v11
+}
+function f1 name="setParent" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Double number=1.5
+    PropSet v0, v1 key="parent" mode=Strict
+    Return
+}

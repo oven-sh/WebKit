@@ -1,0 +1,52 @@
+# function multiply(a: number, b: number) { return a * b }   const triple = multiply.bind(null, 3)   function run(n) { return triple(n) }   function hand() { return triple }   multiply(2, 2)
+# `multiply` takes its parameters as numbers and not as values. It is a plain function, which `new` can construct, and so can what `bind` makes of it:
+# the run time answers that, and hands the bound arguments on as it finds them in the closure: as values. So the closure of the bound function holds the 3 as a value,
+# and the body of the bound function, which whoever binds has shown a number, takes it for one.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.register = (run, hand) => { const triple = hand(); print(run(5), triple(6), triple.name, triple.length); const made = new triple(7); print(typeof made, Object.getPrototypeOf(made) === Object.getPrototypeOf(new (Object.getPrototypeOf(made).constructor)(1, 1))); print(made instanceof triple); };
+# STATISTIC: BoundFunctions = 1
+# IR-NOT: FunctionPrototypeBind
+# IR: name="multiply"{{*}}role=BoundFunction{{*}}captures=[{type=anything}, {type=function}]
+# IR: = AssumeType {{*}}castType=
+# CHECK: 15 18 bound multiply 1
+# CHECK-NEXT: object true
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="triple" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Null
+    v2 = Integer integer=3
+    v3 = PropGet v0 key="bind"
+    v4 = Call v3, v0, v1, v2 calleeKey="bind"
+    PutModuleVariable v4 variable=g0
+    v6 = Integer integer=2
+    v7 = Call v0, -, v6, v6
+    v8 = NewClosure function=f2
+    v9 = NewClosure function=f3
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="register" [isFreeName]
+    v12 = Call v11, -, v8, v9
+    Return
+}
+function f1 name="multiply" length=2 parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Mul v0, v1
+    Return v2
+}
+function f2 name="run" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="hand" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

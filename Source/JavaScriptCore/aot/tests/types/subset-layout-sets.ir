@@ -1,0 +1,34 @@
+# The whole relation over two layouts: each alone, both, both beside undefined, and object
+# FORM: Prepared
+# RUN: subset
+# CHECK: t0 <= t0: yes overlaps: yes
+# CHECK-NEXT: t0 <= t1: no overlaps: yes
+# CHECK-NEXT: t0 <= t2: no overlaps: yes
+# CHECK-NEXT: t0 <= t3: yes overlaps: yes
+# CHECK-NEXT: t0 <= t4: yes overlaps: yes
+# CHECK-NEXT: t1 <= t0: yes overlaps: yes
+# CHECK-NEXT: t1 <= t1: yes overlaps: yes
+# CHECK-NEXT: t1 <= t2: no overlaps: no
+# CHECK-NEXT: t1 <= t3: yes overlaps: yes
+# CHECK-NEXT: t1 <= t4: yes overlaps: yes
+# CHECK-NEXT: t2 <= t0: yes overlaps: yes
+# CHECK-NEXT: t2 <= t1: no overlaps: no
+# CHECK-NEXT: t2 <= t2: yes overlaps: yes
+# CHECK-NEXT: t2 <= t3: yes overlaps: yes
+# CHECK-NEXT: t2 <= t4: yes overlaps: yes
+# CHECK-NEXT: t3 <= t0: no overlaps: yes
+# CHECK-NEXT: t3 <= t1: no overlaps: yes
+# CHECK-NEXT: t3 <= t2: no overlaps: yes
+# CHECK-NEXT: t3 <= t3: yes overlaps: yes
+# CHECK-NEXT: t3 <= t4: no overlaps: yes
+# CHECK-NEXT: t4 <= t0: no overlaps: yes
+# CHECK-NEXT: t4 <= t1: no overlaps: yes
+# CHECK-NEXT: t4 <= t2: no overlaps: yes
+# CHECK-NEXT: t4 <= t3: no overlaps: yes
+# CHECK-NEXT: t4 <= t4: yes overlaps: yes
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+layout L1 name="Point3D" supertypes=[L0]
+function f0 name="types" parameters=[{type=L0|L1}, {type=L0}, {type=L1}, {type=object}, {type=undefined|L0|L1}] results=[{type=undefined}]

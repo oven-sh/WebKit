@@ -1,0 +1,55 @@
+# The literals of several modules may share one layout, and the layout names only the first of them as its module. `inst.destroy`, asked in a library of an object nobody could follow:
+# six kinds of records have the name, more than a test is made for. The library allocates one of them itself, though that layout names the application: it comes first.
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+module m1 path="/library.js" displayPath="library.js"
+entry module=m0
+layout L0 name="Cipher" module=m0 fields=[{key="destroy" declared={type=anything}}, {key="a" declared={type=anything}}]
+layout L1 name="Duplex" module=m0 fields=[{key="b" declared={type=anything}}, {key="destroy" declared={type=anything}}]
+layout L2 name="Readable" module=m0 fields=[{key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="destroy" declared={type=anything}}]
+layout L3 name="Writable" module=m0 fields=[{key="destroy" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}]
+layout L4 name="Socket" module=m0 fields=[{key="g" declared={type=anything}}, {key="destroy" declared={type=anything}}, {key="h" declared={type=anything}}]
+layout L5 name="Shared" module=m0 fields=[{key="destroy" declared={type=anything}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Undefined
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v5 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v6 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
+    v7 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+    v8 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v9 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v10 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v11 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
+    v12 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+    v13 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v14 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v15 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v16 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
+    v17 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+    v18 = NewObject -, v2 layout=L5 fields=[0]
+    v19 = NewClosure function=f1
+    v20 = NewClosure function=f2
+    v21 = Call v1, -, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20
+    Return v21
+}
+
+function f1 name="make" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L5 fields=[0]
+    Return v1
+}
+
+function f2 name="inTheLibrary" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="destroy"
+    Return v1
+}
+# CHECK-LABEL: name="inTheLibrary"
+# CHECK: = TypeTest v0 testedType={{*}}L5

@@ -27,15 +27,25 @@
 #include "StackManager.h"
 
 #include "StackManagerInlines.h"
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
 
 namespace JSC {
 
 CONCURRENT_SAFE void StackManager::requestStop()
 {
     Locker lock { m_mirrorLock };
+#if USE(BUN_JSC_ADDITIONS)
+    m_stopsAtEveryPoll.storeRelaxed(true);
+#endif
     m_trapAwareSoftStackLimit.storeRelaxed(stopRequestMarker());
     for (auto& mirror : m_mirrors)
         mirror.m_trapAwareSoftStackLimit.storeRelaxed(stopRequestMarker());
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), true);
+#endif
 }
 
 CONCURRENT_SAFE void StackManager::cancelStop()
@@ -44,10 +54,40 @@ CONCURRENT_SAFE void StackManager::cancelStop()
         return;
 
     Locker lock { m_mirrorLock };
-    m_trapAwareSoftStackLimit.storeRelaxed(m_softStackLimit);
+#if USE(BUN_JSC_ADDITIONS)
+    m_stopsAtEveryPoll.storeRelaxed(false);
+    void* limit = stopsAtFunctionEntries() ? stopRequestMarker() : m_softStackLimit;
+#else
+    void* limit = m_softStackLimit;
+#endif
+    m_trapAwareSoftStackLimit.storeRelaxed(limit);
     for (auto& mirror : m_mirrors)
-        mirror.m_trapAwareSoftStackLimit.storeRelaxed(m_softStackLimit);
+        mirror.m_trapAwareSoftStackLimit.storeRelaxed(limit);
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), stopsAtFunctionEntries());
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void StackManager::setStopsAtFunctionEntries(bool stops)
+{
+    Locker lock { m_mirrorLock };
+    m_stopsAtFunctionEntries.storeRelaxed(stops);
+    if (stopsAtEveryPoll())
+        return;
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), stops);
+#endif
+    if (!stops && Options::forceTrapAwareStackChecks())
+        return;
+    void* limit = stops ? stopRequestMarker() : m_softStackLimit;
+    m_trapAwareSoftStackLimit.storeRelaxed(limit);
+    for (auto& mirror : m_mirrors)
+        mirror.m_trapAwareSoftStackLimit.storeRelaxed(limit);
+}
+#endif
 
 void StackManager::setStackSoftLimit(void* newStackLimit)
 {

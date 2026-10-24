@@ -1,0 +1,159 @@
+# The callees of a call come from the type of its callee. Where only the expected type lists them, one is left to PlaceTypeTests, and several stay with the call as it is
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# RUN(TWICE): pass ResolveCalls ResolveCalls
+# STATISTIC: CallsResolved = 4
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f8 flow={baseState=None}
+function f0 name="first" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="second" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="third" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="bindable" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="bindable" role=GenericEntrypoint captures=[{type=f3}] results=[{type=anything}] creator=Entrypoint{target=f3} {
+  b0(v0: f3):
+    v1 = CallDirect function=f3
+    Return v1
+}
+function f5 name="bindable" role=BoundFunction captures=[{type=function}] results=[{type=anything}] creator=BoundFunction{target=f3 capturesTargetClosure=true} {
+  b0(v0: function):
+    v1 = CallDirect function=f3
+    Return v1
+}
+function f6 name="fails" results=[{type=never}] {
+  b0():
+    v0 = Undefined
+    Throw v0
+}
+function f7 name="rest-of-numbers" flags=[HasRestParameter] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+function f8 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+
+function f9 name="three-functions" parameters=[{type=f0|f1|f2}] results=[{type=anything}] {
+  b0(v0: f0|f1|f2):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f9 name="three-functions"
+# CHECK: [[isFirst]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isFirst]] -> taken [[firstArm]](| 0), notTaken [[others]](| 0)
+# CHECK: [[firstArm]]({{*}}: f0):
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: [[others]]([[secondOrThird]]: f1|f2):
+# CHECK-NEXT: [[isSecond]]: boolean = TypeTest [[secondOrThird]] testedType=f1
+# CHECK-NEXT: Branch [[isSecond]] -> taken [[secondArm]](| 0), notTaken [[thirdArm]](| 0)
+# CHECK: [[secondArm]]({{*}}: f1):
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK: [[thirdArm]]({{*}}: f2):
+# CHECK-NEXT: = CallDirect function=f2
+# CHECK-NOT: = Call v
+function f10 name="function-or-number" parameters=[{type=number|f0}] results=[{type=anything}] {
+  b0(v0: number|f0):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f10 name="function-or-number"
+# CHECK: TypeTest v0 testedType=f0
+# CHECK: ({{*}}: f0):
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: ([[notCallable]]: number) frequency=Unlikely:
+# CHECK-NEXT: = Call [[notCallable]]
+function f11 name="stamp-on-unknown-callee" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 callees=[f0]
+    Return v1
+}
+# CHECK-LABEL: function f11 name="stamp-on-unknown-callee"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything = Call v0 callees=[f0]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f12 name="callee-never-returns" parameters=[{type=f6}] results=[{type=anything}] {
+  b0(v0: f6):
+    v1 = Call v0
+    Unreachable
+}
+# CHECK-LABEL: function f12 name="callee-never-returns"
+# CHECK-NEXT: b0(v0: f6):
+# CHECK-NEXT: : never = CallDirect function=f6
+# CHECK-NEXT: Unreachable
+function f13 name="bound-function" parameters=[{type=f5}] results=[{type=anything}] {
+  b0(v0: f5):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f13 name="bound-function"
+# CHECK: [[target]]: function = GetCapture v0 function=f5
+# CHECK-NEXT: = CallDirect [[target]] function=f5
+function f14 name="generic-entrypoint" parameters=[{type=f4}] results=[{type=anything}] {
+  b0(v0: f4):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f14 name="generic-entrypoint"
+# CHECK-NEXT: b0(v0: f4):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f15 name="rest-parameter-not-array" parameters=[{type=f7}] results=[{type=anything}] {
+  b0(v0: f7):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f15 name="rest-parameter-not-array"
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f16 name="class-constructor" parameters=[{type=f8}] results=[{type=anything}] {
+  b0(v0: f8):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f16 name="class-constructor"
+# CHECK-NEXT: b0(v0: f8):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f17 name="one-expected-callee" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f17 name="one-expected-callee"
+# CHECK-NEXT: b0(v0: anything ~ f0):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f18 name="two-expected-callees" parameters=[{type=f0|f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f18 name="two-expected-callees"
+# CHECK-NEXT: b0(v0: anything ~ f0|f1):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

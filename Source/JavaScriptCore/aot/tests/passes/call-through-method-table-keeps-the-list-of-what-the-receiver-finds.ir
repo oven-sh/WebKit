@@ -1,0 +1,37 @@
+# A call of a method that each class of a family defines lists what the receiver can find under the name.
+# The call through the method table keeps the list, whole or not: the lookup of the selector and the entrypoints run nothing else
+# FORM: Prepared
+# RUN: pass CallThroughMethodTable
+# STATISTIC: TableCalls = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="Square" constructor=f0 flow={baseState=None allocationClasses=[0]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f1}] namedMembers=[{key="scaled" function=f1}]}
+layout L1 kind=Instance name="Circle" constructor=f2 flow={baseState=None allocationClasses=[1]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f3}] namedMembers=[{key="scaled" function=f3}]}
+function f0 name="Square" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="scaled" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything ~ number):
+    Return v1
+}
+function f2 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything ~ number):
+    v2 = Add v1, v1
+    Return v2
+}
+function f4 name="listsEveryCallee" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: number):
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled" callees=[f1, f3]
+    Return v3
+}
+# CHECK-LABEL: function f4 name="listsEveryCallee"
+# CHECK: = CallTable v0, v1 function={{*}} key="scaled" receivers=[L0, L1] entrypoints=[{{*}}] callees=[f1, f3]
+function f5 name="listsSomeCallees" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: number):
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled" callees=[f1, ..]
+    Return v3
+}
+# CHECK-LABEL: function f5 name="listsSomeCallees"
+# CHECK: = CallTable v0, v1 function={{*}} key="scaled" receivers=[L0, L1] entrypoints=[{{*}}] callees=[f1, ..]

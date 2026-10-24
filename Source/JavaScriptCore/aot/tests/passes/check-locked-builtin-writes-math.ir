@@ -1,0 +1,23 @@
+# Every member that Math has at start-up is fixed but Math.random, and so is the name Math of the global object. A store to Math.floor or to globalThis.Math at the top of the body of the entry module throws in every run: two errors. Math.random can be replaced and a new name can be added: no diagnostic
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="floor" mode=Strict @10
+    PropSet v0, v1 key="random" mode=Strict @20
+    PropSet v0, v1 key="half" mode=Strict @30
+    v5 = Builtin builtin=GlobalThis
+    v6 = NewObject layout=L0 fields=[]
+    PropSet v5, v6 key="Math" mode=Strict @40
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+  b0():
+    Return
+}

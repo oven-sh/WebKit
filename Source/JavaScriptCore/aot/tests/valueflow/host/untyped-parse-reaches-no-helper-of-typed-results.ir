@@ -1,0 +1,20 @@
+# JSON.parse(text) without a type is the call of the built-in and nothing else: no pass replaces it, and validateByPlan (runtimefunction 131117) stays out of the image
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+runtimefunction id=131117 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="{\"id\":1}"
+    v1 = Builtin builtin=JSON
+    v2 = Builtin builtin=JSONParse
+    v3 = Call v2, v1, v0
+    Return
+}
+function f1 name="validateByPlan" role=Library enclosingRuntimeFunction=131117 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

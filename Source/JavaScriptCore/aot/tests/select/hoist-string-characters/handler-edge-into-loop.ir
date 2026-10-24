@@ -1,0 +1,67 @@
+# The handlers of the entry and of the header decide whether a string is flattened for a loop, and that of a reader (handler-inside-loop.ir). The handler of anything else in the loop does not
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 2
+
+# A call under a handler that stays in the loop
+# CHECK-LABEL: function f0 name="handler-in-loop"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat0]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat0]], -, -, v6
+# CHECK: v12: anything = Call v2
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="handler-in-loop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: anything):
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = Undefined
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    v10 = CallBuiltin v0, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Less v1, v6
+    Branch v11 -> taken b3(), notTaken b5()
+  b3() frequency=Rare handler=b4():
+    v12 = Call v2
+    Jump -> next b5()
+  b4() role=CatchHandler frequency=Rare:
+    v13 = CatchValue
+    Jump -> next b5()
+  b5():
+    v14 = Add v6, v4
+    Jump -> next b1(v14, v10)
+  b6():
+    Return v7
+}
+
+# The loop is covered by a handler and the block in front of it is not: an exception of FlattenString would miss the handler
+# CHECK-LABEL: function f1 name="covered-loop-entered-from-outside"
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN v0, -, -, v5
+# CHECK-NOT: FlattenString
+function f1 name="covered-loop-entered-from-outside" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6) handler=b4():
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v6
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v11
+}

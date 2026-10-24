@@ -1,0 +1,41 @@
+# Overlapping pairs of layouts that fit one order get consecutive shape numbers, so each pair is tested as a range
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
+# RUN: place shapes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="C" fields=[{key="x" declared={type=number}}]
+layout L2 name="B" fields=[{key="x" declared={type=number}}]
+layout L3 name="D" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v2 layout=L3 fields=[0]
+    v10 = FinishObject v9
+    v11 = Convert v1 declared={type=L0|L2 flags=[IsExpected]}
+    v12 = PropGet v11 key="x"
+    v13 = Convert v1 declared={type=L1|L2 flags=[IsExpected]}
+    v14 = PropGet v13 key="x"
+    v15 = Convert v1 declared={type=L1|L3 flags=[IsExpected]}
+    v16 = PropGet v15 key="x"
+    Return
+}
+# Only the orders A B C D and D C B A make all three pairs consecutive. The layouts are declared in the order A C B D.
+# CHECK: L0 shapes 1..1
+# CHECK: L1 shapes 3..3
+# CHECK: L2 shapes 2..2
+# CHECK: L3 shapes 4..4
+# CHECK: set [L0, L2] upto 2 cost=2
+# CHECK-NEXT: set [L1, L2] range 2..3 cost=3
+# CHECK-NEXT: set [L1, L3] range 3..4 cost=3

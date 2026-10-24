@@ -48,6 +48,7 @@ assembler/AbstractMacroAssembler.cpp
 assembler/AssemblerBuffer.cpp
 assembler/AssemblyComments.cpp
 assembler/CPU.cpp
+assembler/CPUFeatureSet.cpp @no-unify
 assembler/JITOperationList.cpp
 assembler/LinkBuffer.cpp
 assembler/MacroAssembler.cpp
@@ -67,6 +68,7 @@ b3/air/AirAllocateRegistersByGreedy.cpp
 b3/air/AirAllocateStackByGraphColoring.cpp
 b3/air/AirArg.cpp
 b3/air/AirBasicBlock.cpp
+b3/air/AirBlockEntryClobberSpecial.cpp @no-unify
 b3/air/AirBlockInsertionSet.cpp
 b3/air/AirBreakCriticalEdges.cpp
 b3/air/AirCCallSpecial.cpp
@@ -74,15 +76,22 @@ b3/air/AirCCallingConvention.cpp
 b3/air/AirCode.cpp
 b3/air/AirCustom.cpp
 b3/air/AirDisassembler.cpp
+b3/air/AirDuplicateReturns.cpp @no-unify
 b3/air/AirEliminateDeadCode.cpp
 b3/air/AirEmitShuffle.cpp
 b3/air/AirEnsureDedicatedLoopEntryExitBlocks.cpp
 b3/air/AirFixObviousSpills.cpp
 b3/air/AirFixPartialRegisterStalls.cpp
 b3/air/AirFixSpillsAfterTerminals.cpp
+b3/air/AirForwardRegisterCopies.cpp @no-unify
+b3/air/AirFrameEmission.cpp @no-unify
+b3/air/AirFrameLayout.cpp @no-unify
+b3/air/AirFrameStates.cpp @no-unify
 b3/air/AirGenerate.cpp
 b3/air/AirGenerated.cpp
 b3/air/AirHandleCalleeSaves.cpp
+b3/air/AirFoldTrapsIntoAccesses.cpp @no-unify
+b3/air/AirHoistCommonMoves.cpp @no-unify
 b3/air/AirInsertionSet.cpp
 b3/air/AirInst.cpp
 b3/air/AirKind.cpp
@@ -90,14 +99,21 @@ b3/air/AirLogRegisterPressure.cpp
 b3/air/AirLowerAfterRegAlloc.cpp
 b3/air/AirLowerEntrySwitch.cpp
 b3/air/AirLowerStackArgs.cpp
+b3/air/AirMergeIdenticalBlocks.cpp @no-unify
 b3/air/AirOptimizeBlockOrder.cpp
 b3/air/AirOptimizePairedLoadStore.cpp
 b3/air/AirPadInterference.cpp
 b3/air/AirPhaseInsertionSet.cpp
 b3/air/AirPhaseScope.cpp
+b3/air/AirPlanFrame.cpp @no-unify
+b3/air/AirPolicy.cpp @no-unify
 b3/air/AirPrintSpecial.cpp
 b3/air/AirRegLiveness.cpp
 b3/air/AirReportUsedRegisters.cpp
+b3/air/AirResequenceMovesBeforePatches.cpp @no-unify
+b3/air/AirReuseConditionFlags.cpp @no-unify
+b3/air/AirShrinkWrapFrame.cpp @no-unify
+b3/air/AirSplitLiveRangesAroundFrame.cpp @no-unify
 b3/air/AirSimplifyCFG.cpp
 b3/air/AirSpecial.cpp
 b3/air/AirStackAllocation.cpp
@@ -109,53 +125,81 @@ b3/air/AirValidate.cpp
 
 b3/B3AbstractHeap.cpp
 b3/B3AbstractHeapRepository.cpp
+b3/B3Arena.cpp @no-unify
 b3/B3ArgumentRegValue.cpp
 b3/B3AtomicValue.cpp
 b3/B3Bank.cpp
 b3/B3BasicBlock.cpp
 b3/B3BlockInsertionSet.cpp
+b3/B3BlockRarity.cpp @no-unify
 b3/B3BottomTupleValue.cpp
 b3/B3BulkMemoryValue.cpp
 b3/B3BreakCriticalEdges.cpp
 b3/B3CanonicalizePrePostIncrements.cpp
 b3/B3CCallValue.cpp
 b3/B3CaseCollection.cpp
+b3/B3CheckKnownProperties.cpp @no-unify
 b3/B3CheckSpecial.cpp
 b3/B3CheckValue.cpp
+b3/B3CheckVariablesAreSet.cpp @no-unify
+b3/B3ClampLoopBound.cpp @no-unify
 b3/B3Common.cpp
 b3/B3Commutativity.cpp
+b3/B3CompilationScratch.cpp @no-unify
 b3/B3Compile.cpp
 b3/B3Const32Value.cpp
 b3/B3Const64Value.cpp
 b3/B3Const128Value.cpp
 b3/B3ConstDoubleValue.cpp
 b3/B3ConstFloatValue.cpp
+b3/B3ConstantReplacements.cpp @no-unify
 b3/B3ConstrainedValue.cpp
+b3/B3ConvertBranchesToSelects.cpp @no-unify
+b3/B3CountedLoops.cpp @no-unify
+b3/B3CycleForest.cpp @no-unify
 b3/B3DataSection.cpp
+b3/B3DominatingConditions.cpp @no-unify
 b3/B3DuplicateTails.cpp
 b3/B3Effects.cpp
 b3/B3EliminateCommonSubexpressions.cpp
 b3/B3EliminateDeadCode.cpp
+b3/B3EliminateRedundantPhiCycles.cpp @no-unify
 b3/B3EliminateWasmGCAllocations.cpp
 b3/B3EnsureLoopPreHeaders.cpp
+b3/B3EstimateFrequencies.cpp @no-unify
 b3/B3EstimateStaticExecutionCounts.cpp
 b3/B3ExtractValue.cpp
 b3/B3FenceValue.cpp
 b3/B3FixSSA.cpp
+b3/B3FoldComparisonsWithBounds.cpp @no-unify
 b3/B3FoldPathConstants.cpp
 b3/B3FrequencyClass.cpp
 b3/B3Generate.cpp
+b3/B3HeapSet.cpp @no-unify
 b3/B3HoistLoopInvariantValues.cpp
+b3/B3InductionRecords.cpp @no-unify
 b3/B3InferSwitches.cpp
 b3/B3InsertionSet.cpp
+b3/B3IntRange.cpp @no-unify
 b3/B3Kind.cpp
 b3/B3LegalizeMemoryOffsets.cpp
+b3/B3LikelyPaths.cpp @no-unify
+b3/B3LoopInvariance.cpp @no-unify
+b3/B3LoopRangeChecks.cpp @no-unify
+b3/B3LoopRegions.cpp @no-unify
+b3/B3LoopUtilities.cpp @no-unify
+b3/B3LoopVersionPlan.cpp @no-unify
 b3/B3LowerMacros.cpp
 b3/B3LowerMacrosAfterOptimizations.cpp
+b3/B3LowerRelocatableValues.cpp @no-unify
 b3/B3LowerToAir.cpp
+b3/B3MaterializePinnedConstants.cpp @no-unify
 b3/B3MathExtras.cpp
+b3/B3MemoryNumbering.cpp @no-unify
 b3/B3MemoryValue.cpp
+b3/B3MergeAdjacentConstantStores.cpp @no-unify
 b3/B3MoveConstants.cpp
+b3/B3MovedLoadCheck.cpp @no-unify
 b3/B3Opcode.cpp
 b3/B3Operations.cpp
 b3/B3OptimizeAssociativeExpressionTrees.cpp
@@ -165,19 +209,30 @@ b3/B3PatchpointSpecial.cpp
 b3/B3PatchpointValue.cpp
 b3/B3PhaseScope.cpp
 b3/B3PhiChildren.cpp
+b3/B3PlaceConstantsByFrequency.cpp @no-unify
+b3/B3Policy.cpp @no-unify
 b3/B3Procedure.cpp
 b3/B3PureCSE.cpp
+b3/B3RangeReductions.cpp @no-unify
 b3/B3ReduceDoubleToFloat.cpp
 b3/B3ReduceStrength.cpp
+b3/B3RegionCloner.cpp @no-unify
+b3/B3RegisterPressure.cpp @no-unify
+b3/B3RelocatableValue.cpp @no-unify
+b3/B3RotateLoops.cpp @no-unify
 b3/B3SIMDValue.cpp
+b3/B3SimplifyTerminals.cpp @no-unify
+b3/B3SinkValues.cpp @no-unify
 b3/B3SlotBaseValue.cpp
 b3/B3SpecializeSelect.cpp
+b3/B3SplitBranchConditions.cpp @no-unify
 b3/B3StackmapGenerationParams.cpp
 b3/B3StackmapSpecial.cpp
 b3/B3StackmapValue.cpp
 b3/B3SwitchCase.cpp
 b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
+b3/B3ThreadJumps.cpp @no-unify
 b3/B3Type.cpp
 b3/B3UpsilonValue.cpp
 b3/B3UseCounts.cpp
@@ -188,6 +243,7 @@ b3/B3ValueRep.cpp
 b3/B3Variable.cpp
 b3/B3VariableLiveness.cpp
 b3/B3VariableValue.cpp
+b3/B3VersionLoops.cpp @no-unify
 b3/B3WasmAddressValue.cpp
 b3/B3WasmBoundsCheckValue.cpp
 b3/B3WasmArrayElementValue.cpp
@@ -516,8 +572,10 @@ ftl/FTLValueRange.cpp
 heap/AlignedMemoryAllocator.cpp
 heap/Allocator.cpp
 heap/BlockDirectory.cpp
+heap/CagedAlignedMemoryAllocator.cpp @no-unify
 heap/CellAttributes.cpp
 heap/CellContainer.cpp
+heap/CellVisitValidator.cpp @no-unify
 heap/CodeBlockSet.cpp
 heap/CollectionScope.cpp
 heap/Collector.cpp
@@ -550,6 +608,7 @@ heap/IsoCellSet.cpp
 heap/IsoHeapCellType.cpp
 heap/IsoSubspace.cpp
 heap/JITStubRoutineSet.cpp
+heap/MarkedBlockCage.cpp @no-unify
 heap/PreciseAllocation.cpp
 heap/LocalAllocator.cpp
 heap/MachineStackMarker.cpp
@@ -563,12 +622,15 @@ heap/MarkingConstraintSolver.cpp
 heap/MutatorScheduler.cpp
 heap/MutatorState.cpp
 heap/PreciseSubspace.cpp
+heap/RememberedSlotSet.cpp @no-unify
+heap/ReservedRangeHeap.cpp @no-unify
 heap/RootMarkReason.cpp
 heap/SimpleMarkingConstraint.cpp
 heap/SlotVisitor.cpp
 heap/SpaceTimeMutatorScheduler.cpp
 heap/StochasticSpaceTimeMutatorScheduler.cpp
 heap/StopIfNecessaryTimer.cpp
+heap/StoredCellLog.cpp @no-unify
 heap/StrongSet.cpp
 heap/StructureAlignedMemoryAllocator.cpp
 heap/Subspace.cpp
@@ -777,6 +839,10 @@ runtime/CacheableIdentifier.cpp
 runtime/CachedBytecode.cpp
 runtime/CachedSpecialPropertyAdaptiveStructureWatchpoint.cpp
 runtime/CachedTypes.cpp
+runtime/ImmutablePropertyNames.cpp @no-unify
+runtime/JSObjectElementsStartOffset.cpp @no-unify
+runtime/JSObjectFrozenElements.cpp @no-unify
+runtime/PropertyRun.cpp @no-unify
 runtime/TerminationDeadline.cpp
 runtime/TopExceptionScope.cpp
 runtime/ClassInfo.cpp
@@ -1179,6 +1245,7 @@ tools/SourceProfiler.cpp
 tools/VMInspector.cpp
 
 wasm/WasmAddressType.cpp
+wasm/WasmCodeInImage.cpp @no-unify
 wasm/WasmOMGIRGenerator.cpp
 wasm/WasmBBQDisassembler.cpp
 wasm/WasmBBQJIT.cpp @no-unify-when(bundle<=8) @cost:5
@@ -1304,13 +1371,24 @@ wasm/debugger/WasmVirtualAddress.cpp
 wasm/debugger/WasmModuleDebugInfo.cpp
 
 yarr/RegularExpression.cpp
+yarr/YarrBacktrackingAnalysis.cpp @no-unify
 yarr/YarrCanonicalizeUCS2.cpp
+yarr/YarrCharacterSetBits.cpp @no-unify
+yarr/YarrClassTable.cpp @no-unify
+yarr/YarrCodeGenerator.cpp @no-unify
 yarr/YarrDisassembler.cpp
 yarr/YarrErrorCode.cpp
+yarr/YarrFirstFollowSets.cpp @no-unify
 yarr/YarrFlags.cpp
+yarr/YarrFlatProgramBuilder.cpp @no-unify
+yarr/YarrFlatProgramLogRemoval.cpp @no-unify
+yarr/YarrFlatProgramMatcher.cpp @no-unify
 yarr/YarrInterpreter.cpp
 yarr/YarrJIT.cpp
 yarr/YarrPattern.cpp
+yarr/YarrRequiredText.cpp @no-unify
+yarr/YarrSharedRoutines.cpp @no-unify
+yarr/YarrSharedTables.cpp @no-unify
 yarr/YarrSyntaxChecker.cpp
 yarr/YarrUnicodeProperties.cpp
 yarr/YarrTZoneImpls.cpp
@@ -1324,6 +1402,7 @@ heap/BunV8HeapSnapshotBuilder.cpp
 
 ffi/BunFFI.cpp
 ffi/FFICallHost.cpp
+ffi/FFICallbackEntryPool.cpp @no-unify
 ffi/FFICallbackThunk.cpp
 ffi/FFICallingConvention.cpp
 ffi/FFIContext.cpp
@@ -1333,6 +1412,7 @@ ffi/FFIDFGCodegen.cpp
 ffi/FFIICStub.cpp
 ffi/FFIInvokeThunk.cpp
 ffi/FFISignature.cpp
+ffi/FFIStubs.cpp @no-unify
 ffi/JSFFICallback.cpp
 ffi/JSFFIFunction.cpp
 ffi/tests/FFITestFixtures.cpp

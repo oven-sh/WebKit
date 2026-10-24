@@ -1,0 +1,30 @@
+# bare = { __proto__: null }; bare.toString(); odd = { __proto__: 1 }; odd.toString(); plain = {}; plain.toString()
+# A literal that names its prototype is under that prototype from the start: nothing finds a member of Object.prototype through `bare`.
+# A value that is neither an object nor null is left out, so `odd` stays under Object.prototype like a literal that names nothing.
+# RUN: valueflow-solve calls
+# CHECK-NOT: f0 v4 -> {{*}}
+# CHECK: f0 v9 -> ObjectPrototypeToString
+# CHECK-NEXT: f0 v12 -> ObjectPrototypeToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Bare"
+layout L1 name="Odd"
+layout L2 name="Plain"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewObject layout=L0 fields=[]
+    SetLiteralPrototype v1, v0
+    v3 = PropGet v1 key="toString"
+    v4 = Call v3, v1
+    v5 = Double number=1
+    v6 = NewObject layout=L1 fields=[]
+    SetLiteralPrototype v6, v5
+    v8 = PropGet v6 key="toString"
+    v9 = Call v8, v6
+    v10 = NewObject layout=L2 fields=[]
+    v11 = PropGet v10 key="toString"
+    v12 = Call v11, v10
+    Return
+}

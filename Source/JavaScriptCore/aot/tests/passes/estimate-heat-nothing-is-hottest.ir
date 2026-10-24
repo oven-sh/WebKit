@@ -1,0 +1,41 @@
+# A heat override empties the list of hottest functions
+# FORM: Prepared
+# OPTIONS: heat=nothing-is-hottest
+# RUN: pass EstimateHeat
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f2
+    v3 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v1 function=f1
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v1
+}
+
+function f1 name="inLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f2 name="once" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f0 Warm 8 10
+# CHECK-NEXT: f1 Hot 91 104
+# CHECK-NEXT: f2 Warm 0 14.3
+# CHECK-NEXT: hottest:
+# CHECK-NOT: f
+# CHECK: thresholds:
+# CHECK-NEXT: outcome: Unchanged

@@ -1,0 +1,21 @@
+# What flow narrowed to a class without an instance test: no test finds the instances, and the entrypoint needs none. It tests nothing and takes every narrowed type from flow, a class with an instance test too
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="narrowed" flags=[HasThis] thisType={type=Object} parameters=[{type=TypeError}, {type=undefined|Arguments}, {type=Function}, {type=L0|Object}, {type=Error}, {type=undefined|Map}] results=[{type=undefined}] {
+  b0(v0: Object, v1: TypeError, v2: undefined|Arguments, v3: Function, v4: L0|Object, v5: Error, v6: undefined|Map):
+    Return
+}
+# CHECK: name="narrowed" module=m0 role=GenericEntrypoint
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[error]]: anything, [[arguments]]: anything, [[function]]: anything, [[point]]: anything, [[testable]]: anything, [[map]]: anything):
+# CHECK-NEXT: [[thisProven]]: Object = AssumeType [[this]] castType=Object
+# CHECK-NEXT: [[errorProven]]: TypeError = AssumeType [[error]] castType=TypeError
+# CHECK-NEXT: [[argumentsProven]]: undefined|Arguments = AssumeType [[arguments]] castType=undefined|Arguments
+# CHECK-NEXT: [[functionProven]]: Function = AssumeType [[function]] castType=Function
+# CHECK-NEXT: [[pointProven]]: L0|Object = AssumeType [[point]] castType=L0|Object
+# CHECK-NEXT: [[testableProven]]: Error = AssumeType [[testable]] castType=Error
+# CHECK-NEXT: [[mapProven]]: undefined|Map = AssumeType [[map]] castType=undefined|Map
+# CHECK-NEXT: = CallDirect [[thisProven]], [[errorProven]], [[argumentsProven]], [[functionProven]], [[pointProven]], [[testableProven]], [[mapProven]] function=f0

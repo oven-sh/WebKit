@@ -1,0 +1,71 @@
+# Each operand of a terminator is a use in front of the terminator, under its operand index
+# FORM: Selected
+# RUN: analyses use-lists
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="switchThrowReturnCall" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v1
+  b2():
+    v2 = CallDirect v1 function=f3
+    ReturnCall v2
+  b3():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: use-lists:
+# CHECK-NEXT: v0 location: b0 parameter 0
+# CHECK-NEXT: v0 uses: [b0.terminator(0)]
+# CHECK-NEXT: v0 use points: [b0:0]
+# CHECK-NEXT: v1 location: b0 parameter 1
+# CHECK-NEXT: v1 uses: [b1.terminator(0) v2(0)]
+# CHECK-NEXT: v1 use points: [b1:0 b2:0]
+# CHECK-NEXT: v2 location: b2 value 0
+# CHECK-NEXT: v2 uses: [b2.terminator(0)]
+# CHECK-NEXT: v2 use points: [b2:1]
+# CHECK-NEXT: detached: []
+
+function f1 name="inlineCallWithReceiverAndTwoArguments" parameters=[{type=number}, {type=number}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: Array<number, pristine[Storage, Names]>):
+    TryCallInline v2, v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return
+}
+# CHECK: function f1
+# CHECK-NEXT: use-lists:
+# CHECK-NEXT: v0 location: b0 parameter 0
+# CHECK-NEXT: v0 uses: [b0.terminator(1)]
+# CHECK-NEXT: v0 use points: [b0:0]
+# CHECK-NEXT: v1 location: b0 parameter 1
+# CHECK-NEXT: v1 uses: [b0.terminator(2)]
+# CHECK-NEXT: v1 use points: [b0:0]
+# CHECK-NEXT: v2 location: b0 parameter 2
+# CHECK-NEXT: v2 uses: [b0.terminator(0)]
+# CHECK-NEXT: v2 use points: [b0:0]
+# CHECK-NEXT: v3 location: b1 parameter 0
+# CHECK-NEXT: v3 uses: [b1.terminator(0)]
+# CHECK-NEXT: v3 use points: [b1:0]
+# CHECK-NEXT: detached: []
+
+function f2 name="inlineCallWithoutReceiver" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    TryCallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2():
+    Return
+}
+# CHECK: function f2
+# CHECK-NEXT: use-lists:
+# CHECK-NEXT: v0 location: b0 parameter 0
+# CHECK-NEXT: v0 uses: [b0.terminator(1)]
+# CHECK-NEXT: v0 use points: [b0:0]
+
+function f3 name="callee" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,107 @@
+# What one step of the pass makes possible for an earlier step happens in the same run: an edge skips a whole chain of empty blocks, a test whose ways have come to lead to one place goes, and with it what only the test used, which empties the block for the test above it
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# CHECK: outcome: Changed
+# AGAIN: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="chainOfEmptyBlocks" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b6()
+  b1():
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Call v3, -
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f0 name="chainOfEmptyBlocks"
+# CHECK: Branch v0 -> taken b1(), notTaken [[end0]]()
+# CHECK: Branch v1 -> taken b2(), notTaken [[end0]]()
+# CHECK: Branch v2 -> taken b3(), notTaken [[end0]]()
+# CHECK: = Call v3
+# CHECK-NEXT: Jump -> next [[end0]]()
+# CHECK: [[end0]]():
+# CHECK-NEXT: Return v3
+
+function f1 name="nestOfTestsThatDecideNothing" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    v3 = Integer integer=1
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b6()
+  b1():
+    v5 = Integer integer=2
+    v6 = StrictEq v1, v5
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Integer integer=3
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="nestOfTestsThatDecideNothing"
+# CHECK-NEXT: b0(v0: number, v1: number, v2: anything):
+# CHECK-NEXT: Return v2
+
+function f2 name="testWithEffectStays" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="testWithEffectStays"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Return v1
+
+function f3 name="valueWithAnotherUserStays" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="valueWithAnotherUserStays"
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: v2: boolean = StrictEq v0, v1
+# CHECK-NEXT: Return v2
+
+function f4 name="parameterThatOnlyTheTestUsed" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4: boolean):
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f4 name="parameterThatOnlyTheTestUsed"
+# CHECK-NEXT: b0(v0: boolean, v1: boolean, v2: boolean, v3: anything):
+# CHECK-NEXT: Return v3

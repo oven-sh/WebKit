@@ -1,0 +1,29 @@
+# An allocation that is needed on every path stays where it is, and the decline says how it escapes
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+# CHECK: decline AllocationNotSunk f0 v2 None [0] reason=PassedToUnknownCode+RetainedByCallee
+# CHECK-NEXT: decline AllocationNotSunk f1 v2 None [0] reason=Returned
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="passedToUnknownCode" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Call v0, -, v2
+    Return v3
+}
+function f1 name="returned" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+function f2 name="diesOnEveryPath" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = PropGet v2 key="x" receivers=[L0]
+    Return v3
+}

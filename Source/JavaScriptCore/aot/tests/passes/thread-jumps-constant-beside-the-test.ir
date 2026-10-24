@@ -1,0 +1,83 @@
+# A constant that stands beside the test in a merge block is made again where it is used, so that an edge whose argument decides the test skips the block
+# FORM: Prepared
+# RUN: pass ThreadJumps
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass ThreadJumps ThreadJumps
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="constantUsedBehindTheTest" parameters=[{type=number}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: number|string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Negate v0
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = Integer integer=1000
+    v6 = TypeTest v4 testedType=number
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = Mod v7, v5
+    Return v8
+  b5():
+    v9 = Mod v4, v5
+    Return v9
+}
+# CHECK-LABEL: function f0 name="constantUsedBehindTheTest"
+# CHECK: = Negate v0
+# CHECK-NEXT: Jump -> next b4(v3)
+# CHECK: b4(v7: number):
+# CHECK-NEXT: [[thousand]]: 1000 = Integer integer=1000
+# CHECK-NEXT: = Mod v7, [[thousand]]
+
+function f1 name="computedValueUsedBehindTheTest" parameters=[{type=number}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: number|string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Negate v0
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = Negate v0
+    v6 = TypeTest v4 testedType=number
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = Mod v7, v5
+    Return v8
+  b5():
+    v9 = Mod v4, v5
+    Return v9
+}
+# What is computed in the block is computed once
+# CHECK-LABEL: function f1 name="computedValueUsedBehindTheTest"
+# CHECK: = Negate v0
+# CHECK-NEXT: Jump -> next b3(v3)
+
+function f2 name="noEdgeDecidesTheTest" parameters=[{type=number|string}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number|string, v1: number|string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Integer integer=1000
+    v5 = TypeTest v3 testedType=number
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b4(v6):
+    v7 = Mod v6, v4
+    Return v7
+  b5():
+    v8 = Mod v3, v4
+    Return v8
+}
+# The constant stays where it is
+# CHECK-LABEL: function f2 name="noEdgeDecidesTheTest"
+# CHECK: b3(v3: number|string):
+# CHECK-NEXT: v4: 1000 = Integer integer=1000
+# CHECK: = Mod v6, v4

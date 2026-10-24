@@ -1,0 +1,58 @@
+# The entrance of an async function or a generator is an ordinary function: it tests what arrives and calls the function that makes the promise or the generator, as its last step.
+# A shorter entrance made from it is one too. It used to say that it was the coroutine itself, not yet split: nothing may leave such a function by a tail call, it has no ordinary frame and is never inlined.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SkipAnsweredEntryChecks VerifyProgram
+# STATISTIC: ShorterEntrancesCreated = 2
+# STATISTIC: CallsThatSkipAnsweredEntryChecks = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="answersTheFirst" module=m0 parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = CallDirect v0, v1 function=f3 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="answersTheFirst"
+# CHECK: = CallDirect v0, v1 function=f6
+function f2 name="answersBoth" module=m0 parameters=[{type=number}, {type=string}] results=[{type=number}] {
+  b0(v0: number, v1: string):
+    v2 = CallDirect v0, v1 function=f3 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="answersBoth"
+# CHECK: = CallDirect v0, v1 function=f7
+function f3 name="shared" module=m0 role=EntryChecks flags=[IsAsync, IsGenerator, IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=EntryChecks{body=f4 fallback=f5} {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: number):
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5: string):
+    v6 = CallDirect v3, v5 function=f4 [isNeverInlined]
+    ReturnCall v6 requirement=Allowed
+  b3() frequency=Unlikely:
+    v7 = CallDirect v0, v1 function=f5 [isNeverInlined]
+    ReturnCall v7 requirement=Allowed
+}
+function f4 name="shared" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3} {
+  b0(v0: number, v1: string):
+    v2 = Mul v0, v0
+    Return v2
+}
+function f5 name="shared" module=m0 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3} creator=Version{provenVersion=f4} {
+  b0(v0: anything, v1: anything):
+    v2 = ToNumber v0
+    Return v2
+}
+# CHECK-LABEL: function f6 name="shared" module=m0 role=CallSiteVersion{{*}}HasOrdinaryFrame
+# CHECK: ReturnCall
+# CHECK-LABEL: function f7 name="shared" module=m0 role=CallSiteVersion{{*}}HasOrdinaryFrame
+# CHECK: ReturnCall

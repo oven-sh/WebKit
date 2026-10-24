@@ -1,0 +1,15 @@
+# An unspecified value has the type in its payload
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v0: string
+# CHECK-NEXT: v1: anything
+# CHECK-NEXT: v2: undefined|number
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="u" results=[{type=undefined}] {
+  b0():
+    v0 = Unspecified valueType=string
+    v1 = Unspecified valueType=anything
+    v2 = Unspecified valueType=undefined|number
+    Return
+}

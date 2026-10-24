@@ -1,0 +1,22 @@
+# "xyz".__proto__.x; Object.getPrototypeOf(5).x
+# The getter of Object.prototype.__proto__ and Object.getPrototypeOf answer what lies above their operand. Above a primitive that is the prototype object of its wrapper.
+# RUN: valueflow-why values=f0:v2 values=f0:v7
+# CHECK: values=f0:v2
+# CHECK: operand 0 {{*}} 1 members: StringPrototype
+# CHECK: values=f0:v7
+# CHECK: operand 0 {{*}} 1 members: NumberPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="xyz"
+    v1 = PropGet v0 key="__proto__"
+    v2 = PropGet v1 key="x"
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectGetPrototypeOf
+    v5 = Integer integer=5
+    v6 = Call v4, v3, v5
+    v7 = PropGet v6 key="x"
+    Return
+}

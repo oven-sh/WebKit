@@ -1,0 +1,76 @@
+# A guard is live from the edge that passes it to the last operation that names it
+# FORM: Prepared
+# RUN: analyses liveness live-points
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="namedInTwoBlocks" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    v5 = GetSlotOrUndefined v0, v3 key="y" receivers=[L0] level=Proven
+    v6 = StrictEq v4, v5
+    Return v6
+  b3():
+    Return v1
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0]
+# CHECK-NEXT: b2 live at head: [v0 v3 v4]
+# CHECK-NEXT: b3 live at head: [v1]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0 v1]
+# CHECK-NEXT: b0:1 live: [v0 v1 v2]
+# CHECK-NEXT: b1:0 live: [v0 v3]
+# CHECK-NEXT: b1:1 live: [v0 v3 v4]
+# CHECK-NEXT: b2:0 live: [v0 v3 v4]
+# CHECK-NEXT: b2:1 live: [v4 v5]
+# CHECK-NEXT: b2:2 live: [v6]
+# CHECK-NEXT: b3:0 live: [v1]
+
+function f1 name="namedByNobody" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v1
+  b2():
+    Return v1
+}
+# CHECK-NEXT: function f1
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v1]
+# CHECK-NEXT: b2 live at head: [v1]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0 v1]
+# CHECK-NEXT: b0:1 live: [v1 v2]
+# CHECK-NEXT: b1:0 live: [v1]
+# CHECK-NEXT: b2:0 live: [v1]
+
+function f2 name="allocationNamedAsGuard" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Upcast v1 castType=object
+    v3 = GetSlot v2, v1 key="x" receivers=[L0] level=Proven
+    v4 = GetSlot v2, v1 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v2, v3
+    Return v5
+}
+# CHECK-NEXT: function f2
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0]
+# CHECK-NEXT: b0:1 live: [v1]
+# CHECK-NEXT: b0:2 live: [v1 v2]
+# CHECK-NEXT: b0:3 live: [v1 v2 v3]
+# CHECK-NEXT: b0:4 live: [v2 v3]
+# CHECK-NEXT: b0:5 live: [v5]

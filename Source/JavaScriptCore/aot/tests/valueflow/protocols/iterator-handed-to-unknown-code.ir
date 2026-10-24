@@ -1,0 +1,34 @@
+# take([one].values())
+# Whoever holds a built-in iterator steps it through next of its prototype, so the library's function behind that method is entered, and what the iterator goes over escapes with it.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=69 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="take" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewArray v2 contents=anything
+    v4 = PropGet v3 key="values"
+    v5 = Call v4, v3 calleeKey="values"
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler]}
+    v2 = StepArrayIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

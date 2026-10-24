@@ -1,0 +1,32 @@
+# Each of two objects is stored in a field of itself and in a field of the other, and one of them is exported. The rounds that remove allocations end by themselves.
+# FORM: AsRead
+# RUN: pipeline EliminateGuards
+# STATISTIC: MaxOptimizationRoundsHits = 0
+# STATISTIC: MaxSinkingRoundsHits = 0
+# LOSS: MaxOptimizationRounds x0
+# LOSS: MaxSinkingRounds x0
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0
+variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+layout L0 name="Pair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PropSet v4, v4 key="second"
+    PropSet v2, v4 key="second"
+    PropSet v4, v2 key="first"
+    PropSet v2, v2 key="first"
+    PutModuleVariable v2 variable=g0
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="register" [isFreeName]
+    v12 = PropGet v2 key="second"
+    v13 = PropGet v4 key="first"
+    v14 = Call v11, -, v12, v13
+    Return
+}

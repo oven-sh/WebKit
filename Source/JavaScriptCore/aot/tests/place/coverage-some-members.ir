@@ -1,0 +1,70 @@
+# Coverage is per access: through a set with a member whose field has no slot, the read tests for the members that have it
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: place accesses
+# RUN(PLAN): plan-slots layouts accesses
+# STATISTIC: SharedSlots = 2
+# STATISTIC: SharesRefused = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="C" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="x" declared={type=number}}]
+variable g0 name="allThree" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="bothWithSlot" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v6 variable=g0
+    PutModuleVariable v8 variable=g0
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v6 variable=g1
+    v14 = CallDirect function=f1
+    v15 = CallDirect function=f2
+    Return
+}
+function f1 name="readThroughAllThree" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="readThroughBothWithSlot" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+
+# PLAN: L0 CompiledObject size=32
+# PLAN-NEXT: .0 "x" Double @16
+# PLAN-NEXT: L1 CompiledObject size=32
+# PLAN-NEXT: .0 "x" Double @16
+# PLAN-NEXT: L2 CompiledObject size=32
+# PLAN-NEXT: .0 "y" Double @16
+# PLAN-NOT: "x"
+# An empty slot reads as undefined: the read is one site and has no test.
+# PLAN: "x" {L0 L1 L2} read weight={{*}} sites=1
+# PLAN-NEXT: one location Double @16
+# PLAN-NEXT: without slot {L2}
+# PLAN-NOT: zero
+# PLAN: "x" {L0 L1} read weight={{*}} sites=1
+# PLAN-NEXT: one location Double @16
+# PLAN-NOT: without slot
+
+# CHECK: access 0 "x" [L0, L1, L2] read SomeMembers Double @16 withField=[L0, L1] test=
+# CHECK-NOT: always
+# CHECK-NOT: never
+# CHECK: contents=number|absent
+# CHECK-NEXT: access 1 "x" [L0, L1] read EveryMember Double @16 withField=[L0, L1] test=always contents=number
+# CHECK-NOT: access

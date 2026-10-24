@@ -1,0 +1,60 @@
+# A member that is always undefined or a symbol is neither read nor tested. Of a function nothing is known without results of the flow analysis: it goes to the host, which looks for its toJSON, and is left out when the host has no text for it
+# FORM: Prepared
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2 Serializer:L3
+# STATISTIC: SerializersCreated = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="WithoutText" fields=[{key="nothing" declared={type=undefined}}, {key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="tag" declared={type=symbol}}, {key="either" declared={type=undefined|symbol}}, {key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4]}]}
+layout L1 name="OnlyWithoutText" fields=[{key="nothing" declared={type=undefined}}, {key="tag" declared={type=symbol}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L2 name="Handler" fields=[{key="id" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="run" declared={type=f0}}, {key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+layout L3 name="SymbolOrNumber" fields=[{key="value" declared={type=number|symbol}}] flow={constructorOrders=[{fields=[0]}]}
+function f0 name="run" module=m0 kind=Arrow thisType={type=anything} results=[{type=undefined}] {
+  b0():
+    v0: undefined = Undefined
+    Return v0
+}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK-NOT: key="nothing"
+# CHECK: [[id]]: number = GetSlot v0, {{*}} key="id" receivers=[L0] level=Expected
+# CHECK: [[idKey]]: buildercursor = JSONAppendKey v1, {{*}} string="id" [opensObject]
+# CHECK-NEXT: [[idWritten]]: buildercursor = JSONAppendNumber v1, [[idKey]], [[id]]
+# CHECK-NEXT: [[name]]: string = GetSlot v0, {{*}} key="name" receivers=[L0] level=Expected
+# CHECK-NEXT: [[nameKey]]: buildercursor = JSONAppendKey v1, [[idWritten]] string="name" [followsMember]
+# CHECK-NEXT: [[nameWritten]]: buildercursor = JSONAppendString v1, [[nameKey]], [[name]]
+# CHECK-NEXT: = JSONAppendToken v1, [[nameWritten]] jsonToken=CloseObject
+# CHECK-NOT: TypeTest
+# CHECK-NOT: CompilerHelpers
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK-NOT: GetSlot
+# CHECK-NOT: PropGet
+# CHECK-NOT: CompilerHelpers
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=EmptyObject
+# CHECK-NOT: GetSlot
+# CHECK-NOT: PropGet
+# CHECK-NOT: CompilerHelpers
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: [[run]]: f0 = GetSlot v0, {{*}} key="run" receivers=[L2] level=Expected
+# CHECK-NOT: TypeTest
+# CHECK: [[beforeRun]]:{{*}}= StringBuilderCheckpoint v1
+# CHECK: [[runKey]]: "run" = String string="run"
+# CHECK: [[hasRunText]]: boolean = StringBuilderAppendJSON v1, [[run]], [[runKey]]
+# CHECK-NEXT: Branch [[hasRunText]] -> taken
+# CHECK: StringBuilderRollBack v1, [[beforeRun]]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1, 2]
+# CHECK: [[k0]]: "id" = String string="id"
+# CHECK-NEXT: [[k1]]: "run" = String string="run"
+# CHECK-NEXT: [[k2]]: "name" = String string="name"
+# CHECK-NEXT: = NewArray [[k0]], [[k1]], [[k2]] contents=string
+# CHECK: = GetSlot v0, {{*}} key="name" receivers=[L2] level=Expected
+
+# CHECK: function {{*}}creator=Serializer{layout=L3}
+# CHECK: [[value]]: number|symbol = GetSlot v0, {{*}} key="value" receivers=[L3] level=Expected
+# CHECK: [[hasText]]: boolean = TypeTest [[value]] testedType=
+# CHECK: = JSONAppendKey v1, {{*}} string="value"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: CompilerHelpers
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObjectOverComma
+# CHECK-NOT: CompilerHelpers

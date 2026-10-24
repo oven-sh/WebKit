@@ -1,0 +1,14 @@
+# A regular expression literal is made by its stub in compact code as in all other code: the stub copies the cell that the site remembers, and the run time is asked the first time only
+# FORM: Selected
+# OPTIONS: heat=everything-is-cold
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="make" results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a+"
+    Return v0
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub NewRegExpLiteral x1
+# CHECK-NOT: operationAOTNewRegExpLiteral

@@ -1,0 +1,65 @@
+# An empty array literal with an allocation profile has code for each type of contents, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-2: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="profiledLiterals" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = NewArray contents=i32 literalStorage=Profiled staticsOffset=0
+    v2 = NewArray contents=number literalStorage=Profiled staticsOffset=8
+    v3 = NewArray contents=undefined|number literalStorage=Profiled staticsOffset=16
+    v4 = NewArray contents=string literalStorage=Profiled staticsOffset=24
+    v5 = NewArray contents=anything literalStorage=Profiled staticsOffset=32
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = NewArray contents=i32 literalStorage=Profiled staticsOffset=40
+    v8 = NewArray contents=number literalStorage=Profiled staticsOffset=48
+    v9 = NewArray contents=undefined|number literalStorage=Profiled staticsOffset=56
+    v10 = NewArray contents=string literalStorage=Profiled staticsOffset=64
+    v11 = NewArray contents=anything literalStorage=Profiled staticsOffset=72
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v12 = NewArray contents=i32 literalStorage=Profiled staticsOffset=80
+    v13 = NewArray contents=number literalStorage=Profiled staticsOffset=88
+    v14 = NewArray contents=undefined|number literalStorage=Profiled staticsOffset=96
+    v15 = NewArray contents=string literalStorage=Profiled staticsOffset=104
+    v16 = NewArray contents=anything literalStorage=Profiled staticsOffset=112
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+function f1 name="profiledLiteralsWithoutStatics" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = NewArray contents=i32 literalStorage=Profiled
+    v2 = NewArray contents=number literalStorage=Profiled
+    v3 = NewArray contents=anything literalStorage=Profiled
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = NewArray contents=i32 literalStorage=Profiled
+    v6 = NewArray contents=number literalStorage=Profiled
+    v7 = NewArray contents=anything literalStorage=Profiled
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = NewArray contents=i32 literalStorage=Profiled
+    v9 = NewArray contents=number literalStorage=Profiled
+    v10 = NewArray contents=anything literalStorage=Profiled
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact

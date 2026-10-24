@@ -1,0 +1,28 @@
+# new Function(input)();        keep(globalThis.__definedByTheText)
+# Text of the global scope stores on the global object under whatever name it likes.
+# FORM: AsRead
+# RUN: valueflow-why values=f0:v6 flag=h5
+# CHECK: values=f0:v6
+# CHECK: result {{*}} unknown
+# CHECK: flag=h5
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Function) flags=[IsExpected]}
+    v3 = PropGet v0 key="input" [isFreeName]
+    v4 = Construct v2, -, v3
+    v5 = Call v4, -
+    v6 = PropGet v0 key="__definedByTheText"
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v6
+    Return
+}
+function f1 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

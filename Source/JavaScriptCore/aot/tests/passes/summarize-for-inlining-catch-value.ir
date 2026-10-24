@@ -1,0 +1,62 @@
+# Reading the caught value binds no block to the frame
+# FORM: AsRead
+# RUN: pipeline SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return
+}
+function f1 name="catchesValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b3():
+    v2 = Call v0
+    Return v2
+  b2():
+    Return v0
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK: f1: barrier=None
+# CHECK-NOT: boundToFrame
+
+function f2 name="catchesExceptionAndValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b3():
+    v2 = Call v0
+    Return v2
+  b2():
+    Return v0
+  b3() role=CleanupHandler:
+    v3 = CatchException
+    v4 = CatchValue
+    v5 = Call v0, -, v4
+    Rethrow v3
+}
+# CHECK: f2: barrier=None
+# CHECK-NOT: boundToFrame
+
+function f3 name="callsWithoutTry" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Call v0
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK: f3: barrier=None
+# CHECK: f5:

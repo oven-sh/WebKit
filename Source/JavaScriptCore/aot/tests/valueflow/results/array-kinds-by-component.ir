@@ -1,0 +1,136 @@
+# wholeNumbers = [1, 2]; fractions = [1.5]; first(wholeNumbers); first(fractions)    alone = [1, 2]    besideEscaped = [1]; escaped = [1]; keep(escaped); second(besideEscaped); second(escaped)
+# truncated = [x | 0]; truncated.push(x | 0)    notTruncated = [x]; notTruncated.push(x)    fractionsOnly = [1.5]; fractionsOnly.push(2.5)    holdsNaN = [1.5]; holdsNaN.push(NaN)    holdsUndefined = [1.5]; holdsUndefined.push(undefined)    hasHole = [1, , 2]
+# A reader that trusts a storage kind without a test trusts it for every array that may arrive. So a kind is proven for all the array literals that meet in some set, or for none of them.
+# Two literals that meet in one parameter hold, as far as their types say, what either holds, and share the kind that fits that: each creator is told so and allocates it. A literal that meets nobody has the kind of its own elements.
+# A literal that meets an array which code that nobody compiles has got hold of has no proven kind: that array may have any kind, and a test of it that fails may convert it.
+# The sets know integers as one kind, and an array of integers of any size is an array of doubles. The types of the operands that are stored have the ranges, and they give int32 back.
+# A NaN, an `undefined` or a `null` that is stored for certain converts an array of numbers sooner or later, so the array has the storage for every value from the start: its creator is told that by name. A hole lies in any storage
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="wholeNumbers"
+# CHECK: declared={type=Array<int[1, 2]|fractional, proven, Double
+# CHECK-LABEL: variable g1 name="fractions"
+# CHECK: declared={type=Array<int[1, 2]|fractional, proven, Double
+# CHECK-LABEL: variable g2 name="alone"
+# CHECK: declared={type=Array<int[1, 2], proven, Int32
+# CHECK-LABEL: variable g3 name="besideEscaped"
+# CHECK: declared={type=Array<1, proven
+# CHECK-NOT: Int32
+# CHECK-LABEL: variable g4 name="escaped"
+# CHECK: declared={type=Array
+# CHECK-NOT: proven
+# CHECK-LABEL: variable g5 name="truncated"
+# CHECK: declared={type=Array<i32, proven, Int32
+# CHECK-LABEL: variable g6 name="notTruncated"
+# CHECK: declared={type=Array<int, proven, Double
+# CHECK-LABEL: variable g7 name="fractionsOnly"
+# CHECK: declared={type=Array<fractional, proven, Double
+# CHECK-LABEL: variable g8 name="holdsNaN"
+# CHECK: declared={type=Array<double, proven, Contiguous
+# CHECK-LABEL: variable g9 name="holdsUndefined"
+# CHECK: declared={type=Array<undefined|fractional, proven, Contiguous
+# CHECK-LABEL: variable g10 name="hasHole"
+# CHECK: declared={type=Array<int[1, 2], proven, Int32
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewArray v0, v1 contents=int[1, 2]|fractional allocationSite=
+# CHECK: = NewArray v2 contents=int[1, 2]|fractional allocationSite=
+# CHECK: = NewArray v0, v1 contents=int[1, 2] allocationSite=
+# CHECK: = NewArray v2 contents=double allocationSite={{*}}arrayStorage=Contiguous
+# CHECK: = NewArray v2 contents=undefined|fractional allocationSite={{*}}arrayStorage=Contiguous
+# CHECK: = NewArray v0, v1 contents=int[1, 2] holes=[1] allocationSite=
+# CHECK-LABEL: function f1 name="first"
+# CHECK: parameters=[{type=Array<int[1, 2]|fractional, proven, Double
+# CHECK-LABEL: function f2 name="second"
+# CHECK: parameters=[{type=Array
+# CHECK-NOT: proven
+# CHECK: results=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="wholeNumbers" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="fractions" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="alone" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="besideEscaped" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="escaped" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="truncated" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="notTruncated" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="fractionsOnly" module=m0 declared={type=anything} initialization=Undefined
+variable g8 name="holdsNaN" module=m0 declared={type=anything} initialization=Undefined
+variable g9 name="holdsUndefined" module=m0 declared={type=anything} initialization=Undefined
+variable g10 name="hasHole" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Double number=1.5
+    v3 = Double number=2.5
+    v4 = Double number=NaN
+    v5 = Undefined
+    v6 = NewArray v0, v1 contents=anything
+    PutModuleVariable v6 variable=g0
+    v8 = NewArray v2 contents=anything
+    PutModuleVariable v8 variable=g1
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v6
+    v12 = Call v10, -, v8
+    v13 = NewArray v0, v1 contents=anything
+    PutModuleVariable v13 variable=g2
+    v15 = NewArray v0 contents=anything
+    PutModuleVariable v15 variable=g3
+    v17 = NewArray v0 contents=anything
+    PutModuleVariable v17 variable=g4
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="keep" [isFreeName]
+    v21 = Call v20, -, v17
+    v22 = NewClosure function=f2
+    v23 = Call v22, -, v15
+    v24 = Call v22, -, v17
+    v25 = NewClosure function=f3
+    v26 = Call v25, -, v0
+    PutModuleVariable v26 variable=g5
+    v28 = NewClosure function=f4
+    v29 = Call v28, -, v0
+    PutModuleVariable v29 variable=g6
+    v31 = NewArray v2 contents=anything
+    PutModuleVariable v31 variable=g7
+    v33 = PropGet v31 key="push"
+    v34 = Call v33, v31, v3 calleeKey="push"
+    v35 = NewArray v2 contents=anything
+    PutModuleVariable v35 variable=g8
+    v37 = PropGet v35 key="push"
+    v38 = Call v37, v35, v4 calleeKey="push"
+    v39 = NewArray v2 contents=anything
+    PutModuleVariable v39 variable=g9
+    v41 = PropGet v39 key="push"
+    v42 = Call v41, v39, v5 calleeKey="push"
+    v43 = NewArray v0, v1 contents=anything holes=[1]
+    PutModuleVariable v43 variable=g10
+    Return
+}
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="truncate" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = BitOr v0, v1
+    v3 = NewArray v2 contents=anything
+    v4 = PropGet v3 key="push"
+    v5 = Call v4, v3, v2 calleeKey="push"
+    Return v3
+}
+function f4 name="wrap" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v1 key="push"
+    v3 = Call v2, v1, v0 calleeKey="push"
+    Return v1
+}

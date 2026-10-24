@@ -1,0 +1,24 @@
+# set = new Set; set.add(member); step = next(); step.value()
+# `valueflow-solve calls` lists the objects among the callees. With `primitives` it lists all that flow lets the callee be: undefined (primitive 0) is the value of the step that finds the end.
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v8 -> primitive0 f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = Construct v0
+    v2 = PropGet v1 key="add"
+    v3 = NewClosure function=f1
+    v4 = Call v2, v1, v3 calleeKey="add"
+    v5 = IteratorOpen v1
+    v6 = IteratorResume v5
+    v7 = ResultAt v6 index=1
+    v8 = Call v7
+    Return
+}
+function f1 name="member" results=[{type=anything}] {
+  b0():
+    Return
+}

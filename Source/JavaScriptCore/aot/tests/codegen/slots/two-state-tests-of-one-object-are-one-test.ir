@@ -1,0 +1,50 @@
+# "Has the prototype of its layout" and "has no field outside its slot" are two bits of one byte of the cell's header. Where one test follows the other they are one instruction and one jump; which of the two failed is found out on the failing side
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# REQUIRES: unsanitized-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 unsanitized-code
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return
+}
+function f1 name="sameFailingSide" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = HasLayoutPrototype v0
+    TestAndBranch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = HasNoFieldOutsideSlot v0, v2
+    TestAndBranch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = Integer integer=1
+    Return v5
+  b3() frequency=Unlikely:
+    v6 = PropGet v0 key="y"
+    Return v6
+}
+function f2 name="twoFailingSides" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = HasLayoutPrototype v0
+    TestAndBranch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = HasNoFieldOutsideSlot v0, v2
+    TestAndBranch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4):
+    v5 = Integer integer=1
+    Return v5
+  b3() frequency=Unlikely:
+    v6 = PropGet v0 key="y"
+    Return v6
+  b4() frequency=Unlikely:
+    v7 = PropGet v0 key="z"
+    Return v7
+}
+# CHECK: f1: size={{*}}
+# CHECK: f2: size={{*}}
+# X64: f1: size=36 frame=0@12-33
+# X64: f2: size=62 frame=0@12-39,41-59

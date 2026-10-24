@@ -1,0 +1,106 @@
+# No part of the program reads what the last match left in RegExp, so a match against a literal without the flags g, y and d needs no object, also where the literal comes from a variable of the module
+# TODO: flow-termination: a variable that holds one RegExp literal loses its pattern and flags, so a match through it keeps the object
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline Select
+# RUN(BUILD): compile
+# BUILD: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="plain" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="compiledAgain" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="lastCreated" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a+b" @10
+    PutModuleVariable v0 variable=g0
+    v2 = NewRegExp pattern="a+b" @20
+    PutModuleVariable v2 variable=g1
+    v4 = String string="c"
+    v5 = PropGet v2 key="compile"
+    v6 = Call v5, v2, v4 calleeKey="compile"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="text" [isFreeName]
+    v9 = ToString v8
+    v10 = CallDirect v9 function=f1
+    v11 = CallDirect v9 function=f2
+    v12 = CallDirect v9 function=f3
+    v13 = CallDirect v9 function=f4
+    v14 = CallDirect v9 function=f5
+    v15 = CallDirect v9 function=f6
+    v16 = CallDirect v9 function=f7
+    v17 = GetModuleVariable variable=g2
+    v18 = PropGet v17 key="test"
+    v19 = Call v18, v17, v9 calleeKey="test"
+    v20 = NewArray v10, v11, v12, v13, v14, v15, v16, v19 contents=anything holes=[]
+    Return v20
+}
+function f1 name="fromVariable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="test"
+    v3 = Call v2, v1, v0 calleeKey="test"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="fromVariable"
+# CHECK-NOT: GetModuleVariable
+# CHECK: = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+b"
+function f2 name="sameTextCompiledAgain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="test"
+    v3 = Call v2, v1, v0 calleeKey="test"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="sameTextCompiledAgain"
+# CHECK-NOT: RegExpMatchLiteral
+function f3 name="exec" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="c+d"
+    v2 = PropGet v1 key="exec"
+    v3 = Call v2, v1, v0 calleeKey="exec"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="exec"
+# CHECK-NOT: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK: = RegExpMatchLiteral v0 overload=RegExpPrototypeExec/0 pattern="c+d" matchForm=Exec
+function f4 name="global" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="e+f" regExpFlags=[Global]
+    v2 = PropGet v1 key="test"
+    v3 = Call v2, v1, v0 calleeKey="test"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="global"
+# CHECK: = RegExpMatchLiteral v0, [[global4]] overload=RegExpPrototypeTest/0 pattern="e+f" regExpFlags=[Global]
+function f5 name="sticky" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="g+h" regExpFlags=[Sticky]
+    v2 = PropGet v1 key="test"
+    v3 = Call v2, v1, v0 calleeKey="test"
+    Return v3
+}
+# CHECK-LABEL: function f5 name="sticky"
+# CHECK: = RegExpMatchLiteral v0, [[sticky5]] overload=RegExpPrototypeTest/0 pattern="g+h" regExpFlags=[Sticky]
+function f6 name="withIndices" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="i+j" regExpFlags=[HasIndices]
+    v2 = PropGet v1 key="exec"
+    v3 = Call v2, v1, v0 calleeKey="exec"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="withIndices"
+# CHECK: = RegExpMatchLiteral v0, [[indices6]] overload=RegExpPrototypeExec/0 pattern="i+j" regExpFlags=[HasIndices] matchForm=Exec
+function f7 name="alsoStored" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewRegExp pattern="k+l"
+    PutModuleVariable v1 variable=g2
+    v3 = PropGet v1 key="test"
+    v4 = Call v3, v1, v0 calleeKey="test"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="alsoStored"
+# CHECK: = NewRegExp pattern="k+l"
+# CHECK: = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="k+l"

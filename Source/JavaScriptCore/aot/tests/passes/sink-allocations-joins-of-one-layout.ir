@@ -1,0 +1,191 @@
+# Allocations of one layout that meet at a block parameter are one shape: the join carries no tag, any number of arms may meet, and the arms may give a field different types
+# TODO: nobody: two allocations of one layout that meet at a join count as two shapes, so nine arms run into MaxVirtualObjectVariants and the object is allocated
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsMergedAtJoins = 7
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Line" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="oneLayout" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = PropGet v5 key="x" receivers=[L0]
+    Return v6
+}
+# CHECK-LABEL: function f0 name="oneLayout"
+# CHECK-NOT: NewObject
+# CHECK-NOT: Integer
+# CHECK: Jump -> next b3(v0, v1)
+# CHECK: Jump -> next b3(v1, v0)
+# CHECK: b3([[x0]]: anything, {{*}}: anything):
+# CHECK-NEXT: v6: anything = Upcast [[x0]] castType=anything
+
+function f1 name="joinInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = StrictEq v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    v6 = PropGet v3 key="x" receivers=[L0]
+    v7 = ToBoolean v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    Return v6
+  b5():
+    v8 = NewObject -, v1, v6 layout=L0 fields=[0, 1]
+    Jump -> next b1(v8)
+}
+# CHECK-LABEL: function f1 name="joinInLoop"
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b1(v0, v1)
+# CHECK: b1([[x2]]: anything, [[y2]]: anything):
+# CHECK-NOT: StrictEq
+# CHECK: Jump -> next b3([[x2]], [[y2]])
+# CHECK-NOT: Return v3
+# CHECK: b3([[inner2]]: anything, {{*}}: anything):
+# CHECK-NEXT: v6: anything = Upcast [[inner2]] castType=anything
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b1(v1, v6)
+
+function f2 name="sourceOfTwoJoins" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Switch v2 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    Jump -> next b5(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b5(v4)
+  b3():
+    Jump -> next b6(v3)
+  b4():
+    v5 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b6(v5)
+  b5(v6):
+    v7 = PropGet v6 key="x" receivers=[L0]
+    Return v7
+  b6(v8):
+    v9 = PropGet v8 key="y" receivers=[L0]
+    Return v9
+}
+# CHECK-LABEL: function f2 name="sourceOfTwoJoins"
+# CHECK-NOT: NewObject
+# CHECK: b0(
+# CHECK-NEXT: Switch
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b5(v0, v1)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b5(v1, v0)
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b6(v0, v1)
+# CHECK: b4():
+# CHECK-NEXT: Jump -> next b6(v1, v0)
+# CHECK: b5([[x3]]: anything, {{*}}: anything):
+# CHECK-NEXT: v7: anything = Upcast [[x3]] castType=anything
+# CHECK: b6({{*}}: anything, [[y3]]: anything):
+# CHECK-NEXT: v9: anything = Upcast [[y3]] castType=anything
+
+function f3 name="joinOfHolders" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v6 = NewObject -, v5, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = PropGet v7 key="y" receivers=[L0]
+    Return v8
+}
+# CHECK-LABEL: function f3 name="joinOfHolders"
+# CHECK: b1():
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0, v1
+# CHECK-NEXT: Jump -> next b3(v3, v1)
+# CHECK: b2():
+# CHECK-NEXT: v5:{{*}}= NewObject -, v1, v0
+# CHECK-NEXT: Jump -> next b3(v5, v0)
+# CHECK: b3({{*}}: anything, [[y4]]: anything):
+# CHECK-NEXT: v8: anything = Upcast [[y4]] castType=anything
+
+function f4 name="joinWithDifferentContents" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=number
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray v1 contents=string
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    Return v7
+}
+# CHECK-LABEL: function f4 name="joinWithDifferentContents"
+# CHECK-NOT: NewArray
+# CHECK: Jump -> next b3({{*}}, v0, 
+# CHECK-NOT: NewArray
+# CHECK: Jump -> next b3({{*}}, v1, 
+# CHECK: b3({{*}}: i32, [[element5]]: number|string, 
+# CHECK-NOT: ElemGet
+# CHECK: v7: anything = Upcast [[element5]] castType=anything
+
+function f5 name="nineArms" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Switch v2 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), otherwise b9()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b10(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b10(v4)
+  b3():
+    v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b10(v5)
+  b4():
+    v6 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b10(v6)
+  b5():
+    v7 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b10(v7)
+  b6():
+    v8 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b10(v8)
+  b7():
+    v9 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b10(v9)
+  b8():
+    v10 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b10(v10)
+  b9():
+    v11 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b10(v11)
+  b10(v12):
+    v13 = PropGet v12 key="x" receivers=[L0]
+    Return v13
+}
+# CHECK-LABEL: function f5 name="nineArms"
+# CHECK-NOT: NewObject
+# CHECK-NOT: Integer
+# CHECK: b9():
+# CHECK-NEXT: Jump -> next b10(v0, v1)
+# CHECK: b10([[x8]]: anything, {{*}}: anything):
+# CHECK-NEXT: v13: anything = Upcast [[x8]] castType=anything
+

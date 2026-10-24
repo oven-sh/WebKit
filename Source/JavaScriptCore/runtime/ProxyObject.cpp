@@ -36,6 +36,10 @@
 #include <wtf/NoTailCalls.h>
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(AOT)
+#include "AOTObject.h"
+#endif
+
 // Note that we use NO_TAIL_CALLS() throughout this file because we rely on the machine stack
 // growing larger for throwing OOM errors for when we have an effectively cyclic prototype chain.
 
@@ -107,10 +111,31 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
         return asObject(value);
     };
 
+#if ENABLE(AOT)
+    // For a compiled object the cache holds the number of the field, below invalidOffset where nothing was found while its slot was empty.
+    // It speaks only of an object that has its fields in their slots and nothing else.
+    AOT::Object* compiledHandler = handler->type() == CompiledObjectType ? uncheckedDowncast<AOT::Object>(handler) : nullptr;
+    bool mayUseCache = !compiledHandler || !compiledHandler->hasFlagsInOrderWord();
+#else
+    constexpr bool mayUseCache = true;
+#endif
+
     if (isHandlerTrapsCacheValid(handler)) {
-        PropertyOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)];
+        PropertyOffset offset = mayUseCache ? m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] : emptyHandlerTrapCache;
         if (offset == invalidOffset)
             return nullptr;
+#if ENABLE(AOT)
+        if (compiledHandler) {
+            if (offset != emptyHandlerTrapCache) {
+                bool foundNothingWhileEmpty = offset < invalidOffset;
+                const AOT::FieldData& field = compiledHandler->layout().fields()[foundNothingWhileEmpty ? invalidOffset - 1 - offset : offset];
+                if (compiledHandler->isInSlot(field))
+                    return ensureIsCallable(compiledHandler->read(field));
+                if (foundNothingWhileEmpty)
+                    return nullptr;
+            }
+        } else
+#endif
         if (offset != emptyHandlerTrapCache)
             return ensureIsCallable(handler->getDirect(offset));
     } else if (m_handlerStructureID)
@@ -121,6 +146,27 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     RETURN_IF_EXCEPTION(scope, { });
 
     bool isSlotCacheable = slot.isUnset() || (slot.isCacheableValue() && slot.slotBase() == handler);
+#if ENABLE(AOT)
+    if (compiledHandler) {
+        isSlotCacheable = false;
+        JSValue handlerPrototype = handler->getPrototypeDirect();
+        if (mayUseCache && handlerPrototype.inherits<ObjectPrototype>() && !asObject(handlerPrototype)->structure()->isDictionary()) {
+            const AOT::FieldData* field = compiledHandler->fieldNamed(compiledHandler->state(), ident);
+            PropertyOffset number = emptyHandlerTrapCache;
+            if (!field && slot.isUnset())
+                number = invalidOffset;
+            else if (field && !field->isAccessor() && compiledHandler->isInSlot(*field))
+                number = compiledHandler->indexOf(*field);
+            else if (field && !field->isAccessor() && slot.isUnset())
+                number = invalidOffset - 1 - compiledHandler->indexOf(*field);
+            if (number != emptyHandlerTrapCache) {
+                m_handlerTrapsOffsetsCache[static_cast<uint8_t>(trap)] = number;
+                m_handlerStructureID.set(vm, this, handler->structure());
+                m_handlerPrototypeStructureID.set(vm, this, asObject(handlerPrototype)->structure());
+            }
+        }
+    }
+#endif
     if (isSlotCacheable) {
         JSValue handlerPrototype = handler->getPrototypeDirect();
         // isHandlerTrapsCacheValid treats a matching handler StructureID as proof that the prototype is
@@ -150,6 +196,27 @@ void ProxyObject::clearHandlerTrapsOffsetsCache()
 }
 
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
+
+// Only a property of the target that is not configurable binds what the trap may answer.
+static ALWAYS_INLINE bool mayBindGetTrapResult(JSObject* target)
+{
+    if (!target->structure()->hasNonConfigurableReadOnlyOrGetterSetterProperties())
+        return false;
+#if ENABLE(AOT)
+    // The Structure of a compiled object says yes for all of them. What was done to one object stands in the object, and what its fields are born with in the layout.
+    constexpr size_t maxFieldsLookedAt = 32;
+    if (target->type() == CompiledObjectType) {
+        auto* object = uncheckedDowncast<AOT::Object>(target);
+        std::span<const AOT::FieldData> fields = object->layout().fields();
+        if (!object->hasFlagsInOrderWord() && fields.size() <= maxFieldsLookedAt) {
+            return std::ranges::any_of(fields, [](const AOT::FieldData& field) {
+                return field.attributes() & PropertyAttribute::DontDelete;
+            });
+        }
+    }
+#endif
+    return true;
+}
 
 static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyObject, JSValue receiver, PropertyName propertyName)
 {
@@ -197,7 +264,7 @@ static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyO
     JSValue trapResult = call(globalObject, getHandler, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (target->structure()->hasNonConfigurableReadOnlyOrGetterSetterProperties()) {
+    if (mayBindGetTrapResult(target)) {
         ProxyObject::validateGetTrapResult(globalObject, trapResult, target, propertyName);
         RETURN_IF_EXCEPTION(scope, { });
     }
@@ -675,7 +742,7 @@ JSC_DEFINE_HOST_FUNCTION(performProxyConstruct, (JSGlobalObject* globalObject, C
     if (constructMethod.isUndefined()) {
         auto constructData = JSC::getConstructDataInline(target);
         RELEASE_ASSERT(constructData.type != CallData::Type::None);
-        RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, target, constructData, ArgList(callFrame), callFrame->newTarget())));
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructAllowingPrimitiveResult(globalObject, target, constructData, ArgList(callFrame), callFrame->newTarget())));
     }
 
     JSArray* argArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), ArgList(callFrame));

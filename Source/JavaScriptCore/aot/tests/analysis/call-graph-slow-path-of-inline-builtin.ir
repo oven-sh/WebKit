@@ -1,0 +1,58 @@
+# A call of an inline built-in may enter the function of the library that its slow path calls: the call graph has the edge, and the effects of the call stay the ones the overload declares
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+# RUN(EFFECTS): effects summaries f0 f1 f2 f3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} initialization=Undefined
+runtimefunction id=4 function=f5
+runtimefunction id=8 function=f4
+
+function f0 name="slowPathInLibrary" role=OutlinedBody parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Return v2
+}
+function f1 name="slowPathInNativeCode" role=OutlinedBody parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+}
+function f2 name="noSlowPath" role=OutlinedBody parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathAbs/0
+    Return v1
+}
+function f3 name="calledByValue" role=OutlinedBody parameters=[{type=builtin(FunctionPrototypeApply)}, {type=f6}] results=[{type=anything}] {
+  b0(v0: builtin(FunctionPrototypeApply), v1: f6):
+    v2 = Call v0, v1 callees=[builtin(FunctionPrototypeApply)]
+    Return v2
+}
+function f4 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    v4 = ElemGet v0, v1
+    Return v4
+}
+function f5 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1
+    Return v3
+}
+function f6 name="target" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+# CHECK: roots f4 f5
+# CHECK-NEXT: f0: callees f4 | callers | sites 0 | callers {{*}} | callees Complete |
+# CHECK-NEXT: f1: callees | callers | sites 0 | callers {{*}} | callees Complete |
+# CHECK-NEXT: f2: callees | callers | sites 0 | callers {{*}} | callees Complete |
+# CHECK-NEXT: f3: callees f5{{*}} | callers |
+# CHECK-NEXT: f4: callees | callers f0 |
+# CHECK-NEXT: f5: callees | callers f3 |
+
+# The function of the library stores to a variable and reads an element of anything. The call does neither
+# EFFECTS-LABEL: function f0
+# EFFECTS-NEXT: v2 CallBuiltin: reads(Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects

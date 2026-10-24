@@ -1,0 +1,65 @@
+# function Made() { Object.defineProperty(this, "inner", { value: 1 }) }   register({ inner: 2, limit: 3 }, new Made(), readsOneName, readsOneNameOfAnExpectedRule, readsTwoNames)
+# function readsOneName(rule) { return rule.inner }   function readsTwoNames(rule) { return rule.inner + rule.limit }
+# One record of the program has an `inner`. The program also defines an `inner` on objects that have no layout, through Object.defineProperty, and hands them to code that nobody follows.
+# An object that is asked for that name alone may well be one of those: a test for the layout would turn it away, and what stands behind the test would run in the copy. The read goes by name,
+# whether the names predict the layout or the front end expects it. Beside them: an object that is also asked for a name that the record alone has gets its test
+# RUN: pipeline PlaceTypeTests
+# RUN(RESULTS): valueflow-results
+# RESULTS: defined-on-objects-without-known-layout ["inner"]
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 name="Rule" module=m0 fields=[{key="inner" declared={type=anything}}, {key="limit" declared={type=anything}}]
+layout L1 name="Descriptor" module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = Construct v5
+    v7 = NewClosure function=f2
+    v8 = NewClosure function=f3
+    v9 = NewClosure function=f4
+    v10 = Call v1, -, v4, v6, v7, v8, v9
+    Return v10
+}
+
+function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = String string="inner"
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Call v4, -, v0, v3, v2
+    Return
+}
+
+function f2 name="readsOneName" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+
+function f3 name="readsOneNameOfAnExpectedRule" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+
+function f4 name="readsTwoNames" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v0 key="limit"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: name="readsOneName"
+# CHECK-NOT: = TypeTest
+# CHECK-LABEL: name="readsOneNameOfAnExpectedRule"
+# CHECK-NOT: = TypeTest
+# CHECK-LABEL: name="readsTwoNames"
+# CHECK: = TypeTest {{*}} testedType={{*}}L0

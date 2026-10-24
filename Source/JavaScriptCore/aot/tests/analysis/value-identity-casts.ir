@@ -1,0 +1,69 @@
+# Which casts each query strips, the identity through a narrowing edge, and a constant that a Check rejects
+# FORM: Prepared
+# RUN: analyses value-identity
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="casts" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Upcast v2 castType=undefined|string
+    v4 = Check v3 castType=string
+    v5 = Upcast v4 castType=anything
+    Return v5
+  b2():
+    v6 = Integer integer=5
+    v7 = Upcast v6 castType=anything
+    v8 = Check v7 castType=number
+    v9 = Check v7 castType=string
+    Return v9
+}
+function f1 name="literalStrings" results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Upcast v0 castType=anything
+    v2 = Check v1 castType="a"|"b"
+    v3 = Check v1 castType="b"
+    Return v3
+}
+# CHECK: function f0
+# CHECK-NEXT: value-identity:
+# CHECK: v2 same object: v2
+# CHECK-NEXT: v2 through upcasts: v2
+# CHECK-NEXT: v2 identity: v0
+# CHECK: v3 same object: v2
+# CHECK-NEXT: v3 through upcasts: v2
+# CHECK-NEXT: v3 identity: v0
+# CHECK: v4 same object: v2
+# CHECK-NEXT: v4 through upcasts: v4
+# CHECK-NEXT: v4 identity: v0
+# CHECK: v5 same object: v2
+# CHECK-NEXT: v5 through upcasts: v4
+# CHECK-NEXT: v5 identity: v0
+# CHECK-NEXT: v5 constant: none
+# CHECK: v6 identity: v6
+# CHECK-NEXT: v6 constant: v6
+# CHECK: v7 same object: v6
+# CHECK-NEXT: v7 through upcasts: v6
+# CHECK-NEXT: v7 identity: v6
+# CHECK-NEXT: v7 constant: v6
+# CHECK: v8 same object: v6
+# CHECK-NEXT: v8 through upcasts: v8
+# CHECK-NEXT: v8 identity: v6
+# CHECK-NEXT: v8 constant: v6
+# CHECK: v9 same object: v6
+# CHECK-NEXT: v9 through upcasts: v9
+# CHECK-NEXT: v9 identity: v6
+# CHECK-NEXT: v9 constant: none
+# CHECK: function f1
+# CHECK-NEXT: value-identity:
+# CHECK: v1 constant: v0
+# CHECK: v2 same object: v0
+# CHECK-NEXT: v2 through upcasts: v2
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: v2 constant: v0
+# CHECK: v3 same object: v0
+# CHECK-NEXT: v3 through upcasts: v3
+# CHECK-NEXT: v3 identity: v0
+# CHECK-NEXT: v3 constant: none

@@ -1,0 +1,17 @@
+# entry = { cache: 1, kept: 1 }; entry.kept; entry.cache; delete entry.cache
+# The deletion names its key, and only followed code gets hold of the object. So the one field may be deleted, and the field beside it never is: it stays filled from the creation on.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Entry" fields=[{key="cache" {{*}}stability=[IsNeverRedefined{{*}}}, {key="kept" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Entry" fields=[{key="cache" declared={type=anything} flags=[IsRequired]}, {key="kept" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = PropGet v1 key="kept"
+    v3 = PropGet v1 key="cache"
+    v4 = PropDelete v1 key="cache"
+    Return
+}

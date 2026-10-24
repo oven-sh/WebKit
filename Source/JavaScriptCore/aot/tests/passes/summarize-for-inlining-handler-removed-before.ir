@@ -1,0 +1,45 @@
+# The summaries are made of simplified bodies: a try around code that cannot throw has lost its handler by then
+# FORM: AsRead
+# RUN: pipeline SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="tryAroundTest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = TypeTest v0 testedType=number
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK: f1: barrier=None
+
+function f2 name="tryAroundCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK: f2: barrier=None
+
+# CHECK-LABEL: function f1 name="tryAroundTest"
+# CHECK-NOT: handler=
+# CHECK-NOT: CatchValue
+# CHECK-LABEL: function f2 name="tryAroundCall"
+# CHECK: b0(v0: anything) handler=
+# CHECK: = CatchValue

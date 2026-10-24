@@ -1,0 +1,55 @@
+# A serializer does what JSON.stringify does with an object of its layout and a parser what JSON.parse does with a string, whatever their rows look like to the summarizer: a caller's test of an array holds across them. A layout that brings code of the program brings it into the summary
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="next" declared={type=null|L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="HoldsAnything" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="member" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+function f0 name="plainSerializer" module=m0 role=Serializer parameters=[{type=object}, {type=stringbuilder}] results=[{type=int[0, 2]}] creator=Serializer{layout=L0} {
+  b0(v0: object, v1: stringbuilder):
+    v2 = PropGet v0 key="x"
+    v3 = Integer integer=0
+    Return v3
+}
+function f1 name="serializerOfAnything" module=m0 role=Serializer parameters=[{type=object}, {type=stringbuilder}] results=[{type=int[0, 2]}] creator=Serializer{layout=L1} {
+  b0(v0: object, v1: stringbuilder):
+    v2 = Integer integer=0
+    Return v2
+}
+function f2 name="parser" module=m0 role=Parser parameters=[{type=cursor}] results=[{type=int[0, 2]}] creator=Parser{type=string form=ParsedText} {
+  b0(v0: cursor):
+    v1 = Undefined
+    v2 = String string="key"
+    v3 = JSONObjectBegin layout=L0
+    v4 = JSONAddExtraMember v1, v2, v2, v3 layout=L0
+    v5 = Integer integer=0
+    Return v5
+}
+function f3 name="sameRowsWithoutTheRole" module=m0 results=[{type=int[0, 2]}] {
+  b0():
+    v0 = Undefined
+    v1 = String string="key"
+    v2 = JSONObjectBegin layout=L0
+    v3 = JSONAddExtraMember v0, v1, v1, v2 layout=L0
+    v4 = Integer integer=0
+    Return v4
+}
+function f4 name="caller" module=m0 parameters=[{type=object}, {type=stringbuilder}, {type=cursor}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: object, v1: stringbuilder, v2: cursor):
+    v3 = CallDirect v0, v1 function=f0
+    v4 = CallDirect v0, v1 function=f1
+    v5 = CallDirect v2 function=f2
+    v6 = CallDirect function=f3
+    Return
+}
+
+# CHECK: f0 return: reads({{*}}) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
+# CHECK-NOT: unknown code from
+# CHECK: f1 return: reads(all) writes(ObjectFields, ShapeWords, {{*}}ArrayStorage, {{*}} unknown code from f1
+# CHECK: f2 return: reads({{*}}ParserState{{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK: f3 return: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 CallDirect: reads({{*}}) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 CallDirect: reads(all) writes(ObjectFields, ShapeWords, {{*}}ArrayStorage,
+# CHECK-NEXT: v5 CallDirect: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v6 CallDirect: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects

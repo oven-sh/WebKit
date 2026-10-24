@@ -1,0 +1,40 @@
+# two = /a/; two = /b/g    besideConstructed = /c/; besideConstructed = new RegExp("d")    compiled = /e/; compiled.compile("d")    textInLastIndex = /f/; textInLastIndex.lastIndex = "d"
+# The type of a literal names the pattern and the flags that it is created with, so a set that holds literals alone lies inside the type of the operation, and what is proven of the literals is written there.
+# Beside a RegExp that something else creates no pattern is named. A literal that gets another pattern, or a lastIndex that is no number, does not stay as created
+# RUN: valueflow-apply
+# CHECK: variable g0 name="two" module=m0 declared={type=RegExp<"a"[], "b"[Global], pristine[Storage, Names, AsCreated]>}
+# CHECK: variable g1 name="besideConstructed" module=m0 declared={type=RegExp<pristine[
+# CHECK: variable g2 name="compiled" module=m0 declared={type=RegExp<"e"[], pristine[Storage, Names]>}
+# CHECK: variable g3 name="textInLastIndex" module=m0 declared={type=RegExp<"f"[], pristine[
+# CHECK-NOT: AsCreated
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[literal]]: RegExp<"a"[]> = NewRegExp pattern="a"
+# CHECK-NEXT: : RegExp<"a"[], pristine[Storage, Names, AsCreated]> = AssumeType [[literal]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="two" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="besideConstructed" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="compiled" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="textInLastIndex" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a"
+    PutModuleVariable v0 variable=g0
+    v2 = NewRegExp pattern="b" regExpFlags=[Global]
+    PutModuleVariable v2 variable=g0
+    v4 = NewRegExp pattern="c"
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=RegExp
+    v7 = String string="d"
+    v8 = Construct v6, -, v7
+    PutModuleVariable v8 variable=g1
+    v10 = NewRegExp pattern="e"
+    v11 = PropGet v10 key="compile"
+    v12 = Call v11, v10, v7 calleeKey="compile"
+    PutModuleVariable v10 variable=g2
+    v14 = NewRegExp pattern="f"
+    PropSet v14, v7 key="lastIndex" mode=Strict
+    PutModuleVariable v14 variable=g3
+    Return
+}

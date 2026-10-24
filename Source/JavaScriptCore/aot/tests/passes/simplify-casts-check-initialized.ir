@@ -1,0 +1,78 @@
+# A dead zone test goes when its operand cannot be absent, stays when it can, a second test of the same value is the first, and a second read of the variable needs none
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="early" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}}}, {key="late" declared={type=anything|absent}}]
+variable g0 name="early" module=m0 declared={type=anything} initialization=Uninitialized flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
+
+function f0 name="operandWithoutAbsent" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="early"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="operandWithoutAbsent"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: Return v0
+
+function f1 name="operandWithAbsent" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="operandWithAbsent"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything|absent = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: anything = CheckInitialized v0 name="late"
+# CHECK-NEXT: Return v1
+
+function f2 name="fieldsWithoutAndWithAbsent" kind=Arrow captures=[{type=env L0}] results=[{type=boolean}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CheckInitialized v1 name="early"
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = CheckInitialized v3 name="late"
+    v5 = StrictEq v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="fieldsWithoutAndWithAbsent"
+# CHECK-NEXT: b0(v0: env L0):
+# CHECK-NEXT: v1: anything = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: v3: anything|absent = GetEnvironmentField v0 layout=L0 field=1
+# CHECK-NEXT: v4: anything = CheckInitialized v3 name="late"
+# CHECK-NEXT: = StrictEq v1, v4
+
+function f3 name="checkedTwice" results=[{type=boolean}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    v2 = CheckInitialized v0 name="late"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="checkedTwice"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything|absent = GetModuleVariable variable=g1
+# CHECK-NEXT: v1: anything = CheckInitialized v0 name="late"
+# CHECK-NEXT: = StrictEq v1, v1
+
+function f4 name="twoReadsCheckedOnce" results=[{type=boolean}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="late"
+    v4 = StrictEq v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f4 name="twoReadsCheckedOnce"
+# CHECK: v1: anything = CheckInitialized v0 name="late"
+# CHECK-NEXT: = GetModuleVariable variable=g1
+# CHECK-NEXT: v3: anything = AssumeType v2 castType=anything
+# CHECK-NEXT: = StrictEq v1, v3

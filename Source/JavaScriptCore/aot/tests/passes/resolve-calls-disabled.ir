@@ -1,0 +1,24 @@
+# With the pass off a call whose callee is proven stays a call by value
+# FORM: Prepared
+# OPTIONS: disable=pass:ResolveCalls
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f1 name="call-of-proven-callee" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="call-of-proven-callee"
+# CHECK-NEXT: b0(v0: f0, v1: number):
+# CHECK-NEXT: v2: number = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

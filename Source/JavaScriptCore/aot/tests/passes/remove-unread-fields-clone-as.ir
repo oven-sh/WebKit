@@ -1,0 +1,51 @@
+# A field that nothing reads stays when a copy of another object is made with its layout: the run time fills every field the source has
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copied" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
+layout L1 name="OnlyBuilt" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Base" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L3 kind=Instance name="CopiedDerived" base=L2 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired, IsInherited] originLayout=L2 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L2}
+# CHECK: layout L0 name="Copied" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L1 name="OnlyBuilt" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 kind=Instance name="Base" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="copies" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2 = IsPlainDataObject v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CloneAs v0, v3, v1 layout=L0 fields=[1]
+    Return v4
+  b2():
+    v5 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    Return v5
+}
+# CHECK-LABEL: function f0 name="copies"
+# CHECK: = CloneAs v0, v3, v1 layout=L0 fields=[1]
+# CHECK: = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+
+function f1 name="onlyBuilds" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="onlyBuilds"
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+
+function f2 name="copiesWithInheritedField" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2 = IsPlainDataObject v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CloneAs v0, v3, v1 layout=L3 fields=[0]
+    Return v4
+  b2():
+    v5 = NewObject -, v1 layout=L2 fields=[0]
+    Return v5
+}
+# CHECK-LABEL: function f2 name="copiesWithInheritedField"
+# CHECK: = CloneAs v0, v3, v1 layout=L3 fields=[0]
+# CHECK: = NewObject -, v1 layout=L2 fields=[0]

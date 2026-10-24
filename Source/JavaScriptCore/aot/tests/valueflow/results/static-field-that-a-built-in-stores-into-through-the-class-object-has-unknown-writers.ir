@@ -1,0 +1,54 @@
+# class Assigned { static count = 1; static beside = 1 }   for (..) { if (..) Object.assign(Assigned, { count: 7 }); Assigned.count }
+# class Stored { static count = 1 }                         Stored.count = 7
+# The call of Object.assign never becomes a store to the variable of the static field. To the passes it is code that nobody knows, and such code writes the variables whose writers are not all known.
+# Were the call counted among the known writers, as a store that an operation spells out is, the read of the variable would be moved out of the loop, past the call.
+# The type of the field says nothing here: in a file without types it takes any value.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: variable g0 {{*}}cause=UnknownWriter}
+# CHECK: variable g2 {{*}}flow={writers=AllKnown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Assigned" constructor=f1 staticFields=[{key="count" variable=g0}, {key="beside" variable=g1}]
+layout L1 kind=Instance name="Stored" constructor=f2 staticFields=[{key="count" variable=g2}]
+layout L2 name="Source" fields=[{key="count" declared={type=anything}}]
+variable g0 module=m0 declared={type=anything} owner=L0
+variable g1 module=m0 declared={type=anything} owner=L0
+variable g2 module=m0 declared={type=anything} owner=L1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=7
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v6 = FinishClass v3 layout=L0
+    v7 = NewClosure function=f2
+    v8 = NewClass v7 layout=L1
+    PutModuleVariable v0 variable=g2
+    v10 = FinishClass v8 layout=L1
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectAssign
+    v13 = NewObject -, v1 layout=L2 fields=[0]
+    v14 = Call v12, v11, v6, v13
+    PropSet v10, v1 key="count" mode=Strict
+    v16 = PropGet v6 key="count"
+    v17 = PropGet v6 key="beside"
+    v18 = PropGet v10 key="count"
+    v19 = NewArray v16, v17, v18 contents=anything
+    Return v19
+}
+function f1 name="Assigned" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Stored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}

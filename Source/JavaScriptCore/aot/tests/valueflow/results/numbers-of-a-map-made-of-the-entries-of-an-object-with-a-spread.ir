@@ -1,0 +1,28 @@
+# words = { a: 1 }; more = { ...words, b: 9 }; return new Map(Object.entries(more)).get("a")
+# What was copied onto an object lies on the object that it was copied from: the operations that fill either bound the numbers of the Map.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int[1, 9]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="More" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1
+    CopyDataProperties v2, v1
+    v4 = Integer integer=9
+    PropDefine v2, v4 key="b"
+    v6 = FinishObject v2
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectEntries
+    v9 = Call v8, v7, v6
+    v10 = Builtin builtin=Map
+    v11 = Construct v10, -, v9
+    v12 = Builtin builtin=MapPrototypeGet
+    v13 = String string="a"
+    v14 = Call v12, v11, v13
+    Return v14
+}

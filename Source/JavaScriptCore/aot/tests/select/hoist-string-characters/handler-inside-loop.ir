@@ -1,0 +1,94 @@
+# Flattening on the loop entry can run out of memory, and that error reaches the handler of the loop header. Where a reader that resolves the rope has another handler, nothing is flattened on the entry: the first reader in the loop flattens for the readers behind it, under its own handler
+# FORM: Prepared
+# RUN: pass Select
+
+# CHECK-LABEL: function f0 name="read-under-handler"
+# CHECK-NOT: FlattenString
+# CHECK: b2() {{*}}handler=b5():
+# CHECK-NEXT: v9: number = StringRangeCodeUnitOrNaN v0, -, -, v5
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="read-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b4()
+  b2() handler=b5():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Jump -> next b3()
+  b3():
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b4():
+    Return v6
+  b5() role=CatchHandler:
+    v11 = CatchValue
+    Return v11
+}
+
+# CHECK-LABEL: function f1 name="one-of-two-reads-under-handler"
+# CHECK-NOT: FlattenString
+# CHECK: b2() {{*}}handler=b5():
+# CHECK-NEXT: [[flat1]]: flatstring = FlattenString v0
+# CHECK-NEXT: v9: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK: b3():
+# CHECK-NEXT: v10: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK-NOT: FlattenString
+function f1 name="one-of-two-reads-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b4()
+  b2() handler=b5():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Jump -> next b3()
+  b3():
+    v10 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Add v5, v4
+    Jump -> next b1(v11, v10)
+  b4():
+    Return v6
+  b5() role=CatchHandler:
+    v12 = CatchValue
+    Return v12
+}
+
+# CHECK-LABEL: function f2 name="loop-under-handler"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat2]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat2]], -, -, v5
+# CHECK-NOT: FlattenString
+function f2 name="loop-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number) handler=b5():
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6) handler=b5():
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b4()
+  b2() handler=b5():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Jump -> next b3()
+  b3() handler=b5():
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b4():
+    Return v6
+  b5() role=CatchHandler:
+    v11 = CatchValue
+    Return v11
+}

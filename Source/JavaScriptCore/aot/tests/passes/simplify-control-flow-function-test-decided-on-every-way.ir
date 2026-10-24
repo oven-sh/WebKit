@@ -1,0 +1,105 @@
+# What a value is tested for never changes. No single test of f dominates the third one here, and every way to it has left a test of f for the same function by the edge that is taken:
+# the third test is decided. The same for the edges that are not taken. A way that has passed no test leaves the outcome open, and so do ways that left their tests by different edges
+# FORM: Prepared optimizing
+# RUN: pass SimplifyControlFlow VerifyProgram
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="everyWayPassedTheTest" parameters=[{type=function|f3}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: function|f3, v1: boolean, v2: number):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=f3
+    Branch v3 -> taken b3(| 0), notTaken b6(| 0)
+  b2():
+    v4 = TypeTest v0 testedType=f3
+    Branch v4 -> taken b4(| 0), notTaken b6(| 0)
+  b3(v5):
+    v6 = CallDirect v2 function=f3
+    Jump -> next b5(v6)
+  b4(v7):
+    v8 = Add v2, v2
+    Jump -> next b5(v8)
+  b5(v9):
+    v10 = Add v9, v2
+    v11 = TypeTest v0 testedType=f3
+    Branch v11 -> taken b7(| 0), notTaken b8(| 0)
+  b6(v12):
+    v13 = Call v12, -, v2
+    v14 = TypeTest v0 testedType=f3
+    Branch v14 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v15):
+    v16 = CallDirect v2 function=f3
+    Return v16
+  b8(v17):
+    v18 = Call v17, -, v2
+    Return v18
+}
+# CHECK-LABEL: function f0 name="everyWayPassedTheTest"
+# CHECK: = Add v9, v2
+# CHECK-NOT: Branch
+# CHECK: = CallDirect v2 function=f3
+# CHECK: = Call v12, -, v2
+# CHECK-NOT: Branch
+# CHECK: = Call {{*}}, -, v2
+
+function f1 name="oneWayPassedNoTest" parameters=[{type=function|f3}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: function|f3, v1: boolean, v2: number):
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    v3 = TypeTest v0 testedType=f3
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    v5 = TypeTest v0 testedType=f3
+    Jump -> next b4()
+  b3(v6):
+    v7 = Call v6, -, v2
+    Return v7
+  b4():
+    v8 = Add v2, v2
+    v9 = TypeTest v0 testedType=f3
+    Branch v9 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v10):
+    v11 = TypeTest v0 testedType=f3
+    Branch v11 -> taken b7(| 0), notTaken b6(| 0)
+  b6(v12):
+    Return v8
+  b7(v13):
+    Return v2
+}
+# CHECK-LABEL: function f1 name="oneWayPassedNoTest"
+# CHECK: = Add v2, v2
+# CHECK-NEXT: [[open]]: boolean = TypeTest v0 testedType=f3
+# CHECK-NEXT: Branch [[open]]
+
+function f2 name="waysLeftByDifferentEdges" parameters=[{type=function|f3}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: function|f3, v1: boolean, v2: number):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=f3
+    Branch v3 -> taken b3(| 0), notTaken b6(| 0)
+  b2():
+    v4 = TypeTest v0 testedType=f3
+    Branch v4 -> taken b6(| 0), notTaken b4(| 0)
+  b3(v5):
+    Jump -> next b5()
+  b4(v6):
+    Jump -> next b5()
+  b5():
+    v7 = Add v2, v2
+    v8 = TypeTest v0 testedType=f3
+    Branch v8 -> taken b7(| 0), notTaken b6(| 0)
+  b6(v9):
+    Return v2
+  b7(v10):
+    Return v7
+}
+# CHECK-LABEL: function f2 name="waysLeftByDifferentEdges"
+# CHECK: = Add v2, v2
+# CHECK-NEXT: [[mixed]]: boolean = TypeTest v0 testedType=f3
+# CHECK-NEXT: Branch [[mixed]]
+
+function f3 name="listed" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}

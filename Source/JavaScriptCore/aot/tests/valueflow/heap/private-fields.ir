@@ -1,0 +1,37 @@
+# class Box { #kept; #other; static fill(box) { box.#kept = one; box.#other = two; box.#kept() } }
+# A private field holds what is defined or stored in that field of that class, and nothing of another field.
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> f1
+# CHECK-NOT: f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Box" constructor=f3 fields=[{key=#"kept"@L0 declared={type=anything} flags=[IsPrivate]}, {key=#"other"@L0 declared={type=anything} flags=[IsPrivate]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClassToken layout=L0
+    v3 = Construct v1
+    v4 = NewClosure function=f1
+    PrivateDefine v3, v2, v4 layout=L0 field=0
+    v6 = NewClosure function=f2
+    PrivateSet v3, v2, v6 layout=L0 field=1
+    v8 = PrivateGet v3, v2 layout=L0 field=0
+    v9 = Call v8, v3
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}

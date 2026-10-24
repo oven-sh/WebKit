@@ -1,0 +1,453 @@
+# In the protocol form the steps of an array pattern become one read of the run time when nothing between them interferes with unknown code
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDestructuredElements:2
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(SIMPLIFIED): pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues VerifyProgram
+# RUN(LEFT): pass ExpandIteration
+# SIMPLIFIED: outcome: Changed
+# LOSS: MaxDestructuredElements x1 f13 v1
+# LOSS: MaxVersionedIterationBytes x1 f14 v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Range" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f1 mutability=Fixed}]}
+layout L1 name="Bag" fields=[{key="x" declared={type=number}}]
+function f0 name="Range" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="iterator" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    Return v0
+}
+
+function f2 name="plain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v5
+    Return v7
+  b4() role=IterationCleanup subject=v1:
+    v8 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v8
+}
+# CHECK-LABEL: function f2 name="plain"
+# CHECK: b3([[first2]]: anything, [[second2]]: anything):
+# CHECK-NEXT: = Add [[first2]], [[second2]]
+# CHECK: [[entry2]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[readBlock2]]()
+# CHECK-NEXT: [[readBlock2]]() frequency=Unlikely:
+# CHECK-NEXT: [[read2]]: undefined = DestructureIterable [[iterable2]] count=2
+# CHECK-NEXT: [[a2]]: anything = ResultAt [[read2]]
+# CHECK-NEXT: [[b2]]: anything = ResultAt [[read2]] index=1
+# CHECK: Jump -> next b3([[a2]], [[b2]])
+# CHECK: ([[iterable2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[entry2]]()
+# ABSENT-LABEL: function f2 name="plain"
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="done"
+# ABSENT-NOT: key="value"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: handler=
+# ABSENT-NOT: role=
+# ABSENT-COUNT-1: DestructureIterable
+# ABSENT-NOT: DestructureIterable
+
+function f3 name="callAfterClose" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    v5 = IteratorResume v2 stepIndex=1
+    v6 = ResultAt v5 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v2
+    v8 = Call v1, -, v4, v6
+    Return v8
+  b3() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}
+# No step moves across what follows the last close in its block.
+# CHECK-LABEL: function f3 name="callAfterClose"
+# CHECK: = DestructureIterable {{*}} count=2
+# ABSENT-LABEL: function f3 name="callAfterClose"
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: handler=
+
+function f4 name="defaultWithoutCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = TypeTest v3 testedType=undefined
+    Branch v4 -> taken b2(), notTaken b3(v3)
+  b2() handler=b6():
+    v5 = NewArray contents=anything
+    Jump -> next b3(v5)
+  b3(v6) handler=b6():
+    v7 = IteratorResume v1 stepIndex=1
+    v8 = ResultAt v7 index=1
+    Jump -> next b4()
+  b4():
+    IteratorClose v1
+    Jump -> next b5()
+  b5():
+    v10 = Add v6, v8
+    Return v10
+  b6() role=IterationCleanup subject=v1:
+    v11 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v11
+}
+# A comparison with undefined, a branch and an allocation commute with whatever next does.
+# CHECK-LABEL: function f4 name="defaultWithoutCall"
+# CHECK: [[read4]]: undefined = DestructureIterable {{*}} count=2
+# CHECK-NEXT: [[a4]]: anything = ResultAt [[read4]]
+# CHECK: = TypeTest [[a4]] testedType=undefined
+# ABSENT-LABEL: function f4 name="defaultWithoutCall"
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: handler=
+
+function f5 name="layout" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v5
+    Return v7
+  b4() role=IterationCleanup subject=v1:
+    v8 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v8
+}
+# CHECK-LABEL: function f5 name="layout"
+# CHECK: = DestructureIterable v0 count=2
+# ABSENT-LABEL: function f5 name="layout"
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: handler=
+
+function f6 name="knownIterator" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v5
+    Return v7
+  b4() role=IterationCleanup subject=v1:
+    v8 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v8
+}
+# The method is code of the program: direct calls and a result object that is never made are worth more than one call of the run time.
+# CHECK-LABEL: function f6 name="knownIterator"
+# CHECK: = PropGet v0 key=@@iterator
+# CHECK: [[next6]]: anything = PropGet [[iterator6]] key="next"
+# CHECK: = Call [[next6]], [[iterator6]]
+# CHECK: = Call [[next6]], [[iterator6]]
+# ABSENT-LABEL: function f6 name="knownIterator"
+# ABSENT-NOT: DestructureIterable
+
+function f7 name="callInDefault" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b2(), notTaken b3(v4)
+  b2() handler=b6():
+    v6 = Call v1
+    Jump -> next b3(v6)
+  b3(v7) handler=b6():
+    v8 = IteratorResume v2 stepIndex=1
+    v9 = ResultAt v8 index=1
+    Jump -> next b4()
+  b4():
+    IteratorClose v2
+    Jump -> next b5()
+  b5():
+    v11 = Add v7, v9
+    Return v11
+  b6() role=IterationCleanup subject=v2:
+    v12 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v12
+}
+# The steps stay, and with them what the state remembers: a finished iterator is neither stepped nor closed, and a step that throws finishes it.
+# CHECK-LABEL: function f7 name="callInDefault"
+# CHECK: b0(v0: object, v1: anything):
+# CHECK-NEXT: [[notDone7]]: false = Boolean
+# The close of the array copy does nothing, so it asks nothing.
+# CHECK: b4():
+# CHECK-NEXT: Jump
+# CHECK: frequency=Unlikely handler=[[landing7]]([[notDone7]]):
+# CHECK-NEXT: Branch [[notDone7]] -> taken {{*}}, notTaken [[firstStep7]]()
+# CHECK-NEXT: {{*}} frequency=Unlikely handler=[[landing7]]([[afterFirst7]]):
+# CHECK-NEXT: = Call v1
+# CHECK: frequency=Unlikely handler=[[landing7]]([[afterFirst7]]):
+# CHECK-NEXT: Branch [[afterFirst7]] -> taken {{*}}, notTaken [[secondStep7]]()
+# CHECK-NEXT: {{*}}() frequency=Unlikely:
+# CHECK-NEXT: Branch [[afterSecond7]] -> taken [[skipClose7]](), notTaken [[close7]]()
+# CHECK-NEXT: [[landing7]]([[doneAtThrow7]]: boolean) role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: Branch [[doneAtThrow7]] -> taken
+# CHECK: [[open7]]: undefined = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[iterator7]]: object = ResultAt [[open7]]
+# CHECK-NEXT: [[next7]]: anything = ResultAt [[open7]] index=1
+# CHECK: [[close7]]() frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterator7]] function=[[closeIterator]] [isNeverInlined]
+# CHECK: [[afterSecond7]]: boolean = Upcast
+# CHECK: [[secondStep7]]() frequency=Unlikely handler=[[landing7]]([[afterFirst7]]):
+# CHECK-NEXT: [[duringSecond7]]: true = Boolean boolean=true
+# CHECK: [[afterFirst7]]: boolean = Upcast
+# CHECK: [[firstStep7]]() frequency=Unlikely handler=[[landing7]]([[notDone7]]):
+# CHECK-NEXT: [[duringFirst7]]: true = Boolean boolean=true
+# CHECK: frequency=Unlikely handler=[[landing7]]([[duringSecond7]]):
+# CHECK-NEXT: = Call [[next7]], [[iterator7]]
+# CHECK: frequency=Unlikely handler=[[landing7]]([[duringFirst7]]):
+# CHECK-NEXT: = Call [[next7]], [[iterator7]]
+# ABSENT-LABEL: function f7 name="callInDefault"
+# ABSENT-NOT: DestructureIterable
+# ABSENT-NOT: ) handler=
+
+function f8 name="memberTarget" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    PropSet v1, v4 key="first"
+    v6 = IteratorResume v2 stepIndex=1
+    v7 = ResultAt v6 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v2
+    Return v7
+  b3() role=IterationCleanup subject=v2:
+    v9 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v9
+}
+# CHECK-LABEL: function f8 name="memberTarget"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f8 name="memberTarget"
+# ABSENT-NOT: DestructureIterable
+
+function f9 name="testThatThrowsBetween" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = RequireObjectCoercible v3 nullishAccess=Read
+    v5 = IteratorResume v1 stepIndex=1
+    v6 = ResultAt v5 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    v8 = Add v4, v6
+    Return v8
+  b3() role=IterationCleanup subject=v1:
+    v9 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v9
+}
+# CHECK-LABEL: function f9 name="testThatThrowsBetween"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f9 name="testThatThrowsBetween"
+# ABSENT-NOT: DestructureIterable
+
+function f10 name="nestedPattern" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorOpen v3 elementCount=1 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b5():
+    v5 = IteratorResume v4 stepIndex=0
+    v6 = ResultAt v5 index=1
+    Jump -> next b3()
+  b3() handler=b6():
+    IteratorClose v4
+    v8 = IteratorResume v1 stepIndex=1
+    v9 = ResultAt v8 index=1
+    Jump -> next b4()
+  b4():
+    IteratorClose v1
+    v11 = Add v6, v9
+    Return v11
+  b5() role=IterationCleanup subject=v4 handler=b6():
+    v12 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v12
+  b6() role=IterationCleanup subject=v1:
+    v14 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v14
+}
+# The inner pattern is read at once. It runs unknown code between the two steps of the outer one, which keeps its steps.
+# CHECK-LABEL: function f10 name="nestedPattern"
+# CHECK: = PropGet v0 key=@@iterator
+# CHECK: = DestructureIterable {{*}} count=1
+# CHECK: key="next"
+# ABSENT-LABEL: function f10 name="nestedPattern"
+# ABSENT-NOT: count=2
+
+function f11 name="rest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
+    Jump -> next b1()
+  b1() handler=b6():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = NewArray contents=anything
+    Jump -> next b2()
+  b2() handler=b6():
+    LoopHint
+    v6 = IteratorResume v1 stepIndex=1
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b4(), notTaken b3()
+  b3() handler=b6():
+    AppendElement v4, v8
+    Jump -> next b2()
+  b4() handler=b6():
+    Jump -> next b5()
+  b5():
+    IteratorClose v1
+    v11 = Add v3, v4
+    Return v11
+  b6() role=IterationCleanup subject=v1:
+    v12 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v12
+}
+# CHECK-LABEL: function f11 name="rest"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f11 name="rest"
+# ABSENT-NOT: DestructureIterable
+
+function f12 name="empty" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=0 [isDestructuring]
+    IteratorClose v1
+    Return
+}
+# CHECK-LABEL: function f12 name="empty"
+# CHECK: function=[[closeStringOrIterator]] [isNeverInlined]
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f12 name="empty"
+# ABSENT-NOT: DestructureIterable
+
+function f13 name="tooMany" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=3 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    v6 = IteratorResume v1 stepIndex=2
+    v7 = ResultAt v6 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    v9 = NewArray v3, v5, v7 contents=anything
+    Return v9
+  b3() role=IterationCleanup subject=v1:
+    v10 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v10
+}
+# CHECK-LABEL: function f13 name="tooMany"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# ABSENT-LABEL: function f13 name="tooMany"
+# ABSENT-NOT: DestructureIterable
+
+function f14 name="byForm" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = IteratorResume v1 stepIndex=1
+    v6 = ResultAt v5 index=1
+    v7 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v8 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v9 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v10 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v11 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v12 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v13 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v14 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v15 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v16 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v17 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    v18 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Return v18
+  b3() role=IterationCleanup subject=v1:
+    v20 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v20
+}
+# Nothing here interferes, but the region has one copy for both forms, and one text cannot hold the one read beside the index reads.
+# CHECK-LABEL: function f14 name="byForm"
+# CHECK: function=[[openStringOrIterator]] [isNeverInlined]
+# CHECK: Switch
+# ABSENT-LABEL: function f14 name="byForm"
+# ABSENT-NOT: DestructureIterable
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

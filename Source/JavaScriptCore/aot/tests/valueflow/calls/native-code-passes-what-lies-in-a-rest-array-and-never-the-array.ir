@@ -1,0 +1,34 @@
+# function wrap(...operands) { for (const operand of operands) return operand; return operands[0] }  give(wrap)
+# Whoever calls a function, the function itself makes the array of its rest parameter. A caller nobody knows chooses what lies in the array: the array is no object nobody knows,
+# so going over it runs the iterator of arrays and no code that nobody has seen.
+# RUN: valueflow-why values=f1:v1 values=f1:v2 values=f1:v5
+# CHECK: IteratorOpen
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f1
+# CHECK: IteratorResume
+# CHECK: result {{*}} unknown
+# CHECK: ElemGet
+# CHECK: operand 0 {{*}} 1 members: object{{*}}@f1
+# CHECK: result {{*}} unknown
+# RUN(PROTOCOLS): valueflow-solve protocols
+# PROTOCOLS: IteratorOpen reached 1 looks-at-unknown 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="give" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="wrap" module=m0 flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    v4 = Integer integer=0
+    v5 = ElemGet v0, v4
+    v6 = Call v3, -, v5
+    Return v6
+}

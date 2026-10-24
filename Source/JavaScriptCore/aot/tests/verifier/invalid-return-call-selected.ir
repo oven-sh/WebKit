@@ -1,0 +1,30 @@
+# from selection on the returned call is the last value of its block, and a resolved call is not returned
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: InvalidReturnCall 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodCallEndsBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Call v0, v1
+    ReturnCall v2
+}
+function f1 name="badValueAfterCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Undefined
+    ReturnCall v1
+}
+function f2 name="badResolvedCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ResolveCallTarget v0 argumentCount=0
+    v2 = CallResolved v0, v1
+    ReturnCall v2
+}
+function f3 name="goodResolvedCallIsReturnedAsValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ResolveCallTarget v0 argumentCount=0
+    v2 = CallResolved v0, v1
+    Return v2
+}

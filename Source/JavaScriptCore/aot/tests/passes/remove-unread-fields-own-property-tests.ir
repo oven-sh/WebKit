@@ -1,0 +1,44 @@
+# A built-in that answers whether an object has a property observes the field, under a constant key and under a key nobody knows. A field that no such call can name is removed
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="AskedByHasOwn" fields=[{key="asked" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="AskedByMethods" fields=[{key="asked" declared={type=anything} flags=[IsRequired]}, {key="listed" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="AskedUnderAnyKey" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="AskedWhetherFrozen" fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="AskedByHasOwn" fields=[{key="asked"{{*}}stores=AtMostOnce{{*}}{key="other"{{*}}stores=Never{{*}}reads=NeverRead
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = PropGet v0 key="Object" [isFreeName]
+    v4 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v5 = PropGet v3 key="hasOwn"
+    v6 = String string="asked"
+    v7 = Call v5, v3, v4, v6
+    v8 = NewObject -, v2, v2, v2 layout=L1 fields=[0, 1, 2]
+    v9 = PropGet v8 key="hasOwnProperty"
+    v10 = Call v9, v8, v6
+    v11 = PropGet v8 key="propertyIsEnumerable"
+    v12 = String string="listed"
+    v13 = Call v11, v8, v12
+    v14 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v15 = Call v5, v3, v14, v1
+    v16 = NewObject -, v2 layout=L3 fields=[0]
+    v17 = PropGet v3 key="isFrozen"
+    v18 = Call v17, v3, v16
+    v19 = PropGet v0 key="print" [isFreeName]
+    v20 = Call v19, -, v7, v10, v13, v15, v18
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: layout=L0 fields=[0]
+# CHECK: layout=L1 fields=[0, 1]
+# CHECK: layout=L2 fields=[0, 1]
+# CHECK: layout=L3 fields=[0]

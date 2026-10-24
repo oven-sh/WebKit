@@ -1,0 +1,6 @@
+# A `~` behind contents that no type follows
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=Array<number ~, proven>} initialization=Undefined

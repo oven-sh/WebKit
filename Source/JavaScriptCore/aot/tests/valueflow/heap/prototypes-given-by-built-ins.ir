@@ -1,0 +1,40 @@
+# base = { run: one }; created = Object.create(base); created.run(); given = {}; Object.setPrototypeOf(given, base); given.run(); stored = {}; stored.__proto__ = base; stored.run(); lone = {}; lone.run()
+# Object.create, Object.setPrototypeOf and a store under __proto__ each put the object on the chain.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> f1
+# CHECK: f0 v10 -> f1
+# CHECK: f0 v14 -> f1
+# CHECK-NOT: f0 v17 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Base" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Given"
+layout L2 name="Stored"
+layout L3 name="Lone"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, -, v1
+    v4 = PropGet v3 key="run"
+    v5 = Call v4, v3
+    v6 = NewObject layout=L1 fields=[]
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Call v7, -, v6, v1
+    v9 = PropGet v6 key="run"
+    v10 = Call v9, v6
+    v11 = NewObject layout=L2 fields=[]
+    PropSet v11, v1 key="__proto__" mode=Strict
+    v13 = PropGet v11 key="run"
+    v14 = Call v13, v11
+    v15 = NewObject layout=L3 fields=[]
+    v16 = PropGet v15 key="run"
+    v17 = Call v16, v15
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

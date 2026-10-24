@@ -1,0 +1,32 @@
+# Summaries of functions that call each other reach a fixpoint without unknown code
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="callsOther" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect v0 function=f1
+    Return
+  b2():
+    Return
+}
+function f1 name="writesOnReturn" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect v0 function=f0
+    Return
+  b2():
+    v2 = Undefined
+    PutModuleVariable v2 variable=g0
+    Return
+}
+# CHECK: unknown code: {{*}}callsUnknownCode
+# CHECK-NOT: nknownCode
+# CHECK: f0 return: writes(ModuleVariables/1) throws throw: writes(ModuleVariables/1) throws
+# CHECK-NOT: nknownCode
+# CHECK: f1 return: writes(ModuleVariables/1) throws throw: writes(ModuleVariables/1) throws
+# CHECK-NOT: nknownCode

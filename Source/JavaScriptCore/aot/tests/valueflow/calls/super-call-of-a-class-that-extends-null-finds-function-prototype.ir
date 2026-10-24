@@ -1,0 +1,27 @@
+# class U extends null { constructor() { super() } }        new U()
+# Nothing lies above the prototype object of such a class. Above the class object lies Function.prototype, as above every function: the super call finds it, and throws a TypeError because it is no constructor.
+# A list of callees without it says that the call finds something else.
+# FORM: AsRead
+# RUN: valueflow-why values=f1:v2
+# CHECK: GetSuperBase
+# CHECK: result {{*}}FunctionPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="U" module=m0 constructor=f1 flags=[HasHeritage]
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2, v0, v1 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    Return v5
+}
+function f1 name="U" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}

@@ -1,0 +1,34 @@
+# Variable lines with every field
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=3 kind=Variable text="number"
+# CHECK-NEXT: layout L0 kind=Instance name="C" module=m0 staticFields=[{key="s" variable=g3}]
+# CHECK-NEXT: variable g0 module=m0 declared={type=anything}
+# CHECK-NEXT: variable g1 name="f" module=m1 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+# CHECK-NEXT: variable g2 name="n" module=m0 declared={type=number site=w0 flags=[IsExpected]} initialization=Undefined
+# CHECK-NEXT: variable g3 name="s" module=m0 declared={type=anything} owner=L0
+# CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
+# CHECK-NEXT: module m1 path="/b.ts" displayPath="b.ts"
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="f" module=m1 thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+typesite w0 module=m0 position=3 kind=Variable text="number"
+layout L0 kind=Instance name="C" module=m0 staticFields=[{key="s" variable=g3}]
+variable g0 module=m0 declared={type=anything}
+variable g1 name="f" module=m1 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 name="n" module=m0 declared={type=number site=w0 flags=[IsExpected]} initialization=Undefined
+variable g3 name="s" module=m0 declared={type=anything} owner=L0
+module m0 path="/a.ts" displayPath="a.ts" body=f0
+module m1 path="/b.ts" displayPath="b.ts"
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="f" module=m1 thisType={type=anything} results=[{type=undefined}]
+entry module=m0

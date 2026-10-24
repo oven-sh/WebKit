@@ -1,0 +1,78 @@
+# Inline code that can miss has no code as a value, which has no miss edge
+# FORM: Selected
+# RUN: generate-code
+# DIAGNOSTIC: OpcodeWithoutCode 11
+# CHECK: f0: no code
+# CHECK-NEXT: f1: no code
+# CHECK-NEXT: f2: no code
+# CHECK-NEXT: f3: no code
+# CHECK-NEXT: f4: no code
+# CHECK-NEXT: f5: no code
+# CHECK-NEXT: f6: no code
+# CHECK-NEXT: f7: no code
+# CHECK-NEXT: f8: no code
+# CHECK-NEXT: f9: no code
+# CHECK-NEXT: f10: no code
+# CHECK-NEXT: f11: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="at" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 overload=ArrayPrototypeAt/0
+    Return v2
+}
+function f1 name="indexOf" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0
+    Return v2
+}
+function f2 name="includes" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0
+    Return v2
+}
+function f3 name="join" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0
+    Return v2
+}
+function f4 name="concat" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3
+    Return v2
+}
+function f5 name="shift" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0
+    Return v2
+}
+function f6 name="pop" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0
+    Return v2
+}
+function f7 name="slice" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0
+    Return v2
+}
+function f8 name="splice" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1, v1 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0
+    Return v2
+}
+function f9 name="unshift" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0
+    Return v2
+}
+function f10 name="pushTwo" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return v2
+}
+function f11 name="pushOne" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
+    v2 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return v2
+}

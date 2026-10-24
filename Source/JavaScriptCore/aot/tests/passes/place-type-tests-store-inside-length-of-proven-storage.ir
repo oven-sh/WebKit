@@ -1,0 +1,57 @@
+# A store whose position the function compares with the length is a store inside the length, also where flow has proven the kind of storage and no test of the kind stands in front of it.
+# In the pipeline ResolveAccesses comes first and rewrites such a store, which needs no test of a type: PlaceTypeTests looks at the position of the rewritten store as it does at that of a rewritten read.
+# An append by index gets no test: it would fail every time. A value that the storage does not take as it is leaves the store as it was
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(RESOLVED): pass ResolveAccesses PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="storeBelowLength" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
+    v3 = GetArrayLength v0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0 name="storeBelowLength"
+# CHECK-NOT: HasArrayStorage
+# CHECK: = IsInBounds v0, v1
+# CHECK: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# RESOLVED-LABEL: function f0 name="storeBelowLength"
+# RESOLVED-NOT: HasArrayStorage
+# RESOLVED: = IsInBounds v0, v1
+# RESOLVED: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+
+function f1 name="storeWithoutComparison" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1 name="storeWithoutComparison"
+# CHECK-NOT: IsInBounds
+# CHECK-NOT: isInBounds
+# RESOLVED-LABEL: function f1 name="storeWithoutComparison"
+# RESOLVED-NOT: IsInBounds
+# RESOLVED-NOT: isInBounds
+
+function f2 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: number):
+    v3 = GetArrayLength v0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="storeOfValueThatMayNotFit"
+# CHECK-NOT: IsInBounds
+# CHECK-NOT: isInBounds
+# RESOLVED-LABEL: function f2 name="storeOfValueThatMayNotFit"
+# RESOLVED-NOT: IsInBounds
+# RESOLVED-NOT: isInBounds

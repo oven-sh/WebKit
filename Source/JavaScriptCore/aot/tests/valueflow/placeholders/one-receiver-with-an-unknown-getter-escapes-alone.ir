@@ -1,0 +1,35 @@
+# plain = { held: one }; odd = { __proto__: somethingNoTableLists, given: two }; either = plain or odd; either.label
+# An object nobody knows lies above one of the two receivers, and it may have a getter under the name. That getter is handed the receiver below it as `this`, so that receiver escapes
+# and what it holds is entered. No such getter lies above the other receiver: it stays in the program, and nobody enters what it holds.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Odd" fields=[{key="given" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="somethingThatNoTableLists" [isFreeName]
+    SetLiteralPrototype v3, v5
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v3 variable=g0
+    v9 = GetModuleVariable variable=g0
+    v10 = PropGet v9 key="label"
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}

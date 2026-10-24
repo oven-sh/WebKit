@@ -319,6 +319,43 @@ inline T atomicExchange(T* location, T newValue, std::memory_order order = std::
 }
 #endif // defined(__cpp_lib_atomic_ref)
 
+// Bun: std::atomic_ref, and the members of it that are used where the standard library has none (see above).
+#if defined(__cpp_lib_atomic_ref)
+template<typename T>
+class AtomicRef : public std::atomic_ref<T> {
+public:
+    using std::atomic_ref<T>::atomic_ref;
+};
+#else
+template<typename T>
+class AtomicRef {
+public:
+    explicit AtomicRef(T& value)
+        : m_value(std::bit_cast<std::atomic<T>*>(&value))
+    {
+        static_assert(sizeof(std::atomic<T>) == sizeof(T) && alignof(std::atomic<T>) == alignof(T));
+    }
+
+    T load(std::memory_order order = std::memory_order_seq_cst) const { return m_value->load(order); }
+    void store(T desired, std::memory_order order = std::memory_order_seq_cst) const { m_value->store(desired, order); }
+    T exchange(T desired, std::memory_order order = std::memory_order_seq_cst) const { return m_value->exchange(desired, order); }
+    bool compare_exchange_weak(T& expected, T desired, std::memory_order order = std::memory_order_seq_cst) const { return m_value->compare_exchange_weak(expected, desired, order); }
+    bool compare_exchange_weak(T& expected, T desired, std::memory_order success, std::memory_order failure) const { return m_value->compare_exchange_weak(expected, desired, success, failure); }
+    bool compare_exchange_strong(T& expected, T desired, std::memory_order order = std::memory_order_seq_cst) const { return m_value->compare_exchange_strong(expected, desired, order); }
+    bool compare_exchange_strong(T& expected, T desired, std::memory_order success, std::memory_order failure) const { return m_value->compare_exchange_strong(expected, desired, success, failure); }
+    T fetch_add(T operand, std::memory_order order = std::memory_order_seq_cst) const { return m_value->fetch_add(operand, order); }
+    T fetch_sub(T operand, std::memory_order order = std::memory_order_seq_cst) const { return m_value->fetch_sub(operand, order); }
+    T fetch_and(T operand, std::memory_order order = std::memory_order_seq_cst) const { return m_value->fetch_and(operand, order); }
+    T fetch_or(T operand, std::memory_order order = std::memory_order_seq_cst) const { return m_value->fetch_or(operand, order); }
+    T fetch_xor(T operand, std::memory_order order = std::memory_order_seq_cst) const { return m_value->fetch_xor(operand, order); }
+
+private:
+    std::atomic<T>* m_value;
+};
+#endif // defined(__cpp_lib_atomic_ref)
+
+template<typename T> AtomicRef(T&) -> AtomicRef<T>;
+
 // Just a compiler fence. Has no effect on the hardware, but tells the compiler
 // not to move things around this call. Should not affect the compiler's ability
 // to do things like register allocation and code motion over pure operations.
@@ -607,6 +644,7 @@ ALWAYS_INLINE T& ensurePointer(Atomic<T*>& pointer, NOESCAPE const Invocable<T*(
 } // namespace WTF
 
 using WTF::Atomic;
+using WTF::AtomicRef;
 using WTF::Dependency;
 using WTF::InputAndValue;
 using WTF::inputAndValue;

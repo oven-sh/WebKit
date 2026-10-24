@@ -1,0 +1,31 @@
+# Functions that nothing makes a value of are counted: they have no generic entrypoint
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ClosuresNeverCreated = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v1 function=f2
+    v3 = CallDirect v2 function=f3
+    Return v3
+}
+function f1 name="onlyCalled" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="alsoOnlyCalled" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="hasClosure" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="hasClosure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
+  b0(v0: f3, v1: anything, v2: anything):
+    v3 = AssumeType v2 castType=number
+    v4 = CallDirect v3 function=f3
+    Return v4
+}

@@ -1,0 +1,27 @@
+# A closure is a constant. What it captures goes into the entry parameters of its function once the body that creates it is reached.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=4 sites=0 edges=0 edgesOnceReached=3 seeds=2 statements=1
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: reached: edge n0 -> f1.parameter0
+# CHECK-NEXT: reached: edge n0 -> f1.parameter1
+# CHECK-NEXT: reached: edge n1 -> f1.parameter1
+# CHECK-NEXT: reached: seed n2 <- closure f1
+# CHECK-NEXT: reached: seed f1.parameter0 <- closure f1
+# CHECK-NEXT: PropGet v4 (closure f1) throws n3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="creates" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure v0, v1 function=f1
+    v3 = NewClosure v2, v0 function=f1
+    v4 = PropGet v3 key="a"
+    Return v2
+}
+function f1 name="captures" kind=Arrow captures=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

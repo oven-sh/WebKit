@@ -1,0 +1,17 @@
+# member = handedIn[someName]; handedIn.size
+# A read may find an accessor nobody knows. It is found under the name of the read, so it is no call of a value that may be whatever has escaped: the members that were handed out stay held.
+# RUN: valueflow-solve used
+# CHECK-NOT: run ArrayPrototypeSort
+# CHECK: used ArrayPrototypeSort
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = PropGet v1 key="size"
+    Return
+}

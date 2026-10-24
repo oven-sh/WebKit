@@ -1,0 +1,73 @@
+# function Made() { Object.defineProperty(this, "inner", { value: 1 }) }   register({ inner: 2, limit: 3 }, new Made(), ofADeclaredRule, ofAnElementOfDeclaredRules, ofAny, ofAnElementOfAny)
+# The program defines an `inner` on objects that have no layout, so an object that is asked for that name alone and of which only the names say what to expect gets no test for a layout.
+# In a checked function the checker says what a parameter is, and what the elements of a list are: `rule: Rule`, `rules: Rule[]`. That is more than the names: the test for the layout stays.
+# Of what the checker calls any, and of an element of it, only the names say what to expect: no test, as in a function that is not checked.
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.ts" displayPath="application.ts" body=f0
+entry module=m0
+layout L0 name="Rule" module=m0 fields=[{key="inner" declared={type=anything}}, {key="limit" declared={type=anything}}]
+layout L1 name="Descriptor" module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = Construct v5
+    v7 = NewClosure function=f2
+    v8 = NewClosure function=f3
+    v9 = NewClosure function=f4
+    v10 = NewClosure function=f5
+    v11 = Call v1, -, v4, v6, v7, v8, v9, v10
+    Return v11
+}
+
+function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = String string="inner"
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Call v4, -, v0, v3, v2
+    Return
+}
+
+function f2 name="ofADeclaredRule" module=m0 flags=[IsChecked] parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+
+function f3 name="ofAnElementOfDeclaredRules" module=m0 flags=[IsChecked] parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="inner"
+    Return v3
+}
+
+function f4 name="ofAny" module=m0 flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+
+function f5 name="ofAnElementOfAny" module=m0 flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="inner"
+    Return v3
+}
+# CHECK-LABEL: name="ofADeclaredRule"
+# CHECK: = TypeTest {{*}} testedType={{*}}L0
+# CHECK-LABEL: name="ofAnElementOfDeclaredRules"
+# CHECK: = TypeTest {{*}} testedType=L0
+# CHECK-LABEL: name="ofAny"
+# CHECK-NOT: testedType={{*}}L0
+# CHECK-LABEL: name="ofAnElementOfAny"
+# CHECK-NOT: testedType=L0

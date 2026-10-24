@@ -1,0 +1,131 @@
+# Opening and closing an iterator nobody knows anything about is the same code everywhere: three functions of the program. The step stays in the loop
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 1
+# STATISTIC: IterationsExpandedGenerically = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
+
+function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b7(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b6():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2
+    Jump -> next b5()
+  b5():
+    Return v7
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="leftEarly"
+# CHECK: LoopHint
+# CHECK: LoopHint
+# CHECK-NEXT: [[result1]]: anything = Call [[next1]], [[iterator1]]
+# CHECK-NEXT: = RequireObject [[result1]] runtimeError=IteratorResultNotObject
+# CHECK: = CallDirect [[iterator1]] function=f4 [isNeverInlined]
+# CHECK: role=CleanupHandler frequency=Unlikely:
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: = CallDirect [[iterator1]] function=f5 [isNeverInlined]
+# CHECK: [[open1]]: undefined = CallDirect {{*}} function=f3 [isNeverInlined]
+# CHECK-NEXT: [[iterator1]]: object = ResultAt [[open1]]
+# CHECK-NEXT: [[next1]]: anything = ResultAt [[open1]] index=1
+# ABSENT-LABEL: function f0 name="leftEarly"
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: role=CatchHandler
+
+function f1 name="number" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    Return v3
+}
+# CHECK-LABEL: function f1 name="number"
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = CallDirect v0 function=f3 [isNeverInlined]
+# ABSENT-LABEL: function f1 name="number"
+
+function f2 name="layoutOfTheProgram" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    IteratorClose v1
+    Return v3
+}
+# The methods of a layout are code of the program, which later passes call directly.
+# CHECK-LABEL: function f2 name="layoutOfTheProgram"
+# CHECK: b0(v0: L0):
+# CHECK: = PropGet v0 key=@@iterator
+# CHECK: key="next"
+# CHECK: key="return"
+# ABSENT-LABEL: function f2 name="layoutOfTheProgram"
+# ABSENT-NOT: [isNeverInlined]
+
+# CHECK-LABEL: function f3 name="openIterator"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[iterable4]]: {{*}} = RequireObjectCoercible v0 nullishAccess=Iterate
+# CHECK-NEXT: [[method4]]: anything = PropGet [[iterable4]] key=@@iterator
+# CHECK-NEXT: [[isFunction4]]: boolean = TypeTest [[method4]] testedType=function
+# CHECK-NEXT: Branch [[isFunction4]] -> taken [[call4]](| 0), notTaken [[throw4]](| 0)
+# CHECK-NEXT: [[call4]]([[function4]]: function):
+# CHECK-NEXT: [[opened4]]: anything = Call [[function4]], [[iterable4]]
+# CHECK-NEXT: [[iterator4]]: object = RequireObject [[opened4]] runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: [[next4]]: anything = PropGet [[iterator4]] key="next"
+# CHECK-NEXT: [[results4]]: undefined = Results [[iterator4]], [[next4]]
+# CHECK-NEXT: Return [[results4]]
+# CHECK-NEXT: [[throw4]]({{*}}: anything) frequency=Rare:
+# CHECK-NEXT: never = ThrowNotIterable [[iterable4]]
+# CHECK-NEXT: Unreachable
+# ABSENT-LABEL: function f3 name="openIterator"
+# ABSENT-NOT: isSpread
+
+# CHECK-LABEL: function f4 name="closeIterator"
+# CHECK: b0(v0: object):
+# CHECK-NEXT: [[method5]]: anything = PropGet v0 key="return"
+# CHECK-NEXT: [[isAbsent5]]: boolean = TypeTest [[method5]] testedType=undefined|null
+# CHECK-NEXT: Branch [[isAbsent5]] -> taken [[absent5]](| 0), notTaken [[call5]](| 0)
+# CHECK: [[call5]]([[function5]]: {{*}}):
+# CHECK-NEXT: [[returned5]]: anything = Call [[function5]], v0
+# CHECK-NEXT: = RequireObject [[returned5]] runtimeError=IteratorResultNotObject
+# ABSENT-LABEL: function f4 name="closeIterator"
+# ABSENT-NOT: handler=
+
+# What `return` throws, and what reading it throws, is dropped: the exception that ended the loop goes on.
+# CHECK-LABEL: function f5 name="closeIteratorAfterThrow"
+# CHECK: [[dropped6]]() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: = CatchValue
+# CHECK: handler=[[dropped6]]():
+# CHECK-NEXT: [[method6]]: anything = PropGet v0 key="return"
+# CHECK: ([[function6]]: boolean|number|string|symbol|bigint|object) frequency=Rare handler=[[dropped6]]():
+# CHECK-NEXT: = Call [[function6]], v0
+# CHECK-NEXT: Jump
+# ABSENT-LABEL: function f5 name="closeIteratorAfterThrow"
+# ABSENT-NOT: RequireObject
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: function f6

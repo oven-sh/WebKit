@@ -1,0 +1,42 @@
+# proxy = new Proxy({}, { ownKeys() { throw "expected exception" } }); heir = Object.create(proxy); try { open for (key in heir) } catch (error) { error() } try { step it } catch (error) { error() }
+# Listing the names of an object walks up its chain, and a proxy on the chain runs its traps. The handler of the proxy escaped when the proxy was made, so the trap is entered, and what it throws comes out of the listing as the unknown value.
+# RUN: valueflow-solve calls
+# CHECK: f0 v12 -> unknown
+# CHECK: f0 v10 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="ownKeys" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v0, v2
+    v5 = Builtin builtin=ObjectCreate
+    v6 = Call v5, -, v4
+    Jump -> next b1()
+  b1() handler=b3():
+    v7 = ForInOpen v6
+    Jump -> next b2()
+  b2() handler=b4():
+    v8 = ForInStep v7, v6
+    Return
+  b3() role=CatchHandler:
+    v9 = CatchValue
+    v10 = Call v9
+    Return
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    v12 = Call v11
+    Return
+}
+function f1 name="ownKeys" kind=Method results=[{type=anything}] {
+  b0():
+    v0 = String string="expected exception"
+    Throw v0
+}

@@ -1,0 +1,24 @@
+# A terminator that selection creates is not legal before it
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OpcodeNotInForm 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Less v0, v0
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f1 name="good" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Less v0, v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}

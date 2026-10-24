@@ -1,0 +1,54 @@
+# JSON.parse gets the parser of the type that flow recorded for the call, and the object the parser allocates has the stamps of the site flow modeled
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# STATISTIC: ParsersCreated = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = CallDirect v2 function=f1
+    v4 = PropGet v0 key="sink" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = CallDirect v2 function=f2
+    v7 = Call v4, -, v6
+    Return
+}
+
+function f1 name="converted" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    Return v3
+}
+# CHECK-LABEL: function f1 name="converted"
+# CHECK: [[open]]: boolean = JSONSourceOpen v0
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
+# CHECK: ([[source]]: guard):
+# CHECK-NEXT: [[start]]: cursor = JSONSourceStart [[source]]
+# CHECK-NEXT: [[first]]: cursor = JSONSkipWhitespace [[start]]
+# CHECK-NEXT: = CallDirect [[first]] function=[[parser]]
+# CHECK: = JSONSourceClose [[source]],
+# CHECK: JSONSourceAbandon [[source]]
+
+function f2 name="notConverted" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="notConverted"
+# CHECK-NOT: JSONSourceOpen
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0
+# CHECK-NOT: JSONSourceOpen
+# CHECK: function [[parser]] {{*}}role=Parser
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1] allocationSite=[[site]] allocationClass=[[class]]

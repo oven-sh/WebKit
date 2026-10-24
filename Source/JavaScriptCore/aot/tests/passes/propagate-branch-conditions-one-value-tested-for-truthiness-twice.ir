@@ -1,0 +1,186 @@
+# Whether a value is truthy never changes: a test that another test of the same value dominates is that test. Neither of two tests on different paths is the other.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PropagateBranchConditions
+# RUN(CLEAN): pass PropagateBranchConditions EliminateDeadCode
+# STATISTIC: PropagateBranchConditionsChanges = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindMergePoint" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2(v1)
+  b1():
+    v3 = Integer integer=1
+    Jump -> next b2(v3)
+  b2(v4):
+    v5 = ToBoolean v0
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="behindMergePoint"
+# CHECK: b2(v4
+# CHECK: Branch v2 -> taken b3(), notTaken b4()
+# CLEAN-LABEL: function f0 name="behindMergePoint"
+# CLEAN: = ToBoolean v0
+# CLEAN-NOT: = ToBoolean
+
+function f1 name="onTakenPath" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v0
+    Branch v3 -> taken b3(), notTaken b2()
+  b2():
+    Return v1
+  b3():
+    v4 = Integer integer=1
+    Return v4
+}
+# CHECK-LABEL: function f1 name="onTakenPath"
+# CLEAN-LABEL: function f1 name="onTakenPath"
+# CHECK: b1():
+# CHECK: [[known]]: true = Boolean boolean=true
+# CHECK: Branch [[known]] -> taken b3(), notTaken b2()
+
+function f2 name="secondBranchPassesProof" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b1()
+  b1():
+    v2 = ToBoolean v0
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    Return v3
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="secondBranchPassesProof"
+# CHECK: b1():
+# CHECK: Branch v1 -> taken b2(| 0), notTaken b3()
+
+function f3 name="onTwoPaths" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ToBoolean v0
+    Return v2
+  b2():
+    v3 = ToBoolean v0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="onTwoPaths"
+# CHECK: Return v2
+# CHECK: Return v3
+
+function f4 name="twoValues" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v1
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f4 name="twoValues"
+# CHECK: Return v3
+
+function f5 name="whatFirstTestProvesIsTested" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = Integer integer=1
+    Return v4
+  b3():
+    v5 = Integer integer=2
+    Return v5
+}
+# CHECK-LABEL: function f5 name="whatFirstTestProvesIsTested"
+# CHECK: b1(v2
+# CHECK: [[known5]]: true = Boolean boolean=true
+# CHECK: Branch [[known5]] -> taken b2(), notTaken b3()
+
+function f6 name="handlerIsEnteredInFrontOfFirstTest" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v1
+    v3 = ToBoolean v0
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = ToBoolean v0
+    Return v5
+}
+# CHECK-LABEL: function f6 name="handlerIsEnteredInFrontOfFirstTest"
+# CHECK: Return v3
+# CHECK: Return v5
+
+function f7 name="behindHandlerAndBehindEndOfBlock" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v1
+    v3 = ToBoolean v0
+    Branch v3 -> taken b3(), notTaken b3()
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b3()
+  b3():
+    v5 = ToBoolean v0
+    Return v5
+}
+# CHECK-LABEL: function f7 name="behindHandlerAndBehindEndOfBlock"
+# CHECK: Return v5
+
+function f8 name="testInFrontOfBlockWithHandler" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Call v1
+    v4 = ToBoolean v0
+    Return v4
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    v6 = ToBoolean v0
+    Return v6
+}
+# CHECK-LABEL: function f8 name="testInFrontOfBlockWithHandler"
+# CHECK: b1() handler=b2():
+# CHECK: Return v2
+# CHECK: b2() role=CatchHandler:
+# CHECK: Return v2
+
+function f9 name="secondTestProvesMoreOfNarrowedValue" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetStringLength v5
+    Return v6
+  b3():
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    v7 = Integer integer=1
+    Return v7
+  b5():
+    v8 = Integer integer=0
+    Return v8
+}
+# CHECK-LABEL: function f9 name="secondTestProvesMoreOfNarrowedValue"
+# CHECK: b1(v3
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()

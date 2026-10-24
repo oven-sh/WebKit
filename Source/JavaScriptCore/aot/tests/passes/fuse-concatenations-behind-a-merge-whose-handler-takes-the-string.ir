@@ -1,0 +1,125 @@
+# What a block makes is there behind its end: neither at its head, where its handler is handed its arguments, nor in the handler. A string that the handler of the block where its ways meet is handed or reads
+# stays where it is made. One that goes to the handler of a later block, or that the handler does not read, is made behind the merge like any other
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="toTheHandlerOfTheMerge" parameters=[{type=number}, {type=number}, {type=anything}, {type=boolean}] results=[{type=string}] {
+  b0(v0: number, v1: number, v2: anything, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="t"
+    v5 = Add v4, v0
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string="t"
+    v7 = Add v6, v1
+    Jump -> next b3(v7)
+  b3(v8: string) handler=b4(v8):
+    v9 = String string="y"
+    v10 = Add v8, v9
+    v11 = Call v2
+    Return v10
+  b4(v12: string) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}
+# CHECK-LABEL: function f0 name="toTheHandlerOfTheMerge"
+# CHECK: b1():
+# CHECK: Jump -> next b3(v5)
+# CHECK: b2():
+# CHECK: Jump -> next b3(v7)
+# CHECK: b3(v8: string) handler=b4(v8):
+
+function f1 name="toTheHandlerOfALaterBlock" parameters=[{type=number}, {type=number}, {type=anything}, {type=boolean}] results=[{type=string}] {
+  b0(v0: number, v1: number, v2: anything, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="t"
+    v5 = Add v4, v0
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string="t"
+    v7 = Add v6, v1
+    Jump -> next b3(v7)
+  b3(v8: string):
+    v9 = String string="y"
+    v10 = Add v8, v9
+    Jump -> next b4()
+  b4() handler=b5(v8):
+    v11 = Call v2
+    Return v10
+  b5(v12: string) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}
+# CHECK-LABEL: function f1 name="toTheHandlerOfALaterBlock"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3([[number]]: number):
+# CHECK-NEXT: [[text]]: "t" = String string="t"
+# CHECK-NEXT: [[string]]: string = Strcat [[text]], [[number]]
+# CHECK: b4() handler=b5([[string]]):
+
+function f2 name="readInTheHandlerOfTheMerge" parameters=[{type=number}, {type=number}, {type=anything}, {type=boolean}] results=[{type=string}] {
+  b0(v0: number, v1: number, v2: anything, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="t"
+    v5 = Add v4, v0
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string="t"
+    v7 = Add v6, v1
+    Jump -> next b3(v7)
+  b3(v8: string) handler=b4():
+    v9 = String string="y"
+    v10 = Add v8, v9
+    v11 = Call v2
+    Return v10
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b5()
+  b5():
+    Return v8
+}
+# CHECK-LABEL: function f2 name="readInTheHandlerOfTheMerge"
+# CHECK: b1():
+# CHECK: Jump -> next b3(v5)
+# CHECK: b2():
+# CHECK: Jump -> next b3(v7)
+# CHECK: b3(v8: string) handler=b4():
+# CHECK: Return v8
+
+function f3 name="notReadByTheHandlerOfTheMerge" parameters=[{type=number}, {type=number}, {type=anything}, {type=boolean}] results=[{type=string}] {
+  b0(v0: number, v1: number, v2: anything, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="t"
+    v5 = Add v4, v0
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string="t"
+    v7 = Add v6, v1
+    Jump -> next b3(v7)
+  b3(v8: string) handler=b4():
+    v9 = String string="y"
+    v10 = Add v8, v9
+    v11 = Call v2
+    Return v10
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    v13 = String string="none"
+    Return v13
+}
+# CHECK-LABEL: function f3 name="notReadByTheHandlerOfTheMerge"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3([[number]]: number) handler=b4():
+# CHECK-NEXT: [[text]]: "t" = String string="t"
+# CHECK-NEXT: v9: "y" = String string="y"
+# CHECK-NEXT: v10: string = Strcat [[text]], [[number]], v9

@@ -1,0 +1,224 @@
+# An array that gets one element for each entry of a Map or a Set is allocated with room for as many elements as the collection has entries
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pushPerMapEntry" parameters=[{type=Map}] results=[{type=Array<anything>}] {
+  b0(v0: Map):
+    v1 = NewArray contents=anything
+    v2 = CollectionTable v0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = MapNext v0, v4, v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=3
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v1, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = CollectionTable v0
+    v13 = Integer integer=1
+    v14 = Add v9, v13
+    Jump -> next b1(v12, v14)
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: [[size0]]: {{*}} = CallBuiltin v0 overload=MapPrototypeSize/0
+# CHECK-NEXT: [[constant0]]: {{*}} = Integer
+# CHECK-NEXT: [[sum0]]: {{*}} = Add [[constant0]], [[size0]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum0]]
+
+function f1 name="appendPerSetElementAfterAnElement" parameters=[{type=Set}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Set, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 = CollectionTable v0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = SetNext v0, v5, v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=2
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    AppendElement v2, v11
+    v13 = CollectionTable v0
+    v14 = Integer integer=1
+    v15 = Add v10, v14
+    Jump -> next b1(v13, v15)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: [[size1]]: {{*}} = CallBuiltin v0 overload=SetPrototypeSize/0
+# CHECK-NEXT: [[constant1]]: {{*}} = Integer integer=1
+# CHECK-NEXT: [[sum1]]: {{*}} = Add [[constant1]], [[size1]]
+# CHECK-NEXT: = NewArray v1 contents=anything capacity=[[sum1]]
+
+function f2 name="countedUpToSize" parameters=[{type=Set}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Set, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=SetPrototypeSize/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: b0(v0: Set, v1: anything):
+# CHECK-NEXT: [[size2]]: {{*}} = CallBuiltin v0 overload=SetPrototypeSize/0
+# CHECK: = NewArray contents=anything capacity=
+
+function f3 name="mapGrowsInLoop" parameters=[{type=Map}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Map, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = CollectionTable v0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = MapNext v0, v5, v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=3
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v12 = CallBuiltin v2, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v13 = CallBuiltin v0, v11, v1 overload=MapPrototypeSet/0
+    v14 = CollectionTable v0
+    v15 = Integer integer=1
+    v16 = Add v10, v15
+    Jump -> next b1(v14, v16)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: MapPrototypeSize
+# CHECK-NOT: capacity=
+
+function f4 name="unknownCodeInLoop" parameters=[{type=Map}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Map, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = CollectionTable v0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = MapNext v0, v5, v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=3
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v12 = Call v1, -, v11
+    v13 = CallBuiltin v2, v12 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = CollectionTable v0
+    v15 = Integer integer=1
+    v16 = Add v10, v15
+    Jump -> next b1(v14, v16)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK: [[size4]]: {{*}} = CallBuiltin v0 overload=MapPrototypeSize/0
+# CHECK: [[sum4]]: {{*}} = Add {{*}}, [[size4]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum4]]
+
+function f5 name="loopLeftEarly" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Map, v1: boolean):
+    v2 = NewArray contents=anything
+    v3 = CollectionTable v0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = MapNext v0, v5, v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=3
+    Branch v9 -> taken b2(), notTaken b4()
+  b2():
+    v12 = CallBuiltin v2, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v1 -> taken b4(), notTaken b3()
+  b3():
+    v13 = CollectionTable v0
+    v14 = Integer integer=1
+    v15 = Add v10, v14
+    Jump -> next b1(v13, v15)
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: MapPrototypeSize
+# CHECK-NOT: capacity=
+
+function f6 name="pushForSomeEntries" parameters=[{type=Map}] results=[{type=Array<anything>}] {
+  b0(v0: Map):
+    v1 = NewArray contents=anything
+    v2 = CollectionTable v0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = MapNext v0, v4, v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=3
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v11 = ToBoolean v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = CallBuiltin v1, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v13 = CollectionTable v0
+    v14 = Integer integer=1
+    v15 = Add v9, v14
+    Jump -> next b1(v13, v15)
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f6
+# CHECK-NOT: MapPrototypeSize
+# CHECK-NOT: capacity=
+
+function f7 name="classOfCollectionNotProven" parameters=[{type=object}] results=[{type=Array<anything>}] {
+  b0(v0: object):
+    v1 = NewArray contents=anything
+    v2 = CollectionTable v0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = MapNext v0, v4, v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=3
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v1, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = CollectionTable v0
+    v13 = Integer integer=1
+    v14 = Add v9, v13
+    Jump -> next b1(v12, v14)
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f7
+# CHECK-NOT: MapPrototypeSize
+# CHECK-NOT: capacity=

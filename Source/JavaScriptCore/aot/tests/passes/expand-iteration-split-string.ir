@@ -1,0 +1,372 @@
+# An iteration over what split returns for a separator that is never empty searches for the next separator at each step, and the array is never made
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 15
+# STATISTIC: IterationsExpandedGenerically = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=","
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="constantSeparator"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[start0]]([[zero0]])
+# CHECK: [[length0]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[has0]]: boolean = LessEq [[position0]], [[length0]]
+# CHECK-NEXT: Branch [[has0]] -> taken [[search0]](| 0), notTaken [[done0]](
+# CHECK: [[search0]]([[from0]]: int[0, 2147483647]):
+# CHECK-NEXT: [[found0]]: int[-1, 2147483647] = CallBuiltin v0, v2, [[from0]] overload=StringPrototypeIndexOf/0
+# CHECK: [[isLast0]]: boolean = Less [[found0]],
+# CHECK-NEXT: Branch [[isLast0]] -> taken [[last0]]({{*}}), notTaken [[inner0]](| 0)
+# CHECK: [[cut0]]([[end0]]: int[0, 2147483647], [[next0]]: int[0, 4294967294]):
+# CHECK-NEXT: [[substring0]]: string = Substring v0, [[from0]], [[end0]]
+# CHECK: [[last0]](
+# CHECK: [[past0]]: int[1, 2147483648] = Add [[length0]],
+# CHECK-NEXT: Jump -> next [[cut0]]([[length0]], [[past0]])
+# CHECK: [[inner0]]([[at0]]: int[0, 2147483647]):
+# CHECK-NEXT: [[width0]]: {{*}} = GetStringLength v2
+# CHECK-NEXT: [[behind0]]: {{*}} = Add [[at0]], [[width0]]
+# CHECK-NEXT: Jump -> next [[cut0]]([[at0]], [[behind0]])
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK-NOT: IsPristine
+# CHECK-NOT: @@iterator
+# CHECK-NOT: [isNeverInlined]
+
+function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=", "
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven>
+    v5 = Integer integer=1
+    v6 = Upcast v4 castType=Array<string>
+    v7 = IteratorOpen v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = IteratorResume v7
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b3(), notTaken b2()
+  b2():
+    v12 = Call v1, -, v11, v5
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="throughCasts"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK-NOT: AssumeType
+# CHECK-NOT: Upcast
+# CHECK: = CallBuiltin v0, v2, {{*}} overload=StringPrototypeIndexOf/0
+# CHECK: string = Substring v0,
+
+function f2 name="oneOfTwoSeparators" parameters=[{type=string}, {type=","|";"}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: ","|";", v2: anything):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v2, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2 name="oneOfTwoSeparators"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK: = CallBuiltin v0, v1, {{*}} overload=StringPrototypeIndexOf/0
+# CHECK: = GetStringLength v1
+
+function f3 name="patternWithRest" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = String string=" "
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = IteratorOpen v2 elementCount=1 [isDestructuring, hasRest]
+    Jump -> next b1()
+  b1() handler=b6():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    v6 = NewArray contents=anything
+    Jump -> next b2()
+  b2() handler=b6():
+    LoopHint
+    v8 = IteratorResume v3 stepIndex=1
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b4(), notTaken b3()
+  b3() handler=b6():
+    AppendElement v6, v10
+    Jump -> next b2()
+  b4() handler=b6():
+    Jump -> next b5()
+  b5():
+    IteratorClose v3
+    v13 = Add v5, v6
+    Return v13
+  b6() role=IterationCleanup subject=v3:
+    v14 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v14
+}
+# CHECK-LABEL: function f3 name="patternWithRest"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK: overload=StringPrototypeIndexOf/0
+# CHECK: overload=StringPrototypeIndexOf/0
+# CHECK-NOT: IterationCleanup
+
+function f4 name="separatorMayBeEmpty" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: string, v2: anything):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v2, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4 name="separatorMayBeEmpty"
+# CHECK: v3: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+# CHECK: = ElemGet v3,
+
+function f5 name="emptySeparator" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=""
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f5 name="emptySeparator"
+# CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f6 name="oneSeparatorIsEmpty" parameters=[{type=string}, {type=""|","}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: ""|",", v2: anything):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v2, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f6 name="oneSeparatorIsEmpty"
+# CHECK: v3: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f7 name="limited" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=","
+    v3 = Integer integer=2
+    v4 = CallBuiltin v0, v2, v3 overload=StringPrototypeSplit/1
+    v5 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v10 = Call v1, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f7 name="limited"
+# CHECK: = CallBuiltin v0, v2, v3 overload=StringPrototypeSplit/1
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f8 name="arrayIsAlsoRead" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=","
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f8 name="arrayIsAlsoRead"
+# CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+# CHECK: Return v3
+
+function f9 name="callBetween" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=","
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = Call v1
+    v5 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v10 = Call v1, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f9 name="callBetween"
+# CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+# CHECK-NEXT: = Call v1
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f10 name="splitInEarlierBlock" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: boolean):
+    v3 = String string=","
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeSplit/0
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v5 = IteratorOpen v4
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b4(), notTaken b3()
+  b3():
+    v10 = Call v1, -, v9
+    Jump -> next b2()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f10 name="splitInEarlierBlock"
+# CHECK: v4: Array<string> = CallBuiltin v0, v3 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f11 name="patternWithoutRest" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = String string=":"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    v6 = IteratorResume v3 stepIndex=1
+    v7 = ResultAt v6 index=1
+    IteratorClose v3
+    v9 = Add v5, v7
+    Return v9
+}
+# CHECK-LABEL: function f11 name="patternWithoutRest"
+# CHECK: v2: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f12 name="regExpSeparator" parameters=[{type=string}, {type=RegExp<pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: RegExp<pristine[Names]>, v2: anything):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/2
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v2, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f12 name="regExpSeparator"
+# CHECK: = CallBuiltin v0, v1 overload=StringPrototypeSplit/2
+# CHECK-NOT: StringPrototypeIndexOf
+
+function f13 name="nestedLoops" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    v2 = String string=";"
+    v3 = String string=","
+    v4 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v5 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b5(), notTaken b2()
+  b2():
+    v10 = Check v9 castType=string
+    v11 = CallBuiltin v10, v3 overload=StringPrototypeSplit/0
+    v12 = IteratorOpen v11
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v14 = IteratorResume v12
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Branch v15 -> taken b1(), notTaken b4()
+  b4():
+    v17 = Call v1, -, v16
+    Jump -> next b3()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f13 name="nestedLoops"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK: = CallBuiltin v10, v3, {{*}} overload=StringPrototypeIndexOf/0
+# CHECK: string = Substring v10,
+# CHECK: = CallBuiltin v0, v2, {{*}} overload=StringPrototypeIndexOf/0
+# CHECK: string = Substring v0,

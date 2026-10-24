@@ -1,0 +1,45 @@
+# Once representations are chosen every value has one that its type allows. An operand may have another than its operation wants: the code generator converts it
+# FORM: Placed
+# RUN: verify
+# DIAGNOSTIC: WrongRepresentation 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badParameterOfOtherType" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number @Cell):
+    v1 @JSValue = Undefined
+    Return v1
+}
+function f1 name="badValueOfOtherType" results=[{type=undefined}] {
+  b0():
+    v0 @Cell = Integer integer=1
+    v1 @JSValue = Undefined
+    Return v1
+}
+function f2 name="badValueWithoutRepresentation" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything @JSValue):
+    v1 = Call v0
+    v2 @JSValue = Undefined
+    Return v2
+}
+function f3 name="operandInAnotherForm" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object @Cell):
+    v1 @JSValue = Call v0
+    v2 @JSValue = Undefined
+    Return v2
+}
+function f4 name="terminatorOperandInAnotherForm" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean @JSValue):
+    Branch v0 -> taken b1(), notTaken b1()
+  b1():
+    v1 @JSValue = Undefined
+    Return v1
+}
+function f5 name="good" parameters=[{type=number}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number @Double, v1: object @Cell, v2: anything @JSValue, v3: boolean @Boolean):
+    v4 @Int64 = Integer integer=1
+    v5 @JSValue = Call v2
+    Branch v3 -> taken b1(), notTaken b1()
+  b1():
+    v6 @JSValue = Undefined
+    Return v6
+}

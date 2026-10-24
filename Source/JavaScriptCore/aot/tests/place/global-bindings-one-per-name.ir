@@ -1,0 +1,50 @@
+# All reads of one global name share a binding. A store of the name has its own, and so does a read that skips script bindings. Names past the limit go back to accesses by name
+# FORM: Selected
+# OPTIONS: limit=MaxGlobalBindings:4
+# RUN: pass NumberAndEncode
+# LOSS: MaxGlobalBindings x2 f0
+# STATISTIC: GlobalBindingsPlaced = 4
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="main" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+    v2 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+    v3 = GetGlobalBinding key="shared" level=Expected
+    SetGlobalBinding v0 key="shared" level=Expected [seesScriptBindings]
+    v5 = GetGlobalBinding key="stored" level=Expected [seesScriptBindings]
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v0 key="stored" [isFreeName]
+    v8 = GetGlobalBinding key="late" level=Expected [seesScriptBindings]
+    SetGlobalBinding v0 key="late" mode=Sloppy level=Expected [seesScriptBindings]
+    Return v1
+}
+function f1 name="readsAgain" results=[{type=anything}] {
+  b0():
+    v0 = GetGlobalBinding key="shared" level=Expected [seesScriptBindings]
+    Return v0
+}
+
+# CHECK: globalBinding 0 "shared" read seesScriptBindings
+# CHECK-NEXT: globalBinding 1 "shared" read
+# CHECK-NEXT: globalBinding 2 "shared" store seesScriptBindings
+# CHECK-NEXT: globalBinding 3 "stored" read seesScriptBindings isStoredByName
+# CHECK-NOT: globalBinding
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v1:{{*}}= GetGlobalBinding key="shared" level=Expected binding=0 [seesScriptBindings]
+# CHECK-NEXT: v2:{{*}}= GetGlobalBinding key="shared" level=Expected binding=0 [seesScriptBindings]
+# CHECK-NEXT: v3:{{*}}= GetGlobalBinding key="shared" level=Expected binding=1
+# CHECK-NEXT: SetGlobalBinding v0 key="shared" level=Expected binding=2 [seesScriptBindings]
+# CHECK-NEXT: v5:{{*}}= GetGlobalBinding key="stored" level=Expected binding=3 [seesScriptBindings]
+# CHECK-NEXT: v6:{{*}}= Builtin builtin=GlobalThis
+# CHECK-NEXT: PropSet v6, v0 key="stored" [isFreeName]
+# CHECK-NEXT: [[first]]:{{*}}= Builtin builtin=GlobalThis
+# CHECK-NEXT: v8:{{*}}= PropGet [[first]] key="late" [isFreeName]
+# CHECK-NEXT: [[second]]:{{*}}= Builtin builtin=GlobalThis
+# CHECK-NEXT: PropSet [[second]], v0 key="late" mode=Sloppy [isFreeName]
+# CHECK-NOT: GlobalBinding
+
+# CHECK-LABEL: function f1 name="readsAgain"
+# CHECK: v0:{{*}}= GetGlobalBinding key="shared" level=Expected binding=0 [seesScriptBindings]

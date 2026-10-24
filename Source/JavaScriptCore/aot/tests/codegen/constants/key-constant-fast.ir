@@ -1,0 +1,18 @@
+# Where the code is run often the word of the cell of a key is loaded and tested in place, and the stub is called for the first use alone
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# REQUIRES: unsanitized-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 unsanitized-code
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="inNormalCode" results=[{type=anything}] {
+  b0():
+    v0 = KeyConstant key=@@iterator
+    Return v0
+}
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub CreateConstant.Key x1
+# X64: f0: size=27 frame

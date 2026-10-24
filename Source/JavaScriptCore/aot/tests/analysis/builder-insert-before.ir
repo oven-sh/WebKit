@@ -1,0 +1,40 @@
+# Indexes of queued insertions refer to the block before any insertion, and every point of a block takes one
+# FORM: Prepared
+# RUN: insert function=f0 points=b0:2,b0:0,b0:2,b1:0
+# RUN(THROWS): insert function=f1 points=b0:1
+# RUN(BAD): insert function=f1 points=b0:2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="insertBefore" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    v2 = Negate v1
+    Jump -> next b1()
+  b1():
+    Return v2
+}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v1: number = Negate v0
+# CHECK-NEXT: v2: number = Negate v1
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v2
+function f1 name="afterValueThatMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# THROWS: b0(v0: anything) handler=b1():
+# THROWS-NEXT: v1: anything = Call v0
+# THROWS-NEXT: v3: undefined = Undefined
+# THROWS-NEXT: Return v1
+# THROWS-NEXT: b1() role=CatchHandler:
+# BAD-NOT: function f1
+# BAD: error: bad argument points=b0:2

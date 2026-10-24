@@ -1,0 +1,31 @@
+# The plan of an access under an engine private name, as library code writes `this.$state`: a slot where the layout declares the name. A name the layout lacks is looked up like any other key, so it may be inherited from a built-in prototype, and what the host keeps there under such names is not in the table: nothing is known. A private name of a class that the layout lacks is absent, because it is never inherited
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Plain" constructor=f0 fields=[{key=@"state" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Other" constructor=f1 fields=[{key=#"x"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty]} classFlow={evaluations=AtMostOnce}
+function f0 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+
+function f2 name="declared-field" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key=@"state"
+    Return v1
+}
+# CHECK: F2 v1 PropGet [[state]]: form=Slot level=Proven operation=GetSlot receivers=[L0] member=(Field level=Proven holder=L0 field=0)
+function f3 name="name-the-layout-lacks" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key=@"then"
+    v2 = PropGet v0 key=@"hidden"
+    Return v1
+}
+# CHECK-NEXT: F3 v1 PropGet [[then]]: form=ByName level=Unknown receivers=[L0]
+# CHECK-NEXT: F3 v2 PropGet [[hidden]]: form=ByName level=Unknown receivers=[L0]
+function f4 name="private-name-of-another-class" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = NewClassToken layout=L1
+    v2 = PrivateHas v0, v1 layout=L1 field=0
+    Return v2
+}
+# CHECK-NEXT: F4 v2 PrivateHas [[x]]: form=Constant level=Proven operation=Boolean value=false receivers=[L0] member=(Absent level=Proven)

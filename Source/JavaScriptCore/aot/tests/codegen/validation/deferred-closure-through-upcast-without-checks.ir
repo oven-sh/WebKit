@@ -1,0 +1,32 @@
+# The program of deferred-closure-through-upcast.ir without validate: the same deferred slots
+# FORM: Selected
+# OPTIONS: check=validate-back-end references=narrow
+# RUN: generate-code
+# STATISTIC: DeferredClosureSlots = 2
+# CHECK: f0: size=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="InitialField" fields=[{key="run" declared={type=function} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f1} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L1 name="Stored" fields=[{key="call" declared={type=function} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation deferral=CapturesObject deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType]}
+function f0 name="main" results=[{type=L0}] {
+  b0():
+    v0 = NewClosure function=f1 closureForm=Deferred
+    v1 = Upcast v0 castType=function
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = NewClosure v3 function=f2 closureForm=Deferred
+    v5 = Upcast v4 castType=f1|f2
+    v6 = Upcast v5 castType=function
+    PutSlotOrAdd v3, -, v6 key="call" receivers=[L1] level=Proven
+    Return v2
+}
+function f1 name="run" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="call" kind=Arrow captures=[{type=L1}] results=[{type=undefined}] {
+  b0(v0: L1):
+    v1 = Undefined
+    Return v1
+}

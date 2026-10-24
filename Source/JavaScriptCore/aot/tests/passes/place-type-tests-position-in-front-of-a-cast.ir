@@ -1,0 +1,24 @@
+# One value stands for everything that has the identity of a tested value. Here the comparison and the key of the access share the test for a number, and what passes it is the
+# parameter, a number. The key is an integer by the cast that stands behind the comparison. The test of the position takes an integer, so it takes what passed with the type of the key.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slot" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: anything ~ number):
+    v2 = GetArrayLength v0
+    v3 = GreaterEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Undefined
+    Return v4
+  b2():
+    v5: undefined|int ~ int = AssumeType v1 castType=undefined|int
+    v6 = ElemGet v0, v5
+    Return v6
+}
+# CHECK-LABEL: function f0 name="slot"
+# CHECK: ([[passed]]: number):
+# CHECK: = GetArrayElement v0,
+# CHECK: [[position]]: int = AssumeType [[passed]] castType=int
+# CHECK-NEXT: = IsInBounds v0, [[position]]

@@ -1,0 +1,22 @@
+# return new Map(Object.entries({ abstract: 128, any: 133 })).get("any")
+# The literal is a constant: the record lists the numbers that it holds when it is made, and nothing stores into it afterwards.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int[128, 133]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="abstract" declared={type=number} flags=[IsRequired]}, {key="any" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="abstract" value=Number{value=128}}, {key="any" value=Number{value=133}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectEntries
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=Map
+    v5 = Construct v4, -, v3
+    v6 = Builtin builtin=MapPrototypeGet
+    v7 = String string="any"
+    v8 = Call v6, v5, v7
+    Return v8
+}

@@ -1,0 +1,251 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTJSONParseEmitter.h"
+
+#if ENABLE(AOT)
+
+#include "AOTCellFormat.h"
+#include "AOTFlowResults.h"
+#include "AOTInstance.h"
+#include "AOTJSONKeyOrder.h"
+#include "AOTObjectWords.h"
+#include "AOTPlacement.h"
+#include "AOTRuntimeCallEmitter.h"
+#include "B3PatchpointValue.h"
+#include "B3StackmapGenerationParams.h"
+#include "CCallHelpers.h"
+#include <bit>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
+static_assert(JSONKeyOrder::isListedBit == 1ull << 32, "A numbered order leaves the upper half of its word to the shape word");
+static_assert(sizeof(KeyOrderTransition::orderAndShapeWordsBefore) == sizeof(uint64_t) && sizeof(KeyOrderTransition::key) == sizeof(uint32_t) && sizeof(KeyOrderTransition::orderAndCountAfter) == sizeof(uint32_t));
+static_assert(sizeof(ObjectWords::keyOrderTransitionMask) == sizeof(uint32_t));
+static_assert(argumentBufferAccessOf(RuntimeOperation::JSONParseExtraMembers) == ArgumentBufferAccess::ReadsAndWrites && argumentBufferAccessOf(RuntimeOperation::JSONAddExtraMember) == ArgumentBufferAccess::ReadsAndWrites, "updateInBuffer loads what the operation stored in the buffer");
+
+static constexpr int32_t parsedOutcome = static_cast<int32_t>(JSONOutcome::Parsed);
+static constexpr int32_t unknownOutcome = static_cast<int32_t>(JSONOutcome::Unknown);
+
+static constexpr unsigned logTransitionSize = std::countr_zero(sizeof(KeyOrderTransition));
+static_assert(sizeof(KeyOrderTransition) == 1u << logTransitionSize);
+
+static constexpr uint32_t constantHashTerms(uint32_t shapeWord, uint32_t slotKey)
+{
+    return (shapeWord * KeyOrderTransition::hashMultiplier) ^ slotKey;
+}
+static_assert([] {
+    constexpr uint32_t product = (5u ^ constantHashTerms(3, 7)) * KeyOrderTransition::hashMultiplier;
+    return KeyOrderTransition::hashOf(3ull << 32 | 5, 7) == (product ^ product >> KeyOrderTransition::hashFoldShift);
+}());
+
+namespace {
+
+class KeyOrderTransitionProbe final : public OperationEmitter {
+public:
+    explicit KeyOrderTransitionProbe(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
+
+    Pointer findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss);
+
+private:
+    void forgetTableOfEarlierProbes();
+};
+
+// A table that grows moves, and the pages it leaves are unmapped.
+void KeyOrderTransitionProbe::forgetTableOfEarlierProbes()
+{
+    B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
+    clobber->effects = B3::Effects::none();
+    m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_mutableFields, clobber);
+    clobber->setRunsWithoutFrame(true);
+    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+}
+
+Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss)
+{
+    uint32_t shapeWord = shapeWordOf(shape);
+    Integer orderAndCount(numberedOrder.value());
+    LBasicBlock probe = newBlock();
+    LBasicBlock hasSameWords = newBlock();
+    LBasicBlock hasOtherWords = newBlock();
+    LBasicBlock nextTransition = newBlock();
+    LBasicBlock found = newBlock();
+
+    Integer wordsBefore = bitOr(orderAndCount, integer(static_cast<int64_t>(static_cast<uint64_t>(shapeWord) << 32)));
+    Word32 product = mul(bitXor(low32(orderAndCount), word32(static_cast<int32_t>(constantHashTerms(shapeWord, slotKey)))), word32(static_cast<int32_t>(KeyOrderTransition::hashMultiplier)));
+    Word32 hash = bitXor(product, shiftRightUnsigned(product, word32(KeyOrderTransition::hashFoldShift)));
+    forgetTableOfEarlierProbes();
+    Word32 mask = loadMutable32(AOT_INSTANCE_OFFSET(objects.keyOrderTransitionMask));
+    Pointer transitions(loadMutable64(AOT_INSTANCE_OFFSET(objects.keyOrderTransitions)).value());
+    ValueFromBlock firstIndex = m_out.anchor(hash.value());
+    m_out.jump(probe);
+
+    m_out.appendTo(probe);
+    Word32 index(m_out.phi(B3::Int32, firstIndex));
+    Pointer transition = offsetBy(transitions, zeroExtended(bitAnd(index, mask)), logTransitionSize);
+    auto inTransition = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), transition.value(), offset);
+    };
+    Integer wordsInTransition(m_out.load64(inTransition(KeyOrderTransition::offsetOfOrderAndShapeWordsBefore())));
+    branch(equal(wordsInTransition, wordsBefore), { normalEdge(hasSameWords), unlikelyEdge(hasOtherWords) });
+
+    m_out.appendTo(hasSameWords);
+    Word32 slotKeyInTransition(m_out.load32(inTransition(KeyOrderTransition::offsetOfKey())));
+    branch(equal(slotKeyInTransition, word32(static_cast<int32_t>(slotKey))), { normalEdge(found), unlikelyEdge(nextTransition) });
+
+    m_out.appendTo(hasOtherWords);
+    branch(isZero(wordsInTransition), { rareEdge(miss), normalEdge(nextTransition) });
+
+    m_out.appendTo(nextTransition);
+    m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, word32(1)).value()));
+    m_out.jump(probe);
+
+    m_out.appendTo(found);
+    Word32 orderAndCountAfter(m_out.load32(inTransition(KeyOrderTransition::offsetOfOrderAndCountAfter())));
+    return Pointer(zeroExtended(orderAndCountAfter).value());
+}
+
+} // anonymous namespace
+
+uint32_t JSONParseEmitter::shapeOfParsedObject(LayoutID layout) const
+{
+    const FlowResults& flow = inputs().flow;
+    AllocationSiteID site = flow.typedResultSite(layout);
+    return m_placement.shapes().shapeOf(layout, site ? flow.at(site).allocationClass : AllocationClassID());
+}
+
+Pointer JSONParseEmitter::advanceKeyOrder(const ValueContext& value, Pointer order, LayoutID layout, uint32_t field)
+{
+    uint32_t shape = shapeOfParsedObject(layout);
+    if (!shape) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return order;
+    }
+    const PlacedSlot& slot = m_placement.slot(layout, field);
+    if (m_placement.shapes().shape(shape).keysAreNeverEnumerated || !slot.indexInLayoutRecord)
+        return order;
+
+    auto advanceByOperation = [&](bool isOnRarePath) {
+        return callOperation<Pointer>(value, RuntimeOperation::JSONObjectKey, { order, word32(static_cast<int32_t>(shape)), word32(*slot.indexInLayoutRecord) }, { .isOnRarePath = isOnRarePath });
+    };
+    uint32_t slotKey = slotKeyFor(slot.offset, slot.isOutOfLine());
+    if (value.shape() == CodeShape::Compact || slotKey == noSlotKey)
+        return advanceByOperation(false);
+
+    LBasicBlock isNumbered = newBlock();
+    LBasicBlock miss = newBlock();
+    Join<Pointer> next(m_out);
+    branch(below(order, pointerConstant(JSONKeyOrder::isListedBit)), { normalEdge(isNumbered), rareEdge(miss) });
+
+    m_out.appendTo(isNumbered);
+    next.add(KeyOrderTransitionProbe(generator()).findOrderAfter(order, shape, slotKey, miss));
+
+    m_out.appendTo(miss);
+    next.add(advanceByOperation(true));
+    return next.finish();
+}
+
+JSONParseEmitter::ExtraMemberState JSONParseEmitter::updateInBuffer(ExtraMemberState state, NOESCAPE const Invocable<void(Pointer buffer)> auto& call)
+{
+    Pointer buffer = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(2);
+    TypedPointer extraWord = m_out.address(m_heaps.argumentBuffer, buffer.value());
+    TypedPointer orderWord = m_out.address(m_heaps.argumentBuffer, buffer.value(), sizeof(uint64_t));
+    m_out.store64(state.extra.value(), extraWord);
+    m_out.store64(state.order.value(), orderWord);
+    call(buffer);
+    return { Boxed(m_out.load64(extraWord)), Pointer(m_out.load64(orderWord)) };
+}
+
+void JSONParseEmitter::generateJSONObjectBegin(const ValueContext& value)
+{
+    define(value, pointerConstant(JSONKeyOrder().word()));
+}
+
+void JSONParseEmitter::generateJSONObjectKey(const ValueContext& value)
+{
+    define(value, advanceKeyOrder(value, in<Pointer>(value->orderOperand()), value->layout(), value->field()));
+}
+
+void JSONParseEmitter::generateJSONObjectFinish(const ValueContext& value)
+{
+    uint32_t shape = shapeOfParsedObject(value->layout());
+    if (!shape) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    Pointer order = in<Pointer>(value->orderOperand());
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Boxed extra = in<Boxed>(value->extraOperand());
+    bool storesOrder = !m_placement.shapes().shape(shape).keysAreNeverEnumerated;
+    bool mayHaveExtraProperties = !typeOf(value->extraOperand()).hasOnlyPrimitives(Primitive::Undefined);
+    if (!storesOrder && !mayHaveExtraProperties) {
+        define(value, word32(parsedOutcome));
+        return;
+    }
+
+    auto finishByOperation = [&](bool isOnRarePath) {
+        return low32(callOperation<Integer>(value, RuntimeOperation::JSONObjectFinish, { object, extra, order }, { .isOnRarePath = isOnRarePath }));
+    };
+    if (value.shape() == CodeShape::Compact) {
+        define(value, finishByOperation(false));
+        return;
+    }
+
+    LBasicBlock slowPath = newBlock();
+    Join<Word32> outcome(m_out);
+    if (mayHaveExtraProperties)
+        branchUnless(equal(extra, undefined()), slowPath);
+    branchUnless(below(order, pointerConstant(JSONKeyOrder::isListedBit)), slowPath);
+    if (storesOrder)
+        storeField(object, m_heaps.AOTObject_orderWord, low32(Integer(order.value())));
+    outcome.add(word32(parsedOutcome));
+
+    m_out.appendTo(slowPath);
+    outcome.add(finishByOperation(true));
+    define(value, outcome.finish());
+}
+
+void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
+{
+    uint32_t shape = shapeOfParsedObject(value->layout());
+    if (!shape) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    Pointer cursor = cursorOf(value->cursorOperand());
+    ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
+    Pointer next;
+    state = updateInBuffer(state, [&](Pointer buffer) {
+        next = callOperation<Pointer>(value, RuntimeOperation::JSONParseExtraMembers, { word32(static_cast<int32_t>(shape)), cursor, buffer });
+    });
+    Condition isParsed(m_out.notNull(next.value()));
+    Word32 outcome = select(isParsed, word32(parsedOutcome), word32(unknownOutcome));
+    defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
+}
+
+void JSONParseEmitter::generateJSONAddExtraMember(const ValueContext& value)
+{
+    uint32_t shape = shapeOfParsedObject(value->layout());
+    if (!shape) {
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+        return;
+    }
+    ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
+    CellPointer name = in<CellPointer>(value->memberNameOperand());
+    Boxed member = in<Boxed>(value->valueOperand());
+    state = updateInBuffer(state, [&](Pointer buffer) {
+        callVoidOperation(value, RuntimeOperation::JSONAddExtraMember, { word32(static_cast<int32_t>(shape)), name, member, buffer });
+    });
+    defineResults(value, { state.extra, state.order });
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

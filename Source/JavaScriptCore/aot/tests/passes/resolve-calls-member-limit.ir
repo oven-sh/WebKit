@@ -1,0 +1,46 @@
+# MaxAccessPlanMembers bounds no call: a call of a method on more receivers than the limit (2) is dispatched like any other. The receivers are grouped by the method they find,
+# MaxDispatchCases bounds the arms, and whatever has no arm keeps the operations by name. It used to be "unknown member": no direct call at all.
+# FORM: Prepared
+# OPTIONS: limit=MaxAccessPlanMembers:2
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Add" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Subtract" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Multiply" constructor=f4 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
+layout L3 kind=Instance name="Divide" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f7 mutability=Fixed}]}
+layout L4 kind=Instance name="MultiplyChecked" base=L2 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L2 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Add" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return
+}
+function f2 name="Subtract" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    Return
+}
+function f4 name="Multiply" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="run" kind=Method flags=[HasThis] thisType={type=L2|L4} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L2|L4, v1: anything):
+    Return
+}
+function f6 name="Divide" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="run" kind=Method flags=[HasThis] thisType={type=L3} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L3, v1: anything):
+    Return
+}
+function f8 name="MultiplyChecked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f9 name="five-receivers" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3|L4, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f9 name="five-receivers"
+# CHECK: = TypeTest v0 testedType=L2|L4
+# CHECK: ([[product]]: L2|L4):
+# CHECK-NEXT: = CallDirect [[product]], v1 function=f5
+# CHECK: = CallDirect {{*}}, v1 function=f1

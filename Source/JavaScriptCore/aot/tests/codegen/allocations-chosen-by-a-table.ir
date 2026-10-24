@@ -1,0 +1,71 @@
+# The cases of a switch that do nothing but allocate an empty object each and meet again: a table from the case to the number of the allocation, and one allocation.
+# What an empty object of only some of the layouts holds that is not zero stands in the row of the table too
+# FORM: Selected
+# OPTIONS: heat=EverythingIsCold
+# RUN: generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Leaf" fields=[{key="kind" declared={type=number}}, {key="text" declared={type=anything}}]
+layout L1 name="Pair" fields=[{key="kind" declared={type=number}}, {key="left" declared={type=anything}}, {key="right" declared={type=anything}}]
+layout L2 name="Counted" fields=[{key="kind" declared={type=number}}, {key="child" declared={type=anything}}, {key="count" declared={type=number}}]
+
+function f0 name="allocatesByTable" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    Switch v0 cases=[1, 2, 3, 5] -> case b1(), case b2(), case b3(), case b1(), otherwise b5()
+  b1():
+    v1 = NewObject layout=L0
+    Jump -> next b4(v1)
+  b2():
+    v2 = NewObject layout=L1
+    Jump -> next b4(v2)
+  b3():
+    v3 = NewObject layout=L2
+    Jump -> next b4(v3)
+  b4(v4: L0|L1|L2):
+    Return v4
+  b5():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f0: size={{*}} constants=1 jumpTables=0 {{*}}
+# CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros.n0 x1
+# CHECK-NOT: stub
+
+# One of the cases stores a field as well. It stays a case of the switch, and the table has the other two
+function f1 name="allocatesOneCaseForItself" parameters=[{type=i32}, {type=anything}] results=[{type=anything}] {
+  b0(v0: i32, v1: anything):
+    Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b5()
+  b1():
+    v2 = NewObject layout=L0
+    Jump -> next b4(v2)
+  b2():
+    v3 = NewObject layout=L1
+    Jump -> next b4(v3)
+  b3():
+    v4 = NewObject -, v1 layout=L2 fields=[1]
+    Jump -> next b4(v4)
+  b4(v5: L0|L1|L2):
+    Return v5
+  b5():
+    v6 = Undefined
+    Return v6
+}
+# CHECK: f1: size={{*}} constants=1 jumpTables=0 {{*}}
+# CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros.n0 x1
+# CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros.n3 x1
+# CHECK-NOT: stub
+
+# One allocation is no table
+function f2 name="allocatesInOneCase" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b3()
+  b1():
+    v1 = NewObject layout=L0
+    Jump -> next b2(v1)
+  b2(v2: L0):
+    Return v2
+  b3():
+    v3 = Undefined
+    Return v3
+}
+# CHECK: f2: size={{*}} constants=0 {{*}}

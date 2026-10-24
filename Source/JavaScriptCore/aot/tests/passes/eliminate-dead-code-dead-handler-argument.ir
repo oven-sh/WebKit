@@ -1,0 +1,97 @@
+# A parameter of a handler block that nobody reads goes, with its argument at every block that names the handler and with what was computed for it alone
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unusedHandlerParameter" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2() handler=b3(v1):
+    v4 = Call v0
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+# CHECK-LABEL: function f0 name="unusedHandlerParameter"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK: b2() handler=b3():
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: Return v6
+
+function f1 name="oneOfTwoIsRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    v3 = Mul v1, v1
+    Jump -> next b1()
+  b1() handler=b3(v2, v3):
+    v4 = Call v0
+    Jump -> next b2()
+  b2() handler=b3(v1, v1):
+    v5 = Call v0
+    Return v5
+  b3(v6, v7) role=CatchHandler:
+    v8 = CatchValue
+    Return v7
+}
+# CHECK-LABEL: function f1 name="oneOfTwoIsRead"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: v3: number = Mul v1, v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3(v3):
+# CHECK: b2() handler=b3(v1):
+# CHECK: b3(v7: number) role=CatchHandler:
+# CHECK-NEXT: Return v7
+
+function f2 name="readOnlyByAnotherUnusedParameter" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = Call v0
+    Return v3
+  b2(v4) role=CatchHandler handler=b3(v4):
+    v5 = CatchValue
+    v6 = Call v0, -, v5
+    Return v6
+  b3(v7) role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+}
+# CHECK-LABEL: function f2 name="readOnlyByAnotherUnusedParameter"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK: b2() role=CatchHandler handler=b3():
+# CHECK: b3() role=CatchHandler:
+
+function f3 name="handlerParameterIsRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2() handler=b3(v1):
+    v4 = Call v0
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    v7 = Call v0, -, v5, v6
+    Return v7
+}
+# CHECK-LABEL: function f3 name="handlerParameterIsRead"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: v2: number = Add v1, v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3(v2):
+# CHECK: b2() handler=b3(v1):
+# CHECK: b3(v5: number) role=CatchHandler:

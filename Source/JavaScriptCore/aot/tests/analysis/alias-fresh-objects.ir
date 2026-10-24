@@ -1,0 +1,46 @@
+# Two values must alias, cannot alias or may alias
+# FORM: AsRead
+# RUN: analyses aliases function=f0 alias-values=v1,v2,v3,v4,v5,v6,v9,v10
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point"
+function f0 name="alias" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    v4 = Upcast v2 castType=anything
+    v5 = Call v1, -, v3
+    v6 = TypeOf v5
+    v7 = TypeTest v4 testedType=object
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2, v2)
+  b2():
+    v8 = NewObject layout=L0 fields=[]
+    Jump -> next b3(v8, v2)
+  b3(v9, v10):
+    v11 = TypeTest v9 testedType=object
+    v12 = TypeTest v10 testedType=object
+    Return v6
+}
+# CHECK: function f0
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v1 v2 alias: NoAlias
+# CHECK-NEXT: v1 v3 alias: MayAlias
+# CHECK: v1 v5 alias: MayAlias
+# CHECK: v1 v9 alias: NoAlias
+# CHECK: v2 v3 alias: NoAlias
+# CHECK-NEXT: v2 v4 alias: MustAlias
+# CHECK-NEXT: v2 v5 alias: NoAlias
+# CHECK-NEXT: v2 v6 alias: NoAlias
+# CHECK-NEXT: v2 v9 alias: MayAlias
+# CHECK-NEXT: v2 v10 alias: MustAlias
+# CHECK: v3 v5 alias: MayAlias
+# CHECK-NEXT: v3 v6 alias: NoAlias
+# CHECK-NEXT: v3 v9 alias: NoAlias
+# CHECK: v4 v10 alias: MustAlias
+# CHECK: v9 v10 alias: MayAlias
+# CHECK-NOT: error:

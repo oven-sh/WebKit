@@ -1,0 +1,67 @@
+# `v.walk(context)`: the member is read, then the argument is evaluated, then the call is made. A call through the method table looks the member up where the call stands.
+# A read that is proven to find methods only walks the chain and runs nobody's code, so the read of a variable between the two cannot tell where it stands. A call of unknown code between them can
+# FORM: Prepared
+# RUN: pass CallThroughMethodTable
+# STATISTIC: TableCalls = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+variable g0 name="context" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="V0" constructor=f0 flow={baseState=None allocationClasses=[0] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f1 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="walk" function=f1 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+layout L1 kind=Instance name="V1" constructor=f2 flow={baseState=None allocationClasses=[1] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f3 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="walk" function=f3 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+layout L2 kind=Instance name="V2" constructor=f4 flow={baseState=None allocationClasses=[2] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f5 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="walk" function=f5 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+layout L3 kind=Instance name="V3" constructor=f6 flow={baseState=None allocationClasses=[3] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f7 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="walk" function=f7 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+layout L4 kind=Instance name="V4" constructor=f8 flow={baseState=None allocationClasses=[4] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f9 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="walk" function=f9 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+function f0 name="V0" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="walk" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return v1
+}
+function f2 name="V1" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="walk" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    Return v1
+}
+function f4 name="V2" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="walk" kind=Method flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L2, v1: anything):
+    Return v1
+}
+function f6 name="V3" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="walk" kind=Method flags=[HasThis] thisType={type=L3} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L3, v1: anything):
+    Return v1
+}
+function f8 name="V4" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="walk" kind=Method flags=[HasThis] thisType={type=L4} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L4, v1: anything):
+    Return v1
+}
+function f10 name="nothingBetween" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3|L4, v1: anything):
+    v2 = PropGet v0 key="walk"
+    v3 = Call v2, v0, v1 calleeKey="walk"
+    Return v3
+}
+# CHECK-LABEL: function f10 name="nothingBetween"
+# CHECK: = CallTable v0, v1 function={{*}} key="walk" receivers=[L0, L1, L2, L3, L4]
+function f11 name="variableReadBetween" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3|L4):
+    v1 = PropGet v0 key="walk"
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, v0, v2 calleeKey="walk"
+    Return v3
+}
+# CHECK-LABEL: function f11 name="variableReadBetween"
+# CHECK-NOT: = PropGet
+# CHECK: = CallTable v0, v2 function={{*}} key="walk" receivers=[L0, L1, L2, L3, L4]
+function f12 name="unknownCodeBetween" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3|L4, v1: anything):
+    v2 = PropGet v0 key="walk"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="walk"
+    Return v4
+}
+# CHECK-LABEL: function f12 name="unknownCodeBetween"
+# CHECK-NOT: CallTable
+# CHECK: = PropGet v0 key="walk"

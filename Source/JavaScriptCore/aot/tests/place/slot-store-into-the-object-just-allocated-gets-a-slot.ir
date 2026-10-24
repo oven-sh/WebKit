@@ -1,0 +1,25 @@
+# A pass that makes objects may fill them with slot stores behind the allocation in place of the list of the allocation: a compiled parser stores so the members that the text may leave out.
+# interface Hooks { name: string; after?(): number }   JSON.parse('{"name":"n","after":null}') as Hooks
+# Flow ran before that pass. Where it calls the field never stored, a method gets no slot even in a layout that a typed parse fills. The store into the object that the function has just allocated gives the field its slot.
+# A store through any other receiver does not: the access planner plans none where flow calls the field never stored, so placement stops the build there, as in place/field-access-not-placed.ir.
+# FORM: Selected
+# OPTIONS: references=narrow
+# RUN: pass NumberAndEncode
+# DIAGNOSTIC: SlotAccessNotPlaced 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="FilledBehindItsAllocation" fields=[{key="name" declared={type=undefined|string}}, {key="after" declared={type=undefined|null|function} flags=[IsRequired, IsMethod] flow={location={writers=AllKnown stores=Never}}}] flow={members=[L0] observedUses=[ReachesTypedParse]}
+layout L1 name="StoredThroughParameter" fields=[{key="name" declared={type=undefined|string}}, {key="after" declared={type=undefined|null|function} flags=[IsRequired, IsMethod] flow={location={writers=AllKnown stores=Never}}}] flow={members=[L1] observedUses=[ReachesTypedParse]}
+
+function f0 name="parse" parameters=[{type=undefined|null}] results=[{type=L0}] {
+  b0(v0: undefined|null):
+    v1 = NewObject layout=L0
+    PutSlot v1, v1, v0 key="after" receivers=[L0] level=Expected
+    Return v1
+}
+function f1 name="store-through-parameter" parameters=[{type=L1}, {type=undefined|null}] results=[{type=anything}] {
+  b0(v0: L1, v1: undefined|null):
+    PutSlot v0, -, v1 key="after" receivers=[L1] level=Proven
+    Return
+}
+# CHECK: outcome

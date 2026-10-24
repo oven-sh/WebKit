@@ -1,0 +1,20 @@
+# The layouts of the receiver are proven, and one of them lacks the field that the others hold. In cold code, where the access gets no arm for each of them, the layouts with the field are tested for, as they are
+# for a receiver of which nothing is proven, and the read by name stands behind the failure of the test.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass PlaceTypeTests VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Circle" fields=[{key="size" declared={type=number flags=[IsExpected]}}]
+layout L1 name="Square" fields=[{key="size" declared={type=number flags=[IsExpected]}}]
+layout L2 name="Label" fields=[{key="text" declared={type=string flags=[IsExpected]}}]
+function f0 name="sizeOf" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="sizeOf"
+# CHECK: [[hasField]]: boolean = TypeTest v0 testedType=L0|L1
+# CHECK: = GetSlot {{*}}key="size" receivers=[L0, L1]
+# CHECK: = PropGet {{*}}key="size"

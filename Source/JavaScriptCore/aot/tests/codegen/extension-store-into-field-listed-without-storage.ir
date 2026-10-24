@@ -1,0 +1,95 @@
+# A field that a store of undefined creates may be listed without a granule, also where another store finds it filled: that store gets the granule itself, without a collection, and a store of undefined gets none.
+# A field that only stores of values create has its granule wherever it is filled, so a store that finds it filled tests nothing and calls nothing
+# FORM: Selected
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN(SLOTS): pass PlanSlots
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Late" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="near0" declared={type=anything}}, {key="near1" declared={type=anything}}, {key="empty" declared={type=anything}}, {key="valued" declared={type=anything}}]
+function f0 name="make" parameters=[{type=number}, {type=boolean}] results=[{type=L0}] {
+  b0(v0: number, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f1 name="useNear" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PutSlotOrAdd v0, -, v1 key="near0" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near1" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near0" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near1" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near0" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near1" receivers=[L0] level=Proven
+    v8 = GetSlotOrUndefined v0 key="near0" receivers=[L0] level=Proven
+    v9 = GetSlotOrUndefined v0 key="near0" receivers=[L0] level=Proven
+    v10 = GetSlotOrUndefined v0 key="near0" receivers=[L0] level=Proven
+    v11 = GetSlotOrUndefined v0 key="near1" receivers=[L0] level=Proven
+    v12 = GetSlotOrUndefined v0 key="near1" receivers=[L0] level=Proven
+    v13 = GetSlotOrUndefined v0 key="near1" receivers=[L0] level=Proven
+    Return v13
+}
+function f2 name="createsWithUndefined" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PutSlotOrAdd v0, -, v1 key="empty" receivers=[L0] level=Proven
+    Return
+}
+function f3 name="storesValueIntoFilled" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    v2 = IsSlotFilled v0 key="empty" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlot v0, v3, v1 key="empty" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f4 name="storesUndefinedIntoFilled" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="empty" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Undefined
+    PutSlot v0, v2, v3 key="empty" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f5 name="createsWithValue" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    PutSlotOrAdd v0, -, v1 key="valued" receivers=[L0] level=Proven
+    Return
+}
+function f6 name="storesValueIntoFilledWithStorage" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    v2 = IsSlotFilled v0 key="valued" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlot v0, v3, v1 key="valued" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    Return
+}
+
+# SLOTS: L0 CompiledObject size=48 extension=24
+# SLOTS: .3 "empty" JSValue out@8 unlisted
+# SLOTS-NEXT: .4 "valued" JSValue out@16
+# SLOTS-NEXT: extension Cell32 @16
+
+# CALLS-LABEL: f2: size=
+# CALLS-NOT: Extension
+# CALLS-LABEL: f3: size=
+# CALLS-NOT: EnsureExtension
+# CALLS: stub AllocateExtension.n1{{*}} x1
+# CALLS-NOT: Extension
+# CALLS-LABEL: f4: size=
+# CALLS-NOT: Extension
+# CALLS-LABEL: f5: size=
+# CALLS: stub AllocateExtension.n1{{*}} x1
+# CALLS-LABEL: f6: size=
+# CALLS-NOT: Extension

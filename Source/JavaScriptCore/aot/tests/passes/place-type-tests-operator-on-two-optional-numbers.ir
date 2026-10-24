@@ -1,0 +1,23 @@
+# Two elements of an array of numbers are each a number or missing, with no prediction. An operator on the two takes each for a number, because the other can be nothing else but missing, and tests both. Beside an operand that is never a number there is no such reason
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoElements" parameters=[{type=undefined|int[0, 1023]}, {type=undefined|int[0, 1023]}] results=[{type=anything}] {
+  b0(v0: undefined|int[0, 1023], v1: undefined|int[0, 1023]):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="twoElements"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: : int[0, 2046] = Add
+# CHECK: = TypeTest v1 testedType=number
+
+function f1 name="besideWhatIsNoNumber" parameters=[{type=undefined|int[0, 1023]}, {type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|int[0, 1023], v1: undefined|string):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="besideWhatIsNoNumber"
+# CHECK-NOT: TypeTest
+# CHECK: = Add v0, v1

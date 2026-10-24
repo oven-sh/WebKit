@@ -1,0 +1,49 @@
+# The type of a variable that is put off says that it may be empty. What one module puts off takes a variable of another module, which is put off too: the read goes with it,
+# and the one that it leaves behind in the body, which nothing takes any more, has the type of the variable.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 2
+# CHECK: variable g0 name="imported" module=m1 declared={type=absent|L0}
+# CHECK-NEXT: variable g1 name="table" module=m0 declared={type=absent|L1}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: : L0 = GetModuleVariable variable=g0
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/imported.ts" displayPath="imported.ts" body=f1
+entry module=m0
+layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+layout L1 fields=[{key="held" declared={type=L0} flags=[IsRequired]}]
+variable g0 name="imported" module=m1 declared={type=L0}
+variable g1 name="table" module=m0 declared={type=L1}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v1, v0 key="held"
+    PropSet v1, v0 key="held"
+    PutModuleVariable v1 variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = NewClosure function=f2
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="imported" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="a"
+    PropSet v1, v0 key="a"
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f2 name="reader" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v0 key="held"
+    v3 = StrictEq v1, v2
+    Return v3
+}

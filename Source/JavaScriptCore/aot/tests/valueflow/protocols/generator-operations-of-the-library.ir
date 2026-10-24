@@ -1,0 +1,59 @@
+# function* first() { (yield one)() }  function* second() { yield two }  The library's own operations: StepGenerator(first(), sent)(); ResumeGenerator(second()).value()
+# StepGenerator answers what the body of the generator yields or returns, ResumeGenerator an iterator result that holds it, and both hand their operand in. Each finds the generator it was given and no other.
+# RUN: valueflow-solve calls
+# CHECK: f1 v6 -> f4
+# CHECK: f1 v12 -> f5
+# CHECK: f2 v5 -> f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="steps" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = NewClosure function=f6
+    v3 = StepGenerator v1, v2 check=IsGenerator
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = Call v4
+    v7 = NewClosure function=f3
+    v8 = Call v7
+    v9 = Undefined
+    v10 = ResumeGenerator v8, v9
+    v11 = PropGet v10 key="value"
+    v12 = Call v11
+    Return
+}
+function f2 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f4
+    v3 = Yield v2
+    v4 = ResultAt v3
+    v5 = Call v4
+    Return
+}
+function f3 name="second" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f5
+    v3 = Yield v2
+    Return
+}
+function f4 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="sent" results=[{type=anything}] {
+  b0():
+    Return
+}

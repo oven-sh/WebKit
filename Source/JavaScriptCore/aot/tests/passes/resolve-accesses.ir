@@ -1,0 +1,314 @@
+# A property access that types and flow records prove becomes a slot operation without a guard or a constant, and every other access stays by name
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 18
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number}}, {key="w" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Named" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="name" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Widget" fields=[{key="deferred" declared={type=f0} flow={location={deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="Unlisted" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L4 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L5 kind=Instance name="Buffer" constructor=f1 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f2 mutability=Fixed}]}
+function f0 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="Buffer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+
+function f3 name="filled-field" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="filled-field"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: number = GetSlot v0 key="x" receivers=[L0] level=Proven
+# CHECK-NEXT: Return v1
+function f4 name="users-narrow-in-the-same-run" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    v3 = Add v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="users-narrow-in-the-same-run"
+# CHECK: v1: number = GetSlot v0 key="x"
+# CHECK-NEXT: v2: number = Add v1, v1
+# CHECK-NEXT: v3: number = Add v2, v1
+function f5 name="field-of-two-layouts" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="field-of-two-layouts"
+# CHECK: v1: number = GetSlot v0 key="x" receivers=[L0, L1] level=Proven
+function f6 name="access-site-is-kept" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x" accessSite=3
+    Return v1
+}
+# CHECK-LABEL: function f6 name="access-site-is-kept"
+# CHECK: v1: number = GetSlot v0 key="x" receivers=[L0] level=Proven accessSite=3
+function f7 name="empty-slot-means-no-property" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="empty-slot-means-no-property"
+# CHECK: v1: undefined|number = GetSlotOrUndefined v0 key="y" receivers=[L0] level=Proven
+function f8 name="deferred-closure" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="deferred"
+    Return v1
+}
+# CHECK-LABEL: function f8 name="deferred-closure"
+# CHECK: v1: f0 = GetDeferredClosureSlot v0 key="deferred" receivers=[L2] level=Proven
+function f9 name="closure-not-deferred" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="eager"
+    Return v1
+}
+# CHECK-LABEL: function f9 name="closure-not-deferred"
+# CHECK: v1: f0 = GetSlot v0 key="eager" receivers=[L2] level=Proven
+function f10 name="checked-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0
+    v2 = PropGet v1 key="x"
+    Return v2
+}
+# CHECK-LABEL: function f10 name="checked-receiver"
+# CHECK: v2: number = GetSlot v1 key="x" receivers=[L0] level=Proven
+function f11 name="rare-block" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = PropGet v0 key="x"
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: function f11 name="rare-block"
+# CHECK: frequency=Rare:
+# CHECK-NEXT: v2: number = GetSlot v0 key="x" receivers=[L0] level=Proven
+function f12 name="has-filled-field" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f12 name="has-filled-field"
+# CHECK: v1: true = Boolean boolean=true
+function f13 name="has-possibly-empty-field" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="y"
+    Return v1
+}
+# CHECK-LABEL: function f13 name="has-possibly-empty-field"
+# CHECK: v1: boolean = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
+function f14 name="has-own-field-a-prototype-may-name" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHasOwn v0 key="w"
+    Return v1
+}
+# CHECK-LABEL: function f14 name="has-own-field-a-prototype-may-name"
+# CHECK: v1: boolean = IsSlotFilled v0 key="w" receivers=[L0] level=Proven
+function f15 name="has-field-a-prototype-may-name" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="w"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="has-field-a-prototype-may-name"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropHas v0 key="w"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f16 name="absent-member" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    Return v1
+}
+# CHECK-LABEL: function f16 name="absent-member"
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2: false = Boolean
+function f17 name="store-to-filled-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f17 name="store-to-filled-field"
+# CHECK: PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+function f18 name="store-may-create-the-property" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="y"
+    Return
+}
+# CHECK-LABEL: function f18 name="store-may-create-the-property"
+# CHECK: PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+function f19 name="store-may-create-a-property-nobody-lists" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: L3, v1: number):
+    PropSet v0, v1 key="y"
+    Return
+}
+# CHECK-LABEL: function f19 name="store-may-create-a-property-nobody-lists"
+# CHECK: PutSlot v0, -, v1 key="y" receivers=[L3] level=Proven
+function f20 name="definition-of-filled-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropDefine v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f20 name="definition-of-filled-field"
+# CHECK: PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+function f21 name="definition-may-create-the-property" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropDefine v0, v1 key="w"
+    Return
+}
+# CHECK-LABEL: function f21 name="definition-may-create-the-property"
+# CHECK: PutSlotOrAdd v0, -, v1 key="w" receivers=[L0] level=Proven
+
+function f22 name="slot-may-be-empty" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="z"
+    Return v1
+}
+# CHECK-LABEL: function f22 name="slot-may-be-empty"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="z"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f23 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f23 name="expected-receiver"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f24 name="stamp-on-unknown-receiver" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f24 name="stamp-on-unknown-receiver"
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropGet v0 key="x" receivers=[L0]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f25 name="unknown-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f25 name="unknown-receiver"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f26 name="nullable-receiver" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f26 name="nullable-receiver"
+# CHECK-NEXT: b0(v0: undefined|L0):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f27 name="field-in-one-of-two-layouts" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+# CHECK-LABEL: function f27 name="field-in-one-of-two-layouts"
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: = PropGet v0 key="name"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f28 name="layout-or-string" parameters=[{type=string|L0}] results=[{type=anything}] {
+  b0(v0: string|L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f28 name="layout-or-string"
+# CHECK-NEXT: b0(v0: string|L0):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f29 name="getter" parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f29 name="getter"
+# CHECK-NEXT: b0(v0: L5):
+# CHECK-NEXT: = PropGet v0 key="size"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f30 name="stored-value-may-not-fit" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f30 name="stored-value-may-not-fit"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f31 name="object-may-be-frozen" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+  b0(v0: L4, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f31 name="object-may-be-frozen"
+# CHECK-NEXT: b0(v0: L4, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f32 name="store-to-possibly-moved-out-slot" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="z"
+    Return
+}
+# CHECK-LABEL: function f32 name="store-to-possibly-moved-out-slot"
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="z"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f33 name="definition-of-possibly-moved-out-slot" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropDefine v0, v1 key="z"
+    Return
+}
+# CHECK-LABEL: function f33 name="definition-of-possibly-moved-out-slot"
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PropDefine v0, v1 key="z"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f34 name="store-of-a-name-without-a-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="missing"
+    Return
+}
+# CHECK-LABEL: function f34 name="store-of-a-name-without-a-field"
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="missing"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f35 name="has-field-that-may-be-redefined" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropHas v0 key="z"
+    Return v1
+}
+# CHECK-LABEL: function f35 name="has-field-that-may-be-redefined"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropHas v0 key="z"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

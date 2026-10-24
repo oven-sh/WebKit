@@ -1,0 +1,40 @@
+# A key of a built-in gets a cell only if the table declares one: the objects and the symbol that values name, the holder a built-in call passes as this, a getter with a function to call, the constructor of a class in a type. NaN, undefined and Array.prototype.length, whose accessors are inline code only, get none
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables
+# RUN(CELLS): tables constants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = NewArray contents=anything holes=[]
+    v1 = PropGet v0 key="length"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="NaN" [isFreeName]
+    v4 = PropGet v2 key="undefined" [isFreeName]
+    v5 = Builtin builtin=SymbolIterator
+    v6 = Builtin builtin=ArrayPrototypePush
+    v7 = Builtin builtin=ArrayBuffer
+    v8 = Integer integer=8
+    v9 = Construct v7, -, v8
+    v10 = PropGet v9 key="byteLength"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v11 = CatchValue
+    Return
+}
+
+# CHECK: builtinCells 8 32
+# CELLS: builtinCell 0 cell=GlobalThis
+# CELLS-NEXT: builtinCell 1 cell=Array
+# CELLS-NEXT: builtinCell 2 cell=ArrayBuffer
+# CELLS-NEXT: builtinCell 3 cell=ArrayPrototype
+# CELLS-NEXT: builtinCell 4 cell=ArrayBufferPrototype
+# CELLS-NEXT: builtinCell 5 cell=SymbolIterator
+# CELLS-NEXT: builtinCell 6 cell=ArrayPrototypePush
+# CELLS-NEXT: builtinCell 7 cell=get:ArrayBufferPrototypeByteLength
+# CELLS-NOT: builtinCell

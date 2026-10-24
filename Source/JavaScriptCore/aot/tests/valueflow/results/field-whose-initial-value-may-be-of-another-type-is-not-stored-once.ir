@@ -1,0 +1,43 @@
+# Only its allocation fills the field `count`, in both layouts. Where all that arrives is a number, the field is stored at most once and whoever reads it may take the value from the allocation.
+# In `unsure` the sum stands behind a test of what came from outside. Where the test fails the generic version adds anything, and the sum may be a string. An allocation writes its slot without a test,
+# so that value is stored behind the allocation, by a store that tests it: the field is not filled by its allocation alone, and flow does not say that it is.
+# FORM: AsRead
+# RUN: flow
+# CHECK: field L0.0 "count" {{*}}stores=AtMostOnce {{*}}isUnchangedDuringActivation=true{{*}}IsNeverStoredWithOtherType
+# CHECK-NEXT: layout L1
+# CHECK-NEXT: field L1.0 "count" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Sure" fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Unsure" fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = CallDirect v2 function=f2
+    v4 = PropGet v0 key="count"
+    v5 = PropGet v3 key="count"
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+}
+function f1 name="sure" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=number}
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="unsure" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=number} illTypedCause=Assertion
+    v2 = Integer integer=1
+    v3 = Add v2, v1
+    v4 = Convert v3 declared={type=number}
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    Return v6
+}

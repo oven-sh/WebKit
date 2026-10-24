@@ -1,0 +1,143 @@
+# A switch on a parameter costs the one arm that stays where the site passes a constant: an integer, or a string. Where the site passes anything else every arm is charged
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes
+# STATISTIC: InlineDecisionInline = 3
+# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# STATISTIC: InlineBenefitFoldedCode = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="byNumber" parameters=[{type=int}, {type=number}] results=[{type=number}] {
+  b0(v0: int, v1: number):
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    Return v9
+  b2():
+    v10 = Mul v1, v1
+    v11 = Mul v10, v1
+    v12 = Mul v11, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    Return v17
+  b3():
+    v18 = Mul v1, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = Mul v21, v1
+    v23 = Mul v22, v1
+    v24 = Mul v23, v1
+    v25 = Mul v24, v1
+    Return v25
+  b4():
+    v26 = Mul v1, v1
+    v27 = Mul v26, v1
+    v28 = Mul v27, v1
+    v29 = Mul v28, v1
+    v30 = Mul v29, v1
+    v31 = Mul v30, v1
+    v32 = Mul v31, v1
+    v33 = Mul v32, v1
+    Return v33
+}
+
+function f1 name="byString" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: number):
+    SwitchString v0 strings=["sum", "product", "larger"] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    Return v9
+  b2():
+    v10 = Mul v1, v1
+    v11 = Mul v10, v1
+    v12 = Mul v11, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    Return v17
+  b3():
+    v18 = Mul v1, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = Mul v21, v1
+    v23 = Mul v22, v1
+    v24 = Mul v23, v1
+    v25 = Mul v24, v1
+    Return v25
+  b4():
+    v26 = Mul v1, v1
+    v27 = Mul v26, v1
+    v28 = Mul v27, v1
+    v29 = Mul v28, v1
+    v30 = Mul v29, v1
+    v31 = Mul v30, v1
+    v32 = Mul v31, v1
+    v33 = Mul v32, v1
+    Return v33
+}
+
+function f2 name="passesOne" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = CallDirect v1, v0 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="passesOne"
+# CHECK-NOT: CallDirect
+
+function f3 name="passesWhatNoCaseLists" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=7
+    v2 = CallDirect v1, v0 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="passesWhatNoCaseLists"
+# CHECK-NOT: CallDirect
+
+function f4 name="passesSomeNumber" parameters=[{type=int}, {type=number}] results=[{type=number}] {
+  b0(v0: int, v1: number):
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="passesSomeNumber"
+# CHECK: = CallDirect v0, v1 function=f0
+
+function f5 name="passesProduct" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = String string="product"
+    v2 = CallDirect v1, v0 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="passesProduct"
+# CHECK-NOT: CallDirect
+
+function f6 name="passesSomeString" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: number):
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="passesSomeString"
+# CHECK: = CallDirect v0, v1 function=f1

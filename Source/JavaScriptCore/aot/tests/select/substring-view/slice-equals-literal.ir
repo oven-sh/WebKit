@@ -1,0 +1,107 @@
+# A range that is only compared with a literal is never created and the comparison reads the base string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 11
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-equals-literal" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = String string="ab"
+    v9 = StrictEq v7, v8
+    Return v9
+}
+# CHECK-LABEL: function f0 name="slice-equals-literal"
+# CHECK-NOT: = Substring
+# CHECK: [[result0]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+# CHECK-NEXT: Return [[result0]]
+
+function f1 name="literal-on-left" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int):
+    v2 = GetStringLength v0
+    v3 = StringRange v2, v1 method=Substring
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = Substring v0, v4, v5
+    v7 = String string=""
+    v8 = StrictEq v7, v6
+    Return v8
+}
+# CHECK-LABEL: function f1 name="literal-on-left"
+# CHECK-NOT: = Substring
+# CHECK: [[result1]]: boolean = StringRangeEqualsLiteral v0, v4, v5 literal=""
+# CHECK-NEXT: Return [[result1]]
+
+function f2 name="compared-through-upcast" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2 method=Substr
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = Upcast v7 castType=anything
+    v9 = String string="ab"
+    v10 = StrictEq v8, v9
+    Return v10
+}
+# CHECK-LABEL: function f2 name="compared-through-upcast"
+# CHECK-NOT: = Substring
+# CHECK-NOT: = Upcast
+# CHECK: [[result2]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+# CHECK-NEXT: Return [[result2]]
+
+function f3 name="loose-equality" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = String string="ab"
+    v9 = Eq v7, v8
+    Return v9
+}
+# CHECK-LABEL: function f3 name="loose-equality"
+# CHECK-NOT: = Substring
+# CHECK: [[result3]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+# CHECK-NEXT: Return [[result3]]
+
+function f4 name="compared-with-variable" parameters=[{type=string}, {type=int}, {type=int}, {type=string}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int, v3: string):
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = StrictEq v8, v3
+    Return v9
+}
+# CHECK-LABEL: function f4 name="compared-with-variable"
+# CHECK-NOT: StringRangeEqualsLiteral
+# CHECK: v8: string = Substring v0, v6, v7
+# CHECK-NEXT: v9: boolean = StrictEq v8, v3
+# CHECK-NOT: StringRangeEqualsLiteral
+
+function f5 name="compared-and-branched-on" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=int}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = String string="ab"
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f5 name="compared-and-branched-on"
+# CHECK-NOT: = Substring
+# CHECK: [[result5]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+# CHECK-NEXT: TestAndBranch [[result5]] -> taken b1(), notTaken b2()

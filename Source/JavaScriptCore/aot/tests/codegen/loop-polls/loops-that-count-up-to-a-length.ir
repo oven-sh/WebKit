@@ -1,0 +1,114 @@
+# An innermost loop that counts up to the length of a string or an array, and on its likely paths runs nothing that may not complete, ends within the data it walks, as indexOf does: it has no poll.
+# A loop around such a loop, a loop that calls a function with a loop of its own, and a loop that counts up to any other number keep theirs.
+# FORM: AsRead
+# f6, f7 and f8 are the typed bodies of f1, f2 and f3.
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 faulting-loop-polls
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64
+# X64: f4: size={{*}} polls=2
+# X64: f6: size={{*}} polls=0
+# X64: f7: size={{*}} polls=1
+# X64: f8: size={{*}} polls=2
+# ARM64-LABEL: f4: size=
+# ARM64: operation operationAOTPollSlow x2
+# ARM64-LABEL: f6: size=
+# ARM64-NOT: operationAOTPollSlow
+# ARM64-LABEL: f7: size=
+# ARM64: operation operationAOTPollSlow x1
+# ARM64-LABEL: f8: size=
+# ARM64: operation operationAOTPollSlow x2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    v5 = BitOr v1, v1
+    v6 = CallDirect v5 function=f4
+    Return v6
+}
+function f1 name="walksAString" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=string site=w0}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitXor v3, v2
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}
+function f2 name="walksAStringManyTimes" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=string site=w1}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v1, v3)
+  b3(v7, v8):
+    LoopHint
+    v10 = PropGet v0 key="length"
+    v11 = Less v7, v10
+    Branch v11 -> taken b4(), notTaken b5()
+  b4():
+    v12 = BitXor v8, v7
+    v13 = Increment v7
+    Jump -> next b3(v13, v12)
+  b5():
+    v14 = Increment v2
+    Jump -> next b1(v14, v8)
+  b6():
+    Return v3
+}
+function f3 name="callsAFunctionWithALoop" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=string site=w2}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = CallDirect v0 function=f1
+    v8 = BitXor v3, v7
+    v9 = Increment v2
+    Jump -> next b1(v9, v8)
+  b3():
+    Return v3
+}
+function f4 name="countsUpToANumber" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = BitXor v3, v2
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Return v3
+}

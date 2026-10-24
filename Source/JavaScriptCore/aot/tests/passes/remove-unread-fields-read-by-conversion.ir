@@ -1,0 +1,41 @@
+# A method that only the conversion of its object to a primitive runs stays stored while the converting operation is in the program
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[valueOf]]:{{*}}= NewClosure function=f1
+# CHECK: [[number]]:{{*}}= NewObject -, [[valueOf]] layout=L0 fields=[0]
+# CHECK: = Add [[number]],
+# CHECK: [[toString]]:{{*}}= NewClosure function=f2
+# CHECK: [[text]]:{{*}}= NewObject -, [[toString]] layout=L1 fields=[0]
+# CHECK: = ToString [[text]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
+    v5 = Add v4, v2
+    v6 = Call v1, -, v5
+    v7 = NewClosure function=f2
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = ToString v8
+    v10 = Call v1, -, v9
+    Return
+}
+function f1 name="valueOf" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    Return v1
+}
+function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="label"
+    Return v1
+}

@@ -1,0 +1,46 @@
+# A call by value whose callee nobody knows still validates its result: the call, then the validator of node 0. Validation does not depend on what ResolveBuiltins could prove
+# FORM: Prepared optimizing
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ValidatorsCreated = 1
+# STATISTIC: ParsersCreated = 0
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="unknownCallee" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2 calleeKey="parse" expectedResult=x0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="unknownCallee"
+# CHECK: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: [[called0]]: anything = Call v0, v1, v2 calleeKey="parse"
+# CHECK-NEXT: [[results0]]:{{*}}= CallDirect [[called0]] function=[[validator]]
+# CHECK: = CallBuiltin -, [[called0]], {{*}} overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: expectedResult
+
+function f1 name="inTailPosition" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2 calleeKey="parse" expectedResult=x0
+    ReturnCall v3
+}
+# CHECK-LABEL: function f1 name="inTailPosition"
+# CHECK-NOT: ReturnCall
+# CHECK: [[called1]]: anything = Call v0, v1, v2 calleeKey="parse" [isDemotedTailCall]
+# CHECK-NEXT: = CallDirect [[called1]] function=[[validator]]
+# CHECK-NOT: ReturnCall
+
+function f2 name="withoutValidationNodes" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2 calleeKey="parse" expectedResult=x1
+    ReturnCall v3
+}
+# CHECK-LABEL: function f2 name="withoutValidationNodes"
+# CHECK: v3: anything = Call v0, v1, v2 calleeKey="parse" expectedResult=x1
+# CHECK-NEXT: ReturnCall v3
+# CHECK: function [[validator]] {{*}}role=Validator

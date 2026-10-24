@@ -1,0 +1,124 @@
+# An operation bound to its frame in a rare block bars the copy of the whole body, not the copy of the head into a hot call
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls InlineCalls
+# STATISTIC: InlineDecisionInlineHead = 2
+# STATISTIC: InlineDecisionInline = 0
+# STATISTIC: InlineDecisionBarrier = 6
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0 mode=Strict
+
+function f0 name="evaluatesTextRarely" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Rare:
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    Return v5
+}
+function f1 name="evaluatesTextAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    Return v2
+}
+
+function f2 name="hotCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f0 @9
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="hotCall"
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 module=m0}] {
+# CHECK-NOT: DirectEval
+# CHECK: LoopHint
+# CHECK-NEXT: Jump -> next [[entry]]()
+# CHECK: [[join]](v3: anything ~ number):
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: [[fullCall]]() frequency=Unlikely:
+# CHECK-NEXT: [[result]]: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9
+# CHECK-NEXT: Jump -> next [[join]]([[result]])
+# CHECK: [[entry]]():
+# CHECK-NEXT: [[test]]: boolean = TypeTest v0 testedType=number @0:1
+# CHECK-NEXT: Branch [[test]] -> taken [[fast]](| 0), notTaken [[fullCall]]() @0:1
+# CHECK: [[fast]]([[number]]: number):
+# CHECK-NEXT: Jump -> next [[join]]([[number]])
+# CHECK-NOT: DirectEval
+
+function f3 name="callOutsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="callOutsideLoops"
+# CHECK-NOT: inlineFrames=
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: anything = CallDirect v0 function=f0
+# CHECK-NEXT: Return v1
+
+function f4 name="hotCallOfBoundEntryBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f1
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f4 name="hotCallOfBoundEntryBlock"
+# CHECK-NOT: inlineFrames=
+# CHECK: LoopHint
+# CHECK-NEXT: v3: anything = CallDirect v0 function=f1
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+
+function f5 name="markedCallOutsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: function f5 name="markedCallOutsideLoops"
+# CHECK-NOT: inlineFrames=
+# CHECK: v1: anything = CallDirect v0 function=f0 [isAlwaysInlined]
+# CHECK-NEXT: Return v1
+
+function f6 name="hotCallUnderHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1() handler=b2(v1):
+    LoopHint
+    v3 = CallDirect v0 function=f0 @9
+    Branch v1 -> taken b1(), notTaken b3()
+  b2(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f6 name="hotCallUnderHandler"
+# CHECK-NOT: DirectEval
+# CHECK: [[coveredJoin]](v3: anything ~ number) handler=b2(v1):
+# CHECK: [[coveredFullCall]]() frequency=Unlikely handler=b2(v1):
+# CHECK-NEXT: [[coveredResult]]: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9
+# CHECK-NEXT: Jump -> next [[coveredJoin]]([[coveredResult]])
+# CHECK: () handler=b2(v1):
+# CHECK-NEXT: [[coveredTest]]: boolean = TypeTest v0 testedType=number @0:1
+# CHECK-NEXT: Branch [[coveredTest]] -> taken [[coveredFast]](| 0), notTaken [[coveredFullCall]]() @0:1
+# CHECK: [[coveredFast]]([[coveredNumber]]: number) handler=b2(v1):
+# CHECK-NOT: DirectEval

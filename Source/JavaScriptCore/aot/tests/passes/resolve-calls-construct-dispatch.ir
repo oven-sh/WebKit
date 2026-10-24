@@ -1,0 +1,154 @@
+# A construction whose constructor is proven to be one of a few functions tests for each of them, and what cannot be constructed directly is left to the original operation
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# RUN(TWICE): pass ResolveCalls ResolveCalls
+# STATISTIC: ConstructsResolved = 6
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Circle" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Square" constructor=f1 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Legacy" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="Older" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L4 kind=Instance name="Mixed" base=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Unknown} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Circle" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L0}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 castType=L0
+    Return v4
+}
+function f1 name="Square" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L1}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = AssumeType v3 castType=L1
+    Return v4
+}
+function f2 name="Legacy" flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: L2, v1: anything):
+    Return
+}
+function f3 name="Older" flags=[HasThis] thisType={type=L3} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: L3, v1: anything):
+    Return
+}
+function f4 name="arrow" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="Mixed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f6 name="two-classes" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1, v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="two-classes"
+# CHECK-NEXT: b0(v0: f0|f1, v1: anything):
+# CHECK-NEXT: [[isCircle]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isCircle]] -> taken [[circleArm]](| 0), notTaken [[squareArm]](| 0)
+# CHECK: [[circleArm]]([[circle]]: f0):
+# CHECK-NEXT: : L0 = CallDirect [[circle]], v1 function=f0 [isConstruction]
+# CHECK-NOT: TypeTest
+# CHECK: [[squareArm]]([[square]]: f1)
+# CHECK-NEXT: : L1 = CallDirect [[square]], v1 function=f1 [isConstruction]
+# CHECK-NOT: = Construct
+
+function f7 name="two-constructor-functions" parameters=[{type=f2|f3}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f2|f3, v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="two-constructor-functions"
+# CHECK: = TypeTest v0 testedType=f2
+# CHECK: ([[legacy]]: f2):
+# CHECK-NEXT: : L2 = CallDirect [[legacy]], v1 function=[[legacyBody]] [isConstruction]
+# CHECK-NOT: TypeTest
+# CHECK: ([[older]]: f3)
+# CHECK-NEXT: : L3 = CallDirect [[older]], v1 function=[[olderBody]] [isConstruction]
+# CHECK-NOT: = Construct
+
+function f8 name="class-or-arrow-function" parameters=[{type=f0|f4}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f4, v1: anything):
+    v2 = Construct v0, -, v1 callees=[f0, f4]
+    Return v2
+}
+# CHECK-LABEL: function f8 name="class-or-arrow-function"
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect {{*}}, v1 function=f0 [isConstruction]
+# CHECK-NOT: function=f4
+# CHECK: ([[notConstructor]]: f4)
+# CHECK-NEXT: : anything ~ object = Construct [[notConstructor]], -, v1 callees=[f0, f4]
+
+function f9 name="class-or-built-in" parameters=[{type=f0|builtin(Error)}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|builtin(Error), v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="class-or-built-in"
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK: = CallDirect {{*}}, v1 function=f0 [isConstruction]
+# CHECK: ([[errorClass]]: builtin(Error))
+# CHECK-NEXT: : anything ~ object = Construct [[errorClass]], -, v1
+
+function f10 name="two-parents" parameters=[{type=f0|f1}, {type=f5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1, v1: f5, v2: anything):
+    v3 = SuperConstruct v0, v1, v2 layout=L4
+    Return v3
+}
+# CHECK-LABEL: function f10 name="two-parents"
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK: = CallDirect v1, v2 function=f0 [isConstruction]
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK-NOT: SuperConstruct
+
+function f11 name="two-parents-and-literal-list" parameters=[{type=f0|f1}, {type=f5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1, v1: f5, v2: anything):
+    v3 = NewArray v2 contents=anything
+    v4 = SuperConstructList v0, v1, v3 layout=L4
+    Return v4
+}
+# CHECK-LABEL: function f11 name="two-parents-and-literal-list"
+# CHECK: = CallDirect v1, v2 function=f0 [isConstruction]
+# CHECK: = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK-NOT: SuperConstructList
+
+function f12 name="two-parents-and-rest-list" parameters=[{type=f0|f1}, {type=f5}, {type=Array}] results=[{type=anything}] {
+  b0(v0: f0|f1, v1: f5, v2: Array):
+    v3 = SuperConstructList v0, v1, v2 layout=L4
+    Return v3
+}
+# CHECK-LABEL: function f12 name="two-parents-and-rest-list"
+# CHECK-NEXT: b0(v0: f0|f1, v1: f5, v2: Array):
+# CHECK-NEXT: = SuperConstructList v0, v1, v2 layout=L4
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+
+function f13 name="any-function" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f13 name="any-function"
+# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: v2: anything ~ object = Construct v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+
+# CHECK: function [[legacyBody]] name="Legacy"{{*}}role=ConstructBody
+# CHECK: [[legacyClosure]]: f2 = AssumeType {{*}} castType=f2
+# CHECK-NEXT: [[legacyPrototype]]: object = GetConstructPrototype [[legacyClosure]] layout=L2
+# CHECK-NEXT: [[legacyThis]]: L2 = NewObject [[legacyPrototype]] layout=L2
+# CHECK-NEXT: Return [[legacyThis]]
+# CHECK: function [[olderBody]] name="Older"{{*}}role=ConstructBody
+# CHECK: [[olderThis]]: L3 = NewObject {{*}} layout=L3
+# CHECK-NEXT: Return [[olderThis]]

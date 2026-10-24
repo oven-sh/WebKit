@@ -1,0 +1,30 @@
+# JSON.stringify({}), with the library's stringifyProperty(value, key) { return JSON.stringify({ [key]: value }) }
+# stringifyProperty (runtimefunction 131111) stands behind a helper that the records describe, and a row brings it into the image with JSON.stringify, with operands nobody knows.
+# The object that it makes holds one of them under a key nobody knows, which may be "toJSON". What the call that the helper stands in for does with its operand the records say where that call is,
+# so native code calls nothing here that nobody knows: no code that nobody compiles writes anything.
+# An object of the program: unknown-value-under-an-unknown-key-of-an-object-of-the-program-is-called.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131111 function=f1
+layout L0 name="Empty" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = Builtin builtin=JSONStringify
+    v2 = Call v1, -, v0
+    Return
+}
+function f1 name="stringifyProperty" role=Library enclosingRuntimeFunction=131111 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=JSONStringify
+    v3 = NewDictionary
+    v4 = ToPropertyKey v1
+    ElemDefine v3, v4, v0
+    v6 = Call v2, -, v3
+    Return v6
+}

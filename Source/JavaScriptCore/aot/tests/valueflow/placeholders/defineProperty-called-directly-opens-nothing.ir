@@ -1,0 +1,49 @@
+# export default shown = { work: one }; holder = {}; Object.defineProperty(holder, "go", { value: two }); shown.work(); holder.go(three)
+# A built-in that a call lists as its callee is applied with the operands of that call, as the table describes it. Neither the object nor the descriptor is handed to code that nobody compiles:
+# what the descriptor holds is entered by the program's own call alone. And nothing is stored behind the back of the analysis into the object that the host has read.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> ObjectDefineProperty
+# CHECK: f0 v10 -> f1
+# CHECK: f0 v13 -> f2
+# CHECK: f2 v1 -> f3
+# CHECK-NOT: unknown
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 1
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0 hostReads=[{exportName="default"}]
+layout L0 name="Shown" fields=[{key="work" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Holder"
+layout L2 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1 fields=[]
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v4 layout=L2 fields=[0]
+    v6 = String string="go"
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = Call v7, -, v3, v6, v5
+    v9 = PropGet v1 key="work"
+    v10 = Call v9, v1
+    v11 = PropGet v3 key="go"
+    v12 = NewClosure function=f3
+    v13 = Call v11, v3, v12
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}

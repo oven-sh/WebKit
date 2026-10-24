@@ -1,0 +1,32 @@
+# What NewObject makes is an ordinary object, and stays one whoever gets hold of it: no trap and no setter stands in front of a definition. So a definition by name on it finds or adds the property and runs nobody's code, whether the layout has a field of the name or not. An object that is given may be a proxy, and a store by name may find a setter above the object.
+# FORM: Prepared
+# RUN: effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty" fields=[]
+layout L1 name="WithField" fields=[{key="a" declared={type=anything}}]
+function f0 name="made" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject layout=L0 fields=[]
+    PropDefine v1, v0 key="a"
+    v3 = NewObject layout=L1 fields=[]
+    PropDefine v3, v0 key="a"
+    v5 = FinishObject v3
+    PropDefine v5, v0 key="b"
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK: v2 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, AllocatorState, RuntimeState) throws
+# CHECK: v4 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(
+# CHECK: v6 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(
+function f1 name="given" parameters=[{type=Object}, {type=number}] results=[{type=anything}] {
+  b0(v0: Object, v1: number):
+    PropDefine v0, v1 key="a"
+    v3 = NewObject layout=L1 fields=[]
+    v4 = FinishObject v3
+    PropSet v4, v1 key="a"
+    Return v4
+}
+# CHECK-LABEL: function f1
+# CHECK: v2 PropDefine: unknownCode
+# CHECK: v5 PropSet: unknownCode

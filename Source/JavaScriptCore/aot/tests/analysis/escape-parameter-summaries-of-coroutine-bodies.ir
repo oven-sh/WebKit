@@ -1,0 +1,38 @@
+# The body of a coroutine keeps what is live across a suspension in its saved frame and goes on behind its caller's back, so it retains its parameters. A body that never suspends is a function like any other
+# FORM: Prepared
+# RUN: analyses parameter-summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Owner" fields=[{key="pet" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
+function f0 name="storesAfterAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0):
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    Return v1
+}
+function f1 name="storesAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: undefined|Promise):
+    v2 = Null
+    v3 = AwaitBySavingFrame v2, v1
+    PutSlot v0, -, v2 key="pet" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [{{*}}Retains
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f2 name="storesWithoutAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0):
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    Return v1
+}
+function f3 name="storesWithoutAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: undefined|Promise):
+    v2 = Null
+    PutSlot v0, -, v2 key="pet" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects]

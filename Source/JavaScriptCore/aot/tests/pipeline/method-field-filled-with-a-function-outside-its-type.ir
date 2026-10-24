@@ -1,0 +1,48 @@
+# Two literals are allocated at one layout, and the type of its method lists the function of the first alone. A method cannot be stored behind the allocation,
+# so the type is only expected (NarrowFieldTypes): the program builds, and a call through the layout runs the function that the object holds.
+# Compiled code calls both through the typed parameter, code that nobody has seen calls both by name, lists the keys, and puts a third function and a number in the method's place
+# FORM: AsRead
+# RUN(IR): pipeline NarrowFieldTypes
+# RUN: run-in-shell globalThis.report = (callRun, first, second) => { print(callRun(first), callRun(second)); print(first.run(), second.run(), Object.keys(second).join()); second.run = () => 3; print(callRun(second)); second.run = 4; try { callRun(second); } catch (error) { print(error instanceof TypeError); } print(callRun(first)); };
+# IR: layout L0 name="SharedByTwoLiterals" fields=[{key="run" declared={type=undefined|null|f1 flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+# CHECK: 1 2
+# CHECK-NEXT: 1 2 run
+# CHECK-NEXT: 3
+# CHECK-NEXT: true
+# CHECK-NEXT: 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=Parameter
+layout L0 name="SharedByTwoLiterals" fields=[{key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="report" [isFreeName]
+    v9 = Call v8, -, v6, v2, v5
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="run" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="callRun" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+}

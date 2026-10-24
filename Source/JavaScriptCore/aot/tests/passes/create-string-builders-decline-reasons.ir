@@ -1,0 +1,91 @@
+# Why a string is not built in a string builder: the decline names the reason, and its count is the number of appends. What is left of a string that was cut is a string of its own
+# FORM: Prepared
+# OPTIONS: report=Declines limit=MaxStringWebsPerFunction:2
+# RUN: pass CreateStringBuilders
+# LOSS: MaxStringWebsPerFunction x1 f4
+# CHECK: outcome: Changed
+# CHECK-NEXT: decline StringBuilderNotCreated f1 v{{*}} MinAppendsForStringBuilder [3] reason=TooFewAppends
+# CHECK-NEXT: decline StringBuilderNotCreated f2 v{{*}} MinAppendsForStringBuilder [3] reason=TooFewAppends
+# CHECK-NEXT: decline StringBuilderNotCreated f2 v{{*}} None [0] reason=TwoStatesLive
+# CHECK-NEXT: decline StringBuilderNotCreated f3 v{{*}} None [0] reason=StateIsNotFirstOperand
+# CHECK-NEXT: decline StringBuilderNotCreated f4 v{{*}} MaxStringWebsPerFunction [0] reason=WebLimit
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+}
+function f1 name="appendsThreeTimes" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
+  b0(v0: boolean, v1: string):
+    v2 = String string="a"
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Add v2, v1
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4):
+    v5 = Add v4, v1
+    v6 = Add v5, v1
+    Return v6
+}
+function f2 name="keepsTwoStatesLive" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: string, v2: anything):
+    v3 = Add v0, v1
+    v4 = Add v3, v1
+    v5 = Add v4, v1
+    v6 = Add v5, v1
+    v7 = Call v2, -, v4, v6
+    Return v7
+}
+function f3 name="prependsToState" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v0, v4
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+}
+function f4 name="exceedsWebLimit" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: anything):
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v3, v3, v4)
+  b1(v5, v6, v7, v8):
+    LoopHint
+    v10 = Less v8, v1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = Add v5, v0
+    v12 = Add v6, v0
+    v13 = Add v7, v0
+    v14 = Integer integer=1
+    v15 = Add v8, v14
+    Jump -> next b1(v11, v12, v13, v15)
+  b3():
+    v16 = Call v2, -, v5, v6, v7
+    Return v16
+}

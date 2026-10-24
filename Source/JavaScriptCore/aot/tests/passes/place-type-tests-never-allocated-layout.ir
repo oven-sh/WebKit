@@ -1,0 +1,35 @@
+# A call of a built-in method is guarded by a test for the expected layout of its receiver only where an object of that layout may exist
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# STATISTIC: TypeTestsPlaced = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="NeverMade" constructor=f2 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Map constructorOrders=[{}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] ownAccessorsAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Made" constructor=f3 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map constructorOrders=[{}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] ownAccessorsAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="setOnExpectedNeverMade" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2: object ~ L0 = Upcast v0 castType=object
+    v3 = Builtin builtin=MapPrototypeSet
+    v4 = Call v3, v2, v1, v1 calleeKey="set" callees=[builtin(MapPrototypeSet)]
+    Return v4
+}
+# CHECK-LABEL: function f0 name="setOnExpectedNeverMade"
+# CHECK-NOT: TypeTest
+# CHECK: Return v4
+# CHECK-NOT: TypeTest
+
+function f1 name="setOnExpectedMade" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2: object ~ L1 = Upcast v0 castType=object
+    v3 = Builtin builtin=MapPrototypeSet
+    v4 = Call v3, v2, v1, v1 calleeKey="set" callees=[builtin(MapPrototypeSet)]
+    Return v4
+}
+# CHECK-LABEL: function f1 name="setOnExpectedMade"
+# CHECK: [[test]]: boolean ~ true = TypeTest v2 testedType=L1
+# CHECK-NEXT: Branch [[test]] -> taken [[passed]](| 0), notTaken
+# CHECK: [[passed]]([[made]]: L1):
+# CHECK: v4: L1 = CallBuiltin [[made]], v1, v1 overload=MapPrototypeSet/0
+
+function f2 name="NeverMade" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f3 name="Made" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

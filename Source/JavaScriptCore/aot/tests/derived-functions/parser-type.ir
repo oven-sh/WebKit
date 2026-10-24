@@ -1,0 +1,129 @@
+# The parser of an IR type allocates the head layouts the type names, absorbs a member or element of another kind as a plain value, and gives up only where the field or the array cannot hold it:
+# an object of the generic parser has no layout, so it is no element of an array of a layout
+# FORM: Prepared
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2 Parser:g3 ValidatingParser:x0.0
+# STATISTIC: ParsersCreated = 7
+# STATISTIC: ValidatorsCreated = 0
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="items" node=1 field=0}, {key="n" node=2 field=1}]} type=L3}, {type=anything}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}]
+layout L1 name="UserLiteral" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}] supertypes=[L0]
+layout L2 name="Int32Field" fields=[{key="count" declared={type=i32}}]
+layout L3 name="ArrayFieldWithProofs" fields=[{key="items" declared={type=Array<number, pristine[Storage, Names]>}}, {key="n" declared={type=number}}]
+variable g0 name="t0" declared={type=undefined|null|L0|L1} initialization=Undefined
+variable g1 name="t1" declared={type=Array<L0>} initialization=Undefined
+variable g2 name="t2" declared={type=L2} initialization=Undefined
+variable g3 name="t3" declared={type=L3} initialization=Undefined
+
+# CHECK: function {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|L3}, {type=cursor}]
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown4]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: = JSONStartsWith {{*}} string="\"items\":" [isLikely]
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: = CallDirect {{*}} function=[[parserOfNumbers]]
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: [[isArray4]]: boolean = TypeTest [[items4]] testedType=Array<number> @
+# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=Array<number, pristine[Storage, Names]>
+# CHECK: = NewObject -, [[assumed4]], {{*}} layout=L3 fields=[0, 1]
+# CHECK: function [[parserOfNumbers]] {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|Array<number>}, {type=cursor}]
+
+# CHECK: function {{*}}role=Parser length=1 {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0|L1}, {type=cursor}]
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[byte0]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: Switch [[byte0]] cases=[110, 123] -> case [[null0]](), case [[object0]](), otherwise [[rejected0]]()
+# CHECK: [[null0]]():
+# CHECK-NEXT: : null = Null
+# CHECK-NEXT: = JSONStartsWith v0 string="null"
+# CHECK-NOT: layout=L1
+# CHECK: = JSONObjectBegin layout=L0
+# CHECK: ({{*}}: undefined|number, [[seenId0]]: boolean, [[name0]]: undefined|string, {{*}}: boolean, {{*}}: cursor, {{*}}: keyorder, {{*}}: anything):
+# CHECK-NEXT: LoopHint
+# CHECK: ({{*}}: undefined|number, [[closingSeenId0]]: boolean, [[closingName0]]: undefined|string, [[closingSeenName0]]: boolean, {{*}}: cursor, {{*}}: keyorder, {{*}}: anything):
+# CHECK-NEXT: Branch [[closingSeenId0]] -> taken {{*}}, notTaken [[idIsMissing0]]()
+# CHECK: = JSONParseNumber [[idValue0]]
+# CHECK: [[plain0]]:{{*}}= JSONParseValue [[idValue0]]
+# CHECK: [[plainValue0]]: anything = ResultAt [[plain0]] index=1
+# CHECK: [[fits0]]: boolean = TypeTest [[plainValue0]] testedType=number
+# CHECK-NEXT: Branch [[fits0]] -> taken {{*}}, notTaken [[otherKind0]](| 0)
+# CHECK: [[otherKind0]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK-NOT: Branch [[closingSeenName0]]
+# CHECK-NOT: layout=L1
+# CHECK: [[idIsMissing0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK-NOT: Branch [[closingSeenName0]]
+# CHECK-NOT: layout=L1
+# CHECK: [[user0]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK-NEXT: Branch [[closingSeenName0]] -> taken [[storesName0]](), notTaken
+# CHECK: [[storesName0]]():
+# CHECK-NEXT: PutSlot [[user0]], [[user0]], [[closingName0]] key="name" receivers=[L0] level=Expected
+# CHECK-NOT: layout=L1
+
+# CHECK: function [[parserOfUser]] {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|L0}, {type=cursor}]
+
+# CHECK: function {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|Array<L0>}, {type=cursor}]
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown2]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[array2]]: Array<L0> = NewArray contents=L0
+# CHECK: ([[element2]]: cursor):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[typed2]]:{{*}}= CallDirect [[element2]] function=[[parserOfUser]]
+# CHECK-NEXT: [[outcome2]]: int[0, 2] = ResultAt [[typed2]]
+# CHECK-NEXT: Switch [[outcome2]] cases=[1] -> case {{*}}, otherwise [[again2]]()
+# CHECK: [[again2]]() frequency=Rare:
+# CHECK-NEXT: [[plain2]]:{{*}}= JSONParseValue [[element2]]
+# CHECK: AppendElement [[array2]],
+# CHECK: [[plainValue2]]: anything = ResultAt [[plain2]] index=1
+# CHECK: [[isUser2]]: boolean = TypeTest [[plainValue2]] testedType=L0
+# CHECK-NEXT: Branch [[isUser2]] -> taken {{*}}, notTaken [[notUser2]](| 0)
+# CHECK: [[notUser2]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown2]]()
+
+# CHECK: function {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|L2}, {type=cursor}]
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown3]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: JSONParseNumber
+# CHECK: [[integer3]]:{{*}}= JSONParseInteger [[countValue3]]
+# CHECK: [[plain3]]:{{*}}= JSONParseValue [[countValue3]]
+# CHECK: [[parsedInteger3]]:{{*}}= ResultAt [[integer3]] index=1
+# CHECK: = TypeTest [[parsedInteger3]] testedType=i32
+# CHECK: [[plainValue3]]: anything = ResultAt [[plain3]] index=1
+# CHECK: [[fits3]]: boolean = TypeTest [[plainValue3]] testedType=i32
+# CHECK-NEXT: Branch [[fits3]] -> taken {{*}}, notTaken [[doesNotFit3]](| 0)
+# CHECK: [[doesNotFit3]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown3]]()
+# CHECK-NOT: JSONParseNumber
+
+# CHECK: function {{*}}role=ValidatingParser {{*}}expectedResult=x0}
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown5]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: string="\"items\":"
+# CHECK-NOT: AssumeType
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK: ({{*}}, [[seenItems5]]: boolean, {{*}}: undefined|number, {{*}}: boolean, [[key5]]: cursor, {{*}}: keyorder, {{*}}: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: string="\"items\":"
+# CHECK-NOT: AssumeType
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK: = JSONStartsWith [[key5]] string="\"items\"" @
+# CHECK: Branch [[seenItems5]] -> taken {{*}}, notTaken [[items5]]()
+# CHECK: [[items5]]():
+# CHECK-NEXT: Jump -> next [[unknown5]]()
+# CHECK-NOT: string="\"items\":"
+# CHECK-NOT: AssumeType
+# CHECK-NOT: TypeTest {{*}}proven

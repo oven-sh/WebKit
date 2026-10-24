@@ -1,0 +1,102 @@
+# The parser of an array node appends in a loop, an element its typed parser cannot tell about is read as a plain value and validated alone, and a tuple has a fixed number of elements
+# FORM: Prepared optimizing
+# RUN: derived-functions ValidatingParser:x0.0 ValidatingParser:x1.0 ValidatingParser:x2.0
+# STATISTIC: ParsersCreated = 4
+# STATISTIC: ValidatorsCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=Array<L0> layouts=[L0] validation=[{shape=Array{element=1} type=Array<L0>}, {shape=Object{layout=L0 members=[{key="id" node=2 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=Array<string> validation=[{shape=Array{element=1} type=Array<string> rules=[MinimumLength{length=1}, MaximumLength{length=3}]}, {shape=Primitive{} type=string}]
+expectedresult x2 type=Array<number|string> validation=[{shape=Tuple{elements=[1, 2]} type=Array<number|string>}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
+layout L0 name="Row" fields=[{key="id" declared={type=number}}]
+
+# CHECK-LABEL: form=ParsedText expectedResult=x0}
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[firstByte0]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: [[bracket0]]: 91 = Integer integer=91
+# CHECK-NEXT: [[isBracket0]]: boolean = StrictEq [[firstByte0]], [[bracket0]]
+# CHECK-NEXT: Branch [[isBracket0]] -> taken {{*}}, notTaken [[rejected0]]()
+# CHECK: [[afterBracket0]]: cursor = JSONSkipWhitespace
+# CHECK-NEXT: [[array0]]: Array<L0> = NewArray contents=L0
+# CHECK-NEXT: [[byte0]]:{{*}}= JSONGetByte [[afterBracket0]]
+# CHECK-NEXT: [[closingBracket0]]: 93 = Integer integer=93
+# CHECK-NEXT: [[isEmpty0]]: boolean = StrictEq [[byte0]], [[closingBracket0]]
+# CHECK-NEXT: Branch [[isEmpty0]] -> taken [[empty0]](), notTaken [[hasElements0]]()
+# CHECK-NEXT: [[loop0]]([[element0]]: cursor):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[typed0]]:{{*}}= CallDirect [[element0]] function=[[parserOfRow]]
+# CHECK-NEXT: [[outcome0]]: int[0, 2] = ResultAt [[typed0]]
+# CHECK-NEXT: Switch [[outcome0]] cases=[1, 2] -> case [[parsed0]](), case [[rejected0]](), otherwise [[again0]]()
+# CHECK-NEXT: [[done0]]([[atBracket0]]: cursor):
+# CHECK-NEXT: [[next0]]: cursor = JSONSkipByte [[atBracket0]]
+# CHECK: = Results {{*}}, [[array0]], [[next0]]
+# CHECK: [[empty0]]():
+# CHECK-NEXT: Jump -> next [[done0]]([[afterBracket0]])
+# CHECK-NEXT: [[hasElements0]]():
+# CHECK-NEXT: Jump -> next [[loop0]]([[afterBracket0]])
+# CHECK-NEXT: [[again0]]() frequency=Rare:
+# CHECK-NEXT: [[generic0]]:{{*}}= JSONParseValue [[element0]]
+# CHECK: [[merge0]]([[value0]]:{{*}}, [[afterValue0]]: cursor):
+# CHECK-NEXT: AppendElement [[array0]], [[value0]]
+# CHECK: [[parsed0]]():
+# CHECK-NEXT: [[typedValue0]]:{{*}}= ResultAt [[typed0]] index=1
+# CHECK-NEXT: [[typedNext0]]: cursor = ResultAt [[typed0]] index=2
+# CHECK-NEXT: Jump -> next [[merge0]]([[typedValue0]], [[typedNext0]])
+# CHECK: [[plain0]]: anything = ResultAt [[generic0]] index=1
+# CHECK-NEXT: [[plainNext0]]: cursor = ResultAt [[generic0]] index=2
+# CHECK-NEXT: [[validated0]]:{{*}}= CallDirect [[plain0]] function=[[validatorOfRow]]
+# CHECK-NEXT: [[validatedOutcome0]]: int[0, 2] = ResultAt [[validated0]]
+# CHECK-NEXT: Switch [[validatedOutcome0]] cases=[1, 2] -> case [[accepted0]](), case [[rejected0]](), otherwise [[unknown0]]()
+# CHECK: [[accepted0]]():
+# CHECK-NEXT: [[copy0]]:{{*}}= ResultAt [[validated0]] index=1
+# CHECK-NEXT: Jump -> next [[merge0]]([[copy0]], [[plainNext0]])
+# CHECK: Jump -> next [[loop0]](
+# CHECK: Jump -> next [[done0]](
+
+# CHECK-LABEL: form=ParsedText expectedResult=x1}
+# CHECK: [[rejected1]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[array1]]: Array<string> = NewArray contents=string
+# CHECK: LoopHint
+# CHECK: = JSONSkipByte
+# CHECK-NEXT: [[length1]]:{{*}}= CallBuiltin [[array1]] overload=ArrayPrototypeLength/0
+# CHECK-NEXT: [[minimum1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[longEnough1]]: boolean = GreaterEq [[length1]], [[minimum1]]
+# CHECK-NEXT: Branch [[longEnough1]] -> taken [[testMaximum1]](), notTaken [[short1]]()
+# CHECK: AppendElement [[array1]],
+# CHECK: [[testMaximum1]]():
+# CHECK-NEXT: [[lengthAgain1]]:{{*}}= CallBuiltin [[array1]] overload=ArrayPrototypeLength/0
+# CHECK-NEXT: [[maximum1]]: 3 = Integer integer=3
+# CHECK-NEXT: [[shortEnough1]]: boolean = LessEq [[lengthAgain1]], [[maximum1]]
+# CHECK-NEXT: Branch [[shortEnough1]] -> taken {{*}}, notTaken [[long1]]()
+# CHECK-NEXT: [[short1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected1]]()
+# CHECK: [[long1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected1]]()
+
+# CHECK-LABEL: form=ParsedText expectedResult=x2}
+# CHECK: [[rejected2]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK-NOT: LoopHint
+# CHECK: = JSONParseNumber
+# CHECK: ([[first2]]: undefined|number, [[afterFirst2]]: cursor):
+# CHECK-NEXT: [[separator2]]: cursor = JSONSkipWhitespace [[afterFirst2]]
+# CHECK-NEXT: [[separatorByte2]]:{{*}}= JSONGetByte [[separator2]]
+# CHECK-NEXT: [[comma2]]: 44 = Integer integer=44
+# CHECK-NEXT: [[hasSecond2]]: boolean = StrictEq [[separatorByte2]], [[comma2]]
+# CHECK-NEXT: Branch [[hasSecond2]] -> taken {{*}}, notTaken [[rejected2]]()
+# CHECK-NOT: LoopHint
+# CHECK: [[parsedSecond2]]:{{*}}= JSONParseString
+# CHECK: [[second2]]: string = ResultAt [[parsedSecond2]] index=1
+# CHECK-NEXT: [[afterSecond2]]: cursor = ResultAt [[parsedSecond2]] index=2
+# CHECK-NEXT: [[end2]]: cursor = JSONSkipWhitespace [[afterSecond2]]
+# CHECK-NEXT: [[endByte2]]:{{*}}= JSONGetByte [[end2]]
+# CHECK-NEXT: [[bracket2]]: 93 = Integer integer=93
+# CHECK-NEXT: [[endsHere2]]: boolean = StrictEq [[endByte2]], [[bracket2]]
+# CHECK-NEXT: Branch [[endsHere2]] -> taken {{*}}, notTaken [[rejected2]]()
+# CHECK: = NewArray [[first2]], [[second2]] contents=number|string
+# CHECK-NOT: LoopHint
+# CHECK: function [[validatorOfRow]] {{*}}role=Validator {{*}}expectedResult=x0 node=1}

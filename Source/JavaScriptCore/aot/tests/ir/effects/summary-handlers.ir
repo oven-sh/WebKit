@@ -1,0 +1,49 @@
+# What a callee does before it throws belongs to the exit its caller's handler leads to: the return when the handler returns, the throw when it rethrows or when the block has no handler
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="log" declared={type=anything} initialization=Undefined
+function f0 name="writesBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Throw v0
+  b2():
+    Return
+}
+# CHECK: f0 return: throws throw: writes(ModuleVariables/1) throws
+function f1 name="handlerReturns" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean) handler=b1():
+    v1 = CallDirect v0 function=f0
+    Return
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return
+}
+# CHECK-NEXT: f1 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects throw: throws collects p0:
+function f2 name="handlerRethrows" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean) handler=b1():
+    v1 = CallDirect v0 function=f0
+    Return
+  b1() role=CatchHandler:
+    v2 = CatchException
+    Rethrow v2
+}
+# CHECK-NEXT: f2 return: throws collects throw: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects
+function f3 name="noHandler" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = CallDirect v0 function=f0
+    Return
+}
+# CHECK-NEXT: f3 return: throws throw: writes(ModuleVariables/1) throws
+function f4 name="ownThrowIsCaught" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean) handler=b1():
+    PutModuleVariable v0 variable=g0
+    Throw v0
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return
+}
+# CHECK-NEXT: f4 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects throw: throws collects p0:

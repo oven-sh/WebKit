@@ -1,0 +1,27 @@
+# const o = { a: 1, [key]: 2, b: 3 };  Object.keys(o)
+# The allocation lists `a` among the keys.
+# `b` stays a definition behind the computed key. It has to list its name itself, and it learns from the empty slot that it has to: a slot that is always filled has no empty state,
+# and Object.keys would answer `a` alone. Whoever gets the finished object finds both.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Literal" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"
+# CHECK-NOT: {key="b"{{*}}occupancy=AlwaysFilled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingNobodyDeclares" [isFreeName]
+    v2 = ToPropertyKey v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    ElemDefine v4, v2, v3
+    PropDefine v4, v3 key="b"
+    v7 = FinishObject v4
+    v8 = Builtin builtin=Object
+    v9 = Builtin builtin=ObjectKeys
+    v10 = Call v9, v8, v7
+    Return v10
+}

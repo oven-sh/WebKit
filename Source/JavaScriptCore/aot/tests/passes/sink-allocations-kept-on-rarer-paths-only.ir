@@ -1,0 +1,268 @@
+# An allocation that escapes only on rarer paths is built once per path, so the copy on the frequent path can be allocated in the frame
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# RUN(TWICE): pass SinkAllocations SinkAllocations
+# STATISTIC: AllocationsSunk = 6
+# STATISTIC: AllocationsBuiltApartOnRarerPaths = 6
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Environment name="scope" fields=[{key="total" declared={type=number}}]
+layout L1 name="Options" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+layout L2 name="Handlers" fields=[{key="run" declared={type=f17} flags=[IsRequired] flow={location={stores=AtMostOnce initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f17} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L2] fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+layout L3 name="OpenOptions" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L3] fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+
+function f0 name="closure" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewClosure v2 function=f14
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v3 function=f10
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Call v1, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f0 name="closure"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: b1():
+# CHECK-NEXT: [[borrowed0]]:{{*}}= NewClosure v2 function=f14
+# CHECK-NEXT: = CallDirect v0, [[borrowed0]] function=f10
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: [[kept0]]:{{*}}= NewClosure v2 function=f14
+# CHECK-NEXT: = Call v1, v0, [[kept0]]
+
+function f1 name="closureOverEnvironment" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure v3 function=f15
+    v5 = TypeTest v0 testedType=Array
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = CallDirect v0, v4 function=f10
+    v7 = GetEnvironmentField v3 layout=L0 field=0
+    Return v7
+  b2() frequency=Unlikely:
+    v8 = Call v1, v0, v4
+    v9 = GetEnvironmentField v3 layout=L0 field=0
+    Return v9
+}
+# CHECK-LABEL: function f1 name="closureOverEnvironment"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: b1():
+# CHECK-NEXT: [[borrowedScope1]]:{{*}}= NewObject -, v2 layout=L0 fields=[0]
+# CHECK-NEXT: [[borrowed1]]:{{*}}= NewClosure [[borrowedScope1]] function=f15
+# CHECK-NEXT: = CallDirect v0, [[borrowed1]] function=f10
+# CHECK-NEXT: = GetEnvironmentField [[borrowedScope1]] layout=L0
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: [[keptScope1]]:{{*}}= NewObject -, v2 layout=L0 fields=[0]
+# CHECK-NEXT: [[kept1]]:{{*}}= NewClosure [[keptScope1]] function=f15
+# CHECK-NEXT: = Call v1, v0, [[kept1]]
+# CHECK-NEXT: = GetEnvironmentField [[keptScope1]] layout=L0
+
+function f2 name="environmentReadAfterMerge" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure v3 function=f15
+    v5 = TypeTest v0 testedType=Array
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = CallDirect v0, v4 function=f10
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    v7 = Call v1, v0, v4
+    Jump -> next b3()
+  b3():
+    v8 = GetEnvironmentField v3 layout=L0 field=0
+    Return v8
+}
+# CHECK-LABEL: function f2 name="environmentReadAfterMerge"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: b1():
+# CHECK-NEXT: [[borrowedScope2]]:{{*}}= NewObject -, v2 layout=L0 fields=[0]
+# CHECK-NEXT: [[borrowed2]]:{{*}}= NewClosure [[borrowedScope2]] function=f15
+# CHECK-NEXT: = CallDirect v0, [[borrowed2]] function=f10
+# CHECK-NEXT: Jump -> next b3([[borrowedScope2]])
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: [[keptScope2]]:{{*}}= NewObject -, v2 layout=L0 fields=[0]
+# CHECK-NEXT: [[kept2]]:{{*}}= NewClosure [[keptScope2]] function=f15
+# CHECK-NEXT: = Call v1, v0, [[kept2]]
+# CHECK-NEXT: Jump -> next b3([[keptScope2]])
+# CHECK: b3([[scope2]]: env L0):
+# CHECK-NEXT: = GetEnvironmentField [[scope2]] layout=L0
+
+function f3 name="objectReadByCallee" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: number):
+    v2 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f12
+    Return v3
+  b2() frequency=Unlikely:
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="objectReadByCallee"
+# CHECK: b0(
+# CHECK-NEXT: Branch v0
+# CHECK: b1():
+# CHECK-NEXT: [[borrowed3]]:{{*}}= NewObject -, v1, v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = CallDirect [[borrowed3]] function=f12
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: [[kept3]]:{{*}}= NewObject -, v1, v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: PutModuleVariable [[kept3]] variable=g0
+
+function f4 name="bothPathsFrequent" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewClosure v2 function=f14
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v3 function=f10
+    Return v5
+  b2():
+    v6 = Call v1, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f4 name="bothPathsFrequent"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewClosure v2 function=f14
+# CHECK: = CallDirect v0, v3 function=f10
+# CHECK: = Call v1, v0, v3
+
+function f5 name="frequentCalleeKeepsClosure" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewClosure v2 function=f14
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v3 function=f11
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Call v1, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f5 name="frequentCalleeKeepsClosure"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewClosure v2 function=f14
+# CHECK: = CallDirect v0, v3 function=f11
+# CHECK: = Call v1, v0, v3
+
+function f6 name="closureTakesCallee" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewClosure v2 function=f16
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v3 function=f10
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Call v1, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f6 name="closureTakesCallee"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewClosure v2 function=f16
+# CHECK: = CallDirect v0, v3 function=f10
+# CHECK: = Call v1, v0, v3
+
+function f7 name="closureMadeOnDemand" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = NewClosure function=f17 [isMadeOnDemand]
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f13
+    Return v3
+  b2() frequency=Unlikely:
+    PutModuleVariable v2 variable=g0
+    Return
+}
+# CHECK-LABEL: function f7 name="closureMadeOnDemand"
+# CHECK: b0(
+# CHECK-NEXT: v1:{{*}}= NewClosure function=f17 [isMadeOnDemand]
+# CHECK-NEXT: v2:{{*}}= NewObject -, v1 layout=L2 fields=[0]
+# CHECK-NEXT: Branch v0
+
+function f8 name="propertyReadOnFrequentPath" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = NewClosure v2 function=f14
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = PropGet v3 key="name"
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Call v1, v0, v3
+    Return v6
+}
+# CHECK-LABEL: function f8 name="propertyReadOnFrequentPath"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewClosure v2 function=f14
+# CHECK: = PropGet v3 key="name"
+# CHECK: = Call v1, v0, v3
+
+function f9 name="objectMayGetProperties" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: number):
+    v2 = NewObject -, v1, v1 layout=L3 fields=[0, 1]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f12
+    Return v3
+  b2() frequency=Unlikely:
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK-LABEL: function f9 name="objectMayGetProperties"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v1, v1 layout=L3 fields=[0, 1]
+# CHECK-NEXT: Branch v0
+
+function f10 name="callsCallback" parameters=[{type=anything}, {type=f14|f15|f16}] results=[{type=anything}] {
+  b0(v0: anything, v1: f14|f15|f16):
+    v2 = Call v1, -, v0 callees=[f14, f15, f16]
+    Return v2
+}
+# CHECK-LABEL: function f10 name="callsCallback"
+function f11 name="storesCallback" parameters=[{type=anything}, {type=f14}] results=[{type=anything}] {
+  b0(v0: anything, v1: f14):
+    PutModuleVariable v1 variable=g0
+    Return v0
+}
+function f12 name="readsOptions" parameters=[{type=L1|L3}] results=[{type=number}] {
+  b0(v0: L1|L3):
+    v1 = GetSlot v0 key="x" receivers=[L1, L3] level=Proven
+    v2 = GetSlot v0 key="y" receivers=[L1, L3] level=Proven
+    v3 = Add v1, v2
+    Return v3
+}
+function f13 name="ignoresHandlers" parameters=[{type=L2}] results=[{type=undefined}] {
+  b0(v0: L2):
+    Return
+}
+function f14 name="callback" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Return v1
+}
+function f15 name="counts" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L0 field=0
+    Return
+}
+function f16 name="namesItself" flags=[TakesCallee] captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: function, v2: anything):
+    Return v2
+}
+function f17 name="run" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}

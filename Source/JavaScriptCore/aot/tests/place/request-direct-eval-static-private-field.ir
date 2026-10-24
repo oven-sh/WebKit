@@ -1,0 +1,37 @@
+# A static private field that a direct eval can name is found in its variable: the binding has no operand and no private key
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f2 staticFields=[{key=#"count"@L0 variable=g0}]
+variable g0 name="#count" module=m0 declared={type=number} owner=L0
+evalscope e0 flags=[IsInFunction] bindings=[{name="#count" kind=PrivateName variable=g0 operand=0}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L0
+    PutModuleVariable v2 variable=g0
+    v6 = FinishClass v4 layout=L0
+    v7 = CallDirect v1, v6 function=f1
+    Return
+}
+function f1 name="evaluates" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = DirectEval v0, v2, -, v1 evalScope=e0
+    Return v3
+}
+function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+# CHECK: request 8 DirectEval module=m0 strict inFunction
+# CHECK-NEXT: binding name={{*}} kind=PrivateName depth=0 operand=- function=- setter=- privateKey=- slot=JSValue@0

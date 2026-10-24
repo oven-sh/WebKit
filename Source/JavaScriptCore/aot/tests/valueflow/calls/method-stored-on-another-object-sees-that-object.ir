@@ -1,0 +1,65 @@
+# class A { m() { this.x } }  class B { m() { this.x } }  function run(o) { o.m() }  run(new A()); run(new B()); other = {}; other.m = A.prototype.m; run(other)
+# method-sees-only-the-receivers-that-answer-it.ir, and the method of A also lies on an object that is no instance of A. The read of `m` from that object answers the method, so the object arrives as `this`.
+# RUN: valueflow-why values=f2:v1 values=f4:v1
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 2 members: [[a]] [[other]]@f0
+# CHECK: values=f4:v1
+# CHECK: operand 0 {{*}} 1 members: [[b]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" constructor=f3
+layout L2 name="Other"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f4
+    DefineMethod v6, v7 layout=L1 key="m"
+    v9 = FinishClass v6 layout=L1
+    v10 = NewClosure function=f5
+    v11 = Construct v4
+    v12 = Call v10, -, v11
+    v13 = Construct v9
+    v14 = Call v10, -, v13
+    v15 = PropGet v4 key="prototype"
+    v16 = PropGet v15 key="m"
+    v17 = NewObject layout=L2 fields=[]
+    PropSet v17, v16 key="m" mode=Strict
+    v19 = Call v10, -, v17
+    Return
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f3 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f5 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return
+}

@@ -1,0 +1,35 @@
+# A run of stores by name pays through its site cache: the operation is called on a miss, to fill it. A site that got no cache takes the single stores
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot limit=MaxSiteCaches:1
+# LOSS: MaxSiteCaches
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    Return v0
+}
+function f1 name="withoutSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    Return v0
+}
+# CHECK: f0: size=
+# CHECK-NEXT: operation operationAOTTryPutProperties x1
+# CHECK: f1: size=
+# CHECK-NOT: operationAOTTryPutProperties

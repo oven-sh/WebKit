@@ -1,0 +1,42 @@
+# main.cjs: module.exports = exportedByMain; require("./helper.cjs")        helper.cjs: module.exports = exportedByHelper; require.main.exports()
+# `require.main` answers the module object of an entry point, and no other: the call has one callee. The object is followed like any other value: nobody else holds it, so what the two files export stays in the program.
+# RUN: valueflow-solve calls
+# CHECK: f2 v5 -> f1
+# RUN(WHY): valueflow-why escaped=f1 escaped=f3
+# WHY: escaped=f1
+# WHY-NEXT: not held
+# WHY: escaped=f3
+# WHY-NEXT: not held
+# RUN(APPLY): valueflow-apply
+# APPLY: variable g1 name="exports" {{*}}writers=AllKnown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f2 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+}
+function f1 name="exportedByMain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="helper" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    v2 = ModuleBuiltin builtin=ModuleRequire module=m1
+    v3 = PropGet v2 key="main"
+    v4 = PropGet v3 key="exports"
+    v5 = Call v4, v3
+    Return
+}
+function f3 name="exportedByHelper" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

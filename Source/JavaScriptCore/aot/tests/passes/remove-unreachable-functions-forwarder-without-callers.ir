@@ -1,0 +1,87 @@
+# The forwarder left under the id of a function that lost a parameter loses its body once nothing enters it, and the reduced function stays
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveUnreachableFunctions
+# STATISTIC: UnreachableFunctionsRemoved = 4
+# CHECK: outcome: Changed
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f4
+    v2 = CallDirect v0 function=f5
+    v3 = NewClosure function=f2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v3
+    Return v6
+}
+# CHECK-LABEL: function f0
+# CHECK: b0(
+
+function f1 name="onlyCalledDirectly" parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0 function=f4
+    ReturnCall v2 requirement=Allowed
+}
+# CHECK-LABEL: function f1 name="onlyCalledDirectly"
+# CHECK-NOT: b0(
+
+function f2 name="alsoCalledByValue" parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0 function=f5
+    ReturnCall v2 requirement=Allowed
+}
+# CHECK-LABEL: function f2 name="alsoCalledByValue"
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: = CallDirect v0 function=f5
+
+function f3 name="lostEveryCaller" parameters=[{type=number}, {type=number}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0 function=f6
+    ReturnCall v2 requirement=Allowed
+}
+# CHECK-LABEL: function f3 name="lostEveryCaller"
+# CHECK-NOT: b0(
+
+function f4 name="onlyCalledDirectly" parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f4 name="onlyCalledDirectly"
+# CHECK: b0(v0: number):
+
+function f5 name="alsoCalledByValue" parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f5 name="alsoCalledByValue"
+# CHECK: b0(v0: number):
+
+function f6 name="lostEveryCaller" parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f6 name="lostEveryCaller"
+# CHECK-NOT: b0(
+
+function f7 name="alsoCalledByValue" role=GenericEntrypoint captures=[{type=f2}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+  b0(v0: f2):
+    v1 = Integer integer=0
+    v2 = CallDirect v1, v1 function=f2
+    Return v2
+}
+# CHECK-LABEL: function f7 name="alsoCalledByValue"
+# CHECK: b0(v0: f2):
+
+function f8 name="onlyCalledDirectly" role=GenericEntrypoint captures=[{type=f1}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+  b0(v0: f1):
+    v1 = Integer integer=0
+    v2 = CallDirect v1, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f8 name="onlyCalledDirectly"
+# CHECK-NOT: b0(

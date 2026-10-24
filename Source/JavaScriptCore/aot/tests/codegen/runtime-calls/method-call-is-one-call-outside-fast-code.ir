@@ -1,0 +1,33 @@
+# A call of a method that nobody knows reads the method and calls it. Fast code asks the cache of the site for the method and then calls it: two calls. Elsewhere one stub finds the method by the tables and enters it
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inBalancedCode" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallMethod v0, v1 key="method" @30
+    v3 = NewArray v2 contents=anything
+    Return v3
+}
+# CHECK: f0: size=
+# CHECK-NOT: GetByIdAtSite
+# CHECK: stub CallMethodById.n1 x1
+# CHECK-NOT: stub CallValue
+# S: f0 b0 Balanced
+# CHECK: f1: size=
+function f1 name="inFastCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallMethod v0, v1 key="method" @30
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-NOT: stub CallMethodById
+# CHECK: stub CallValue.n1
+# CHECK: stub GetByIdAtSite
+# S: f1 b1 Fast

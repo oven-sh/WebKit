@@ -1,0 +1,465 @@
+# A generator that is created and only stepped in one function is merged into it: a yield is a jump to the code behind the step
+# FORM: Prepared
+# RUN: pass FuseGeneratorLoops
+# RUN(SIMPLE): pass FuseGeneratorLoops FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues RemoveRedundantHandlers FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues CompactBlocks
+# STATISTIC: GeneratorLoopsFused = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countsUp" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f4 promiseParameter=2} {
+  b0(v0: function, v1: number):
+    v2 = NewGenerator v0 function=f0 @10
+    v3 = CallDirect v0, v1, v2 function=f4 @10
+    Return v2 @10
+}
+function f1 name="yieldsTwice" position=20 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f5 promiseParameter=3} {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = NewGenerator v0 function=f1 @20
+    v4 = CallDirect v0, v1, v2, v3 function=f5 @20
+    Return v3 @20
+}
+function f2 name="repeats" position=30 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f6 promiseParameter=2} {
+  b0(v0: function, v1: anything):
+    v2 = NewGenerator v0 function=f2 @30
+    v3 = CallDirect v0, v1, v2 function=f6 @30
+    Return v2 @30
+}
+function f3 name="keepsValue" position=35 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f7 promiseParameter=2} {
+  b0(v0: function, v1: anything):
+    v2 = NewGenerator v0 function=f3 @35
+    v3 = CallDirect v0, v1, v2 function=f7 @35
+    Return v2 @35
+}
+function f4 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f4 promiseParameter=2} {
+  b0(v0: function, v1: number, v2: Generator):
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    v7 = Integer integer=0
+    Jump -> next b4(v7)
+  b4(v8):
+    LoopHint
+    v10 = Less v8, v1 @11
+    Branch v10 -> taken b5(), notTaken b9()
+  b5():
+    v11 = YieldBySavingFrame v2, v8 @12
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6() frequency=Rare:
+    Throw v12
+  b7() frequency=Rare:
+    Return v12
+  b8():
+    v14 = Integer integer=1
+    v15 = Add v8, v14
+    Jump -> next b4(v15)
+  b9():
+    v16 = Undefined
+    Return v16
+}
+function f5 name="yieldsTwice" position=20 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f5 promiseParameter=3} {
+  b0(v0: function, v1: anything, v2: anything, v3: Generator):
+    v4 = Undefined @20
+    v5 = YieldBySavingFrame v3, v4 @20
+    v6 = ResultAt v5 index=0 @20
+    v7 = ResultAt v5 index=1 @20
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @20
+  b1() frequency=Rare:
+    Throw v6 @20
+  b2() frequency=Rare:
+    Return v6 @20
+  b3():
+    v8 = YieldBySavingFrame v3, v1 @21
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v9
+  b5() frequency=Rare:
+    Return v9
+  b6():
+    v11 = YieldBySavingFrame v3, v2 @22
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b7(), case b8(), otherwise b9()
+  b7() frequency=Rare:
+    Throw v12
+  b8() frequency=Rare:
+    Return v12
+  b9():
+    v14 = Undefined
+    Return v14
+}
+function f6 name="repeats" position=30 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f6 promiseParameter=2} {
+  b0(v0: function, v1: anything, v2: Generator):
+    v3 = Undefined @30
+    v4 = YieldBySavingFrame v2, v3 @30
+    v5 = ResultAt v4 index=0 @30
+    v6 = ResultAt v4 index=1 @30
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @30
+  b1() frequency=Rare:
+    Throw v5 @30
+  b2() frequency=Rare:
+    Return v5 @30
+  b3():
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v8 = Call v1 @31
+    v9 = ToBoolean v8
+    Branch v9 -> taken b5(), notTaken b8()
+  b5():
+    v10 = YieldBySavingFrame v2, v8 @32
+    v11 = ResultAt v10 index=0
+    v12 = ResultAt v10 index=1
+    Switch v12 cases=[1, 2] -> case b6(), case b7(), otherwise b4()
+  b6() frequency=Rare:
+    Throw v11
+  b7() frequency=Rare:
+    Return v11
+  b8():
+    v13 = Undefined
+    Return v13
+}
+function f7 name="keepsValue" position=35 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f7 promiseParameter=2} {
+  b0(v0: function, v1: anything, v2: Generator):
+    v3 = Undefined @35
+    v4 = YieldBySavingFrame v2, v3 @35
+    v5 = ResultAt v4 index=0 @35
+    v6 = ResultAt v4 index=1 @35
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @35
+  b1() frequency=Rare:
+    Throw v5 @35
+  b2() frequency=Rare:
+    Return v5 @35
+  b3():
+    v7 = Call v1 @36
+    v8 = YieldBySavingFrame v2, v1 @37
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v9
+  b5() frequency=Rare:
+    Return v9
+  b6():
+    v11 = YieldBySavingFrame v2, v7 @38
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b7(), case b8(), otherwise b9()
+  b7() frequency=Rare:
+    Throw v12
+  b8() frequency=Rare:
+    Return v12
+  b9():
+    v14 = Undefined
+    Return v14
+}
+function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = NewClosure function=f0
+    v3 = NewGenerator v2 function=f0 @40
+    v4 = CallDirect v2, v0, v3 function=f4 @40
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=None @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v12 = Builtin builtin=GeneratorPrototypeNext
+    v13 = Call v12, v3
+    Return v13
+  b3():
+    v14 = Integer integer=1
+    v15 = StrictEq v9, v14
+    Branch v15 -> taken b5(), notTaken b4()
+  b4():
+    v16 = Call v1, -, v8 @51
+    Jump -> next b1()
+  b5():
+    v17 = Undefined
+    Return v17
+}
+# CHECK-LABEL: function f8 name="range"
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK-NOT: function=f4
+# CHECK: v3: Generator = NewGenerator v2 function=f0 @40
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK-NOT: function=f4
+# CHECK: Switch [[resumePoint8]] cases=[1, 2] -> case [[afterInitialYield8]]({{*}}), case [[afterYield8]]({{*}}), otherwise [[finished8]]()
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: role=CleanupHandler
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: : -1 = Integer integer=-1
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: = Less {{*}}, v0 @11:1
+# CHECK: : 2 = Integer integer=2 @12:1
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f8 name="range"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: NewClosure
+# SIMPLE-NOT: StepGenerator
+# SIMPLE-NOT: Switch
+# SIMPLE: = Less {{*}}, v0 @11:1
+# SIMPLE-NOT: Switch
+# SIMPLE: = Call v1, -, {{*}} @51
+# SIMPLE-NOT: Switch
+function f9 name="twoYields" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f1
+    v3 = NewGenerator v2 function=f1 @41
+    v4 = CallDirect v2, v0, v1, v3 function=f5 @41
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=None @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v12 = Builtin builtin=GeneratorPrototypeNext
+    v13 = Call v12, v3
+    Return v13
+  b3():
+    v14 = Integer integer=1
+    v15 = StrictEq v9, v14
+    Branch v15 -> taken b5(), notTaken b4()
+  b4():
+    v16 = Call v1, -, v8 @51
+    Jump -> next b1()
+  b5():
+    v17 = Undefined
+    Return v17
+}
+# CHECK-LABEL: function f9 name="twoYields"
+# CHECK: inlineFrames=[{}, {callee=f5 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: Switch {{*}} cases=[1, 2, 3] ->
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: : 2 = Integer integer=2 @21:1
+# CHECK: : 3 = Integer integer=3 @22:1
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f9 name="twoYields"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator
+function f10 name="yieldInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f2
+    v3 = NewGenerator v2 function=f2 @42
+    v4 = CallDirect v2, v0, v3 function=f6 @42
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=None @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v12 = Builtin builtin=GeneratorPrototypeNext
+    v13 = Call v12, v3
+    Return v13
+  b3():
+    v14 = Integer integer=1
+    v15 = StrictEq v9, v14
+    Branch v15 -> taken b5(), notTaken b4()
+  b4():
+    v16 = Call v1, -, v8 @51
+    Jump -> next b1()
+  b5():
+    v17 = Undefined
+    Return v17
+}
+# CHECK-LABEL: function f10 name="yieldInLoop"
+# CHECK: inlineFrames=[{}, {callee=f6 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: Switch {{*}} cases=[1, 2] ->
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: [[made10]]: anything = Call v0 @31:1
+# CHECK: Jump -> next [[leave10]]([[made10]],
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f10 name="yieldInLoop"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator
+# SIMPLE: [[made10]]: anything = Call v0 @31:1
+# SIMPLE: = Call v1, -, [[made10]] @51
+function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f3
+    v3 = NewGenerator v2 function=f3 @43
+    v4 = CallDirect v2, v0, v3 function=f7 @43
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=None @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v12 = Builtin builtin=GeneratorPrototypeNext
+    v13 = Call v12, v3
+    Return v13
+  b3():
+    v14 = Integer integer=1
+    v15 = StrictEq v9, v14
+    Branch v15 -> taken b5(), notTaken b4()
+  b4():
+    v16 = Call v1, -, v8 @51
+    Jump -> next b1()
+  b5():
+    v17 = Undefined
+    Return v17
+}
+# CHECK-LABEL: function f11 name="valueLiveAcrossYield"
+# CHECK: inlineFrames=[{}, {callee=f7 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: = NewGenerator
+# CHECK-NEXT: [[seed11]]: anything = Unspecified valueType=anything @43
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: [[kept11]]: anything = Call v0 @36:1
+# CHECK: Jump -> next [[leave11]]({{*}}, [[seed11]])
+# CHECK: Jump -> next [[leave11]]({{*}}, [[kept11]])
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f11 name="valueLiveAcrossYield"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator
+function f12 name="creationInLaterBlock" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Jump -> next b6()
+  b1():
+    LoopHint
+    v3 = Undefined
+    v4 = StepGenerator v16, v3 check=None @50
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = Integer integer=2
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v9 = Builtin builtin=GeneratorPrototypeNext
+    v10 = Call v9, v16
+    Return v10
+  b3():
+    v11 = Integer integer=1
+    v12 = StrictEq v6, v11
+    Branch v12 -> taken b5(), notTaken b4()
+  b4():
+    v13 = Call v1, -, v5 @51
+    Jump -> next b1()
+  b5():
+    v14 = Undefined
+    Return v14
+  b6():
+    v15 = NewClosure function=f0
+    v16 = NewGenerator v15 function=f0 @44
+    v17 = CallDirect v15, v0, v16 function=f4 @44
+    Jump -> next b1()
+}
+# CHECK-LABEL: function f12 name="creationInLaterBlock"
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: Switch {{*}} cases=[1, 2] ->
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f12 name="creationInLaterBlock"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator
+function f13 name="twoGenerators" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = NewClosure function=f0
+    v3 = NewGenerator v2 function=f0 @45
+    v4 = CallDirect v2, v0, v3 function=f4 @45
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=None @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v12 = Builtin builtin=GeneratorPrototypeNext
+    v13 = Call v12, v3
+    Return v13
+  b3():
+    v14 = Integer integer=1
+    v15 = StrictEq v9, v14
+    Branch v15 -> taken b5(), notTaken b4()
+  b4():
+    v16 = Call v1, -, v8 @51
+    Jump -> next b1()
+  b5():
+    v17 = NewClosure function=f1
+    v18 = NewGenerator v17 function=f1 @46
+    v19 = CallDirect v17, v0, v1, v18 function=f5 @46
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = Undefined
+    v22 = StepGenerator v18, v21 check=None @52
+    v23 = ResultAt v22 index=0
+    v24 = ResultAt v22 index=1
+    v25 = Integer integer=2
+    v26 = StrictEq v24, v25
+    Branch v26 -> taken b7(), notTaken b8()
+  b7() frequency=Rare:
+    v27 = Builtin builtin=GeneratorPrototypeNext
+    v28 = Call v27, v18
+    Return v28
+  b8():
+    v29 = Integer integer=1
+    v30 = StrictEq v24, v29
+    Branch v30 -> taken b10(), notTaken b9()
+  b9():
+    v31 = Call v1, -, v23 @53
+    Jump -> next b6()
+  b10():
+    v32 = Undefined
+    Return v32
+}
+# CHECK-LABEL: function f13 name="twoGenerators"
+# CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}, {callee=f5 callPosition=52 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f13 name="twoGenerators"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator

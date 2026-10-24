@@ -1,0 +1,28 @@
+# promise = new Promise(resolve => keep(resolve)); (await promise)()
+# A resolving function in unknown hands resolves its promise with the unknown value.
+# RUN: valueflow-solve calls
+# CHECK: f1 v4 -> unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = NewClosure function=f2
+    v2 = Construct v0, -, v1
+    v3 = Await v2
+    v4 = Call v3
+    Return
+}
+function f2 name="executor" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="keep" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}

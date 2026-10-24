@@ -1,0 +1,81 @@
+# Which literal strings get a word, in which order, and which of them without their text: the members that only a type spells. Of a variable that no code names and the run time cannot find, only a text that code holds as a constant anyway
+# FORM: Prepared
+# RUN: pass NumberLiteralStrings
+# STATISTIC: LiteralStringsNumbered >= 10
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Arrow" fields=[{key="direction" declared={type="left"|"right"}}]
+variable g0 name="mode" module=m0 declared={type="top"}
+variable g1 name="namedByNothing" module=m0 declared={type="bottom"}
+variable g2 name="foldedIntoItsReaders" module=m0 declared={type="kept"}
+function f0 name="first" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
+  b0(v0: "south"|"north"):
+    Return
+}
+
+function f1 name="second" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = String string="north"
+    Jump -> next b3(v1)
+  b2():
+    v2 = String string="east"
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+
+function f2 name="onlyPassedOn" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = String string="west"
+    v2 = Call v0, -, v1
+    Return v2
+}
+
+function f3 name="withoutBody" parameters=[{type="up"}] results=[{type=undefined}]
+
+function f4 name="compared" parameters=[{type="south"|"north"}] results=[{type=boolean}] {
+  b0(v0: "south"|"north"):
+    v1 = String string="center"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+
+function f5 name="switched" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
+  b0(v0: "south"|"north"):
+    SwitchString v0 strings=["south", "far"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return
+  b2():
+    Return
+  b3():
+    Return
+}
+
+function f6 name="readsVariable" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+
+function f7 name="holdsConstant" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = String string="kept"
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK: 0 ""
+# CHECK-NEXT: 1 "left" without text
+# CHECK-NEXT: 2 "right" without text
+# CHECK-NEXT: 3 "top" without text
+# CHECK-NEXT: 4 "kept"
+# CHECK-NEXT: 5 "south"
+# CHECK-NEXT: 6 "north"
+# CHECK-NEXT: 7 "east"
+# CHECK-NEXT: 8 "center"
+# CHECK-NEXT: 9 "far"
+# CHECK-NOT: "bottom"
+# CHECK-NOT: "west"
+# CHECK-NOT: "up"
+# CHECK: outcome: Unchanged

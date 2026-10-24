@@ -1,0 +1,132 @@
+# A closure that a callee borrows on one path and that leaves on another lies in the frame, and a closure of the heap is made in front of the use that lets it out. That use is the last one: where something takes the closure afterwards, there would be two closures to tell apart, and the closure is made on the heap at once.
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries,AllocateInFrames heat=EverythingIsHot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1, v2 function=f1
+    v5 = CallDirect v1, v2 function=f2
+    v6 = CallDirect v1, v2 function=f3
+    v7 = CallDirect v1, v2 function=f4
+    v8 = CallDirect v1, v2 function=f5
+    v9 = CallDirect v1, v2 function=f6
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="storedOnOnePath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f7
+    Return v3
+  b2():
+    PutModuleVariable v2 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="storedOnOnePath"
+# CHECK: v2: f8 = NewClosure function=f8 {{*}}storage=Frame
+# CHECK: CallDirect v2 function=f7
+# CHECK: [[again1]]: f8 = NewClosure function=f8
+# CHECK-NOT: storage=
+# CHECK: PutModuleVariable [[again1]] variable=g0
+
+function f2 name="returnedOnOnePath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f7
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="returnedOnOnePath"
+# CHECK: v2: f8 = NewClosure function=f8 {{*}}storage=Frame
+# CHECK: [[again2]]: f8 = NewClosure function=f8
+# CHECK-NOT: storage=
+# CHECK: Return [[again2]]
+
+function f3 name="passedOnAnEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    Branch v1 -> taken b1(), notTaken b2(v2)
+  b1():
+    v3 = CallDirect v2 function=f7
+    Return v3
+  b2(v4: anything):
+    v5 = Call v0, -, v0, v0, v4
+    Return v5
+}
+# CHECK-LABEL: function f3 name="passedOnAnEdge"
+# CHECK: v2: f8 = NewClosure function=f8 {{*}}storage=Frame
+# CHECK: Branch v1 -> taken b1(), notTaken [[split]]()
+# CHECK: [[split]]()
+# CHECK-NEXT: [[again3]]: f8 = NewClosure function=f8
+# CHECK-NOT: storage=
+# CHECK: Jump -> next b2([[again3]])
+
+function f4 name="borrowedAndThenStored" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    v3 = CallDirect v2 function=f7
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    PutModuleVariable v2 variable=g0
+    Return
+}
+# CHECK-LABEL: function f4 name="borrowedAndThenStored"
+# CHECK: v2: f8 = NewClosure function=f8 {{*}}storage=Frame
+# CHECK: [[again4]]: f8 = NewClosure function=f8
+# CHECK-NOT: storage=
+# CHECK: PutModuleVariable [[again4]] variable=g0
+
+function f5 name="storedAndThenBorrowed" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v2 variable=g0
+    Jump -> next b2()
+  b2():
+    v4 = CallDirect v2 function=f7
+    Return v4
+}
+# CHECK-LABEL: function f5 name="storedAndThenBorrowed"
+# CHECK-NOT: storage=
+
+function f6 name="storedWhereItIsMade" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f8
+    v3 = CallDirect v2 function=f7
+    PutModuleVariable v2 variable=g0
+    Return v3
+}
+# CHECK-LABEL: function f6 name="storedWhereItIsMade"
+# CHECK-NOT: storage=
+
+function f7 name="borrows" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+
+function f8 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,53 @@
+# A field without accesses by flow alone that an operation still names keeps its slot: its store count becomes unknown
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copied" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=number} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 name="InData" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=number} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L2 kind=Environment name="seenByEval" fields=[{key="x" declared={type=anything}}, {key="note" declared={type=anything} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L3 name="CopiedAndStored" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=number} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+data d0 root=Object{layout=L1 members=[{key="n" value=Number{value=1}}]}
+evalscope e0 bindings=[{name="note" layout=L2 field=1 operand=0}]
+# CHECK: layout L0 name="Copied"{{*}}{key="note"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L1 name="InData"{{*}}{key="note"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L2 kind=Environment name="seenByEval"{{*}}{key="note"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L3 name="CopiedAndStored"{{*}}{key="note"{{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="copies" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2 = IsPlainDataObject v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CloneAs v0, v3, v1 layout=L0 fields=[0]
+    Return v4
+  b2():
+    Return
+}
+function f1 name="buildsFromData" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+function f2 name="evaluatesText" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = Undefined
+    v3 = DirectEval v0, v2, -, v1 evalScope=e0
+    Return v3
+}
+function f3 name="copiesAndStores" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2 = IsPlainDataObject v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CloneAs v0, v3, v1 layout=L3 fields=[0]
+    v5 = AssumeType v4 castType=L3
+    PutSlotOrAdd v5, -, v1 key="note" receivers=[L3] level=Proven
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3 name="copiesAndStores"
+# CHECK: PutSlotOrAdd

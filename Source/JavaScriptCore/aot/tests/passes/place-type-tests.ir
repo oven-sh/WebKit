@@ -1,0 +1,401 @@
+# One test covers a stretch of uses of a receiver with an expected layout, the uses take their fast form under its proof, and a failing test enters one generic copy, which goes on behind the stretch
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0 heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# STATISTIC: StretchesGuarded = 15
+# STATISTIC: TypeTestsPlaced = 34
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Vector" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 kind=Instance name="Shape" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Method function=f1 mutability=Fixed}]}
+
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget, IsChecked] results=[{type=anything}]
+function f1 name="area" kind=Method flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+
+function f2 name="twoReads" flags=[IsChecked] parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: function):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="y"
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="twoReads"
+# CHECK: [[test2]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test2]] -> taken [[passed2]](| 0), notTaken [[copy2]]()
+# CHECK-NEXT: [[fast2]]([[own2]]: guard):
+# CHECK-NEXT: v2: number = GetSlot [[narrowed2]], [[own2]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v3: number = GetSlot [[narrowed2]], [[own2]] key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[behind2]]()
+# CHECK-NEXT: [[behind2]]():
+# CHECK-NEXT: v4: anything = Call v1, -, v2, v3
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: [[copy2]]() frequency=Rare:
+# CHECK-NEXT: [[genericX2]]:{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: [[genericY2]]:{{*}}= PropGet v0 key="y"
+# CHECK-NEXT: Jump -> next [[copyBehind2]]()
+# CHECK-NEXT: [[copyBehind2]]() frequency=Rare:
+# CHECK-NEXT: [[genericResult2]]: anything = Call v1, -, [[genericX2]], [[genericY2]]
+# CHECK-NEXT: Return [[genericResult2]]
+# CHECK-NEXT: [[passed2]]([[narrowed2]]: L0):
+# CHECK-NEXT: [[ownTest2]]: boolean = BelongsToInstance [[narrowed2]]
+# CHECK-NEXT: Branch [[ownTest2]] -> taken [[fast2]](| 0), notTaken [[copy2]]()
+# CHECK: }
+
+function f3 name="twoReceivers" flags=[IsChecked] parameters=[{type=object}, {type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: object ~ L0, v2: function):
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v1 key="x"
+    v5 = PropGet v0 key="y"
+    v6 = PropGet v1 key="y"
+    v7 = Call v2, -, v3, v6
+    Return v7
+}
+# CHECK-LABEL: function f3 name="twoReceivers"
+# CHECK: [[testA3]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[testA3]] -> taken [[passedA3]](| 0), notTaken
+# CHECK: ([[ownA3]]: guard):
+# CHECK: v3: number = GetSlot [[receiverA3]], [[ownA3]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: [[testB3]]:{{*}}= TypeTest v1 testedType=L0
+# CHECK-NEXT: Branch [[testB3]] -> taken [[passedB3]](| 0), notTaken [[rest3]](v3)
+# CHECK: ([[ownB3]]: guard):
+# CHECK: v4: number = GetSlot [[receiverB3]], [[ownB3]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v5: number = GetSlot [[receiverA3]], [[ownA3]] key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: v6: number = GetSlot [[receiverB3]], [[ownB3]] key="y" receivers=[L0] level=Expected
+# CHECK-NOT: = TypeTest
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Jump -> next [[rest3]](
+# CHECK-NEXT: [[rest3]]({{*}}) frequency=Rare:
+# CHECK-NEXT: = PropGet v1 key="x"
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK-NEXT: = PropGet v1 key="y"
+# CHECK: [[passedA3]]([[receiverA3]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[receiverA3]]
+# CHECK: [[passedB3]]([[receiverB3]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[receiverB3]]
+
+function f4 name="readsUnderHandler" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0) handler=b2():
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f4 name="readsUnderHandler"
+# CHECK: [[test4]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test4]] -> taken [[passed4]](| 0), notTaken [[copy4]]()
+# CHECK: [[fast4]]([[own4]]: guard) handler=b2():
+# CHECK-NEXT: v1: number = GetSlot [[narrowed4]], [[own4]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v2: number = GetSlot [[narrowed4]], [[own4]] key="y" receivers=[L0] level=Expected
+# CHECK: [[copy4]]() frequency=Rare handler=b2():
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK: [[passed4]]([[narrowed4]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[narrowed4]]
+
+function f5 name="aroundLoop" flags=[IsChecked] parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean):
+    v2 = PropGet v0 key="x"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v0 key="y"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v5 = PropGet v0 key="x"
+    Return v5
+}
+# CHECK-LABEL: function f5 name="aroundLoop"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: number = GetSlot [[inLoop5]], [[ownInLoop5]] key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: number = GetSlot [[inLoop5]], [[ownInLoop5]] key="x" receivers=[L0] level=Expected
+# At the end of a turn the copy makes the tests again and joins the edge that enters the loop.
+# CHECK: [[entering5]]([[inLoop5]]: L0, [[ownInLoop5]]: guard):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: [[wayBack5]]() frequency=Rare:
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v2: number = GetSlot [[narrowed5]], [[own5]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[entering5]]([[narrowed5]], [[own5]])
+# CHECK-NEXT: () frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK: frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK-NEXT: Branch v1 -> taken [[wayBack5]](), notTaken [[exit5]]()
+# CHECK-NEXT: [[exit5]]() frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NOT: LoopHint
+
+function f6 name="existingTest" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v0 key="x"
+    Return v3
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f6 name="existingTest"
+# CHECK: v1:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: L0):
+# CHECK-NEXT: = BelongsToInstance v2
+# CHECK-NOT: = TypeTest
+# CHECK: v3: number = GetSlot v2, [[own6]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: () frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NOT: = TypeTest
+
+function f7 name="otherTestInsideStretch" flags=[IsChecked] parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = TypeTest v1 testedType=number
+    v4 = PropGet v0 key="y"
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    Return v5
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f7 name="otherTestInsideStretch"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: = TypeTest v0
+# CHECK: v2: number = GetSlot [[narrowed7]], [[own7]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v3: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: v4: number = GetSlot [[narrowed7]], [[own7]] key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: () frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: [[otherTest7]]: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: [[genericY7]]:{{*}}= PropGet v0 key="y"
+# CHECK-NEXT: Branch [[otherTest7]] -> taken [[copyOfTaken7]](| 0), notTaken [[copyOfNotTaken7]]()
+# CHECK: [[copyOfNotTaken7]]() frequency=Rare:
+# CHECK-NEXT: Return [[genericY7]]
+
+function f8 name="oneUse" flags=[IsChecked] parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: function):
+    v2 = PropGet v0 key="x"
+    v3 = Call v1, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f8 name="oneUse"
+# CHECK: [[test8]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test8]] -> taken [[passed8]](| 0), notTaken [[failed8]]({{*}})
+# CHECK-NEXT: [[fast8]]({{*}}):
+# CHECK-NEXT: v2: number = GetSlot [[narrowed8]], [[own8]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[behind8]]()
+# CHECK-NEXT: [[behind8]]():
+# CHECK-NEXT: v3: anything = Call v1, -, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[copy8]]() frequency=Rare:
+# CHECK-NEXT: [[generic8]]:{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: Jump -> next [[copyBehind8]]()
+# CHECK-NEXT: [[copyBehind8]]() frequency=Rare:
+# CHECK-NEXT: = Call v1, -, [[generic8]]
+
+function f9 name="gapOfTwoCalls" flags=[IsChecked] parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: function):
+    v2 = PropGet v0 key="x"
+    v3 = Call v1
+    v4 = Call v1
+    v5 = PropGet v0 key="y"
+    Return v5
+}
+# The layout of an object and the instance it belongs to outlast any call, so the tests in front of the first read serve both reads however many calls lie between them.
+# CHECK-LABEL: function f9 name="gapOfTwoCalls"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: = TypeTest
+# CHECK: v2: number = GetSlot [[narrowed9]], [[own9]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: v4: anything = Call v1
+# CHECK-NEXT: v5: number = GetSlot [[narrowed9]], [[own9]] key="y" receivers=[L0] level=Expected
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK-NOT: = TypeTest
+# CHECK: = BelongsToInstance [[narrowed9]]
+# CHECK-NOT: = BelongsToInstance
+
+function f10 name="alreadyTested" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v2 key="x" receivers=[L0] level=Expected
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="x"
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+}
+# CHECK-LABEL: function f10 name="alreadyTested"
+# CHECK: v1:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NOT: = TypeTest
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: v4:{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NOT: = TypeTest
+
+function f11 name="acrossCall" flags=[IsChecked] parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: function):
+    v2 = PropGet v0 key="x"
+    v3 = Call v1
+    v4 = PropGet v0 key="y"
+    Return v4
+}
+# CHECK-LABEL: function f11 name="acrossCall"
+# CHECK: [[test11]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test11]] -> taken [[passed11]](| 0), notTaken
+# CHECK: [[ownBlock11]]([[own11]]: guard):
+# CHECK: v2: number = GetSlot [[narrowed11]], [[own11]] key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: v4: number = GetSlot [[narrowed11]], [[own11]] key="y" receivers=[L0] level=Expected
+# CHECK-NOT: = TypeTest
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = PropGet v0 key="y"
+# CHECK: [[passed11]]([[narrowed11]]: L0):
+# CHECK-NEXT: [[isOwn11]]: boolean = BelongsToInstance [[narrowed11]]
+# CHECK-NEXT: Branch [[isOwn11]] -> taken [[ownBlock11]](| 0), notTaken
+# CHECK-NOT: = BelongsToInstance
+
+function f12 name="otherLayout" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f12 name="otherLayout"
+# CHECK: [[test12]]:{{*}}= TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[test12]] -> taken [[passed12]](| 0), notTaken
+# CHECK: [[ownPassed12]]([[own12]]: guard):
+# CHECK: v1: number = GetSlot [[narrowed12]], [[own12]] key="x" receivers=[L1] level=Expected
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK: [[passed12]]([[narrowed12]]: L1):
+# CHECK-NEXT: [[ownTest12]]: boolean = BelongsToInstance [[narrowed12]]
+# CHECK-NEXT: Branch [[ownTest12]] -> taken [[ownPassed12]](| 0), notTaken
+
+function f13 name="store" flags=[IsChecked] parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f13 name="store"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: ([[own13]]: guard):
+# CHECK: PutSlot [[narrowed13]], [[own13]], v1 key="x" receivers=[L0] level=Expected
+# CHECK: frequency=Rare:
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK: ([[narrowed13]]: L0):
+
+function f14 name="methodCall" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return v2
+}
+# CHECK-LABEL: function f14 name="methodCall"
+# CHECK: = TypeTest v0 testedType=L2
+# CHECK: v2: number = CallDirect [[narrowed14]] function=f1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: () frequency=Rare:
+# CHECK-NEXT: [[callee14]]: anything = PropGet v0 key="area"
+# CHECK-NEXT: = Call [[callee14]], v0 calleeKey="area"
+# CHECK: ([[narrowed14]]: L2):
+# CHECK-NEXT: = BelongsToInstance [[narrowed14]]
+# CHECK-NOT: = TypeTest
+
+function f15 name="builtinCall" flags=[IsChecked] parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string):
+    v1 = PropGet v0 key="toLowerCase"
+    v2 = Call v1, v0 calleeKey="toLowerCase"
+    Return v2
+}
+# CHECK-LABEL: function f15 name="builtinCall"
+# CHECK: [[test15]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test15]] -> taken [[passed15]](| 0), notTaken
+# CHECK-NEXT: [[passed15]]([[narrowed15]]: string):
+# CHECK-NOT: = TypeTest v0
+# CHECK: : string = CallBuiltin [[narrowed15]] overload=StringPrototypeToLowerCase/0
+# CHECK: [[callee15]]: anything = PropGet {{*}} key="toLowerCase"
+# CHECK: = Call {{*}}, v0 calleeKey="toLowerCase"
+# CHECK: frequency=Unlikely:
+
+function f16 name="arrayElement" flags=[IsChecked] parameters=[{type=Array<number> flags=[IsExpected]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f16 name="arrayElement"
+# CHECK: [[test16]]:{{*}}= TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[test16]] -> taken [[passed16]](| 0), notTaken
+# CHECK: v2:{{*}}= GetArrayElement [[narrowed16]], v1, {{*}}level=Expected
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = ElemGet v0, v1
+# CHECK: [[passed16]]([[narrowed16]]: Array<number>):
+# CHECK-NEXT: [[storage16]]:{{*}}= HasArrayStorage [[narrowed16]] arrayStorage=Double
+# CHECK-NEXT: Branch [[storage16]] -> taken [[storagePassed16]](| 0), notTaken
+# CHECK: [[storagePassed16]]({{*}}: guard):
+
+function f17 name="resultStaysTyped" flags=[IsChecked] parameters=[{type=Array<number> flags=[IsExpected]}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>, v1: function):
+    v2 = PropGet v0 key="filter"
+    v3 = Call v2, v0, v1 calleeKey="filter"
+    v4 = PropGet v3 key="length"
+    v5 = PropGet v0 key="length"
+    v6 = Call v1, -, v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f17 name="resultStaysTyped"
+# CHECK: [[test17]]:{{*}}= TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[test17]] -> taken [[passed17]](| 0), notTaken
+# CHECK-NOT: = TypeTest v0
+# CHECK: [[ys17]]: Array{{*}}= CallBuiltin [[xs17]], v1 overload=ArrayPrototypeFilter/0
+# CHECK-NEXT: [[ysLength17]]:{{*}}= PropGet [[ys17]] key="length"
+# CHECK-NEXT: [[xsLength17]]: int[0, 4294967295] = CallBuiltin [[xs17]] overload=ArrayPrototypeLength/0
+# CHECK-NEXT: Jump -> next [[behind17]]()
+# CHECK: [[passed17]]([[xs17]]: Array<number>):
+# CHECK-NOT: = TypeTest v0
+
+function f18 name="provenReceiver" flags=[IsChecked] parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f18 name="provenReceiver"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1:{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+
+function f19 name="nothingExpected" flags=[IsChecked] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f19 name="nothingExpected"
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: v1: anything = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

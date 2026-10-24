@@ -1,0 +1,9 @@
+# a limit that no option lowers has the value of the table, and only an amount above it is a hit
+# RUN: limits MaxLayoutsInType 0 1024 1025
+# CHECK: limit MaxLayoutsInType = 1024 (default 1024)
+# CHECK-NEXT: can be lowered: yes
+# CHECK-NEXT: exceeds 0: no
+# CHECK-NEXT: exceeds 1024: no
+# CHECK-NEXT: exceeds 1025: yes
+# CHECK-NEXT: gave up: MaxLayoutsInType
+# LOSS: MaxLayoutsInType x2

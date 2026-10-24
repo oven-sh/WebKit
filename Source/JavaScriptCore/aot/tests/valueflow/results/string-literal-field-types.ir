@@ -1,0 +1,39 @@
+# A field typed with a string literal that is not a property key is proven to hold that literal, so NarrowByField on the tag leaves one layout
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Circle" fields=[{key="kind" declared={type="circle"} {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="r"
+# CHECK: layout L1 name="Square" fields=[{key="kind" declared={type="square"} {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="side"
+# CHECK-LABEL: function f1 name="area"
+# CHECK: : L0 = NarrowByField v0,
+# CHECK: : L1 = NarrowByField v0,
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Circle" fields=[{key="kind" declared={type="circle"} flags=[IsRequired]}, {key="r" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Square" fields=[{key="kind" declared={type="square"} flags=[IsRequired]}, {key="side" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = String string="circle"
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = String string="square"
+    v4 = NewObject -, v3, v0 layout=L1 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2
+    v7 = Call v5, -, v4
+    Return
+}
+function f1 name="area" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="kind"
+    SwitchString v1 strings=["circle", "square"] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    v3 = NarrowByField v0, v2 key="kind"
+    v4 = PropGet v3 key="r"
+    Return v4
+  b2(v5):
+    v6 = NarrowByField v0, v5 key="kind"
+    v7 = PropGet v6 key="side"
+    Return v7
+  b3():
+    Return
+}

@@ -1,0 +1,138 @@
+# What an edge proves at the border of a copied region: a narrowed operand can become a parameter, a guard cannot leave its function, and a proof about a value of the region cannot be merged with its copy
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b3 redirect=b2.0
+# RUN(PROOF): duplicate function=f0 region=b3 redirect=b1.0
+# RUN(EXTRACT): extract function=f0 region=b3
+# RUN(RESULT): extract function=f1 region=b1,b2
+# RUN(ARGUMENT): extract function=f1 region=b2
+# RUN(TEST): duplicate function=f2 region=b3 redirect=b2.0
+# RUN(CONDITION): duplicate function=f3 region=b3 redirect=b2.0
+# RUN(ALLOCATION): duplicate function=f4 region=b3 redirect=b2.0
+# RUN(INSIDE): duplicate function=f4 region=b3,b4 redirect=b2.0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
+function f0 name="narrowedOperandIntoHead" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b3(| 0), notTaken b2()
+  b2():
+    v2 = String string="none"
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = Add v3, v3
+    Return v4
+}
+# CHECK: check: CanClone
+# CHECK-NEXT: function f0
+# CHECK: Branch v1 -> taken b3(| 0), notTaken b2()
+# CHECK: Jump -> next [[copy]](v2)
+# CHECK-NEXT: b3(v3: string):
+# CHECK-NEXT: v4: string = Add v3, v3
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: [[copy]]([[parameter]]: string):
+# CHECK-NEXT: [[sum]]: string = Add [[parameter]], [[parameter]]
+# CHECK-NEXT: Return [[sum]]
+# PROOF: check: CanClone
+# PROOF-NEXT: function f0
+# PROOF: Branch v1 -> taken [[copy]](| 0), notTaken b2()
+# PROOF: Jump -> next b3(v2)
+# PROOF-NEXT: b3(v3: string):
+# PROOF: [[copy]]([[parameter]]: string):
+# PROOF-NEXT: [[sum]]: string = Add [[parameter]], [[parameter]]
+# PROOF-NEXT: Return [[sum]]
+# EXTRACT: check: CanClone
+# EXTRACT-NEXT: live-ins: []
+# EXTRACT-NEXT: function f5 {{*}} role=OutlinedBody {{*}} parameters=[{type=string}] results=[{type=string}]
+# EXTRACT-NEXT: b0([[entry]]: string):
+# EXTRACT-NEXT: Jump -> next [[head]]([[entry]])
+# EXTRACT-NEXT: [[head]]([[parameter]]: string):
+# EXTRACT-NEXT: [[sum]]: string = Add [[parameter]], [[parameter]]
+# EXTRACT-NEXT: Return [[sum]]
+function f1 name="guardIntoHead" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
+    Return v4
+  b3():
+    v5 = Integer integer=0
+    Return v5
+}
+# RESULT: check: OperandMustBeDefinition
+# RESULT-NOT: live-ins
+# RESULT-NOT: function
+# ARGUMENT: check: OperandMustBeDefinition
+# ARGUMENT-NOT: live-ins
+# ARGUMENT-NOT: function
+function f2 name="branchWithProofsAfterRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v2 = TypeTest v0 testedType=string
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b5(| 0), notTaken b6()
+  b5(v3):
+    Return v3
+  b6():
+    Return v0
+}
+# TEST: check: OperandMustBeDefinition
+# TEST-NOT: function
+function f3 name="plainBranchAfterRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v2 = TypeTest v0 testedType=string
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5():
+    Return v1
+  b6():
+    Return v0
+}
+# CONDITION: check: CanClone
+# CONDITION-NEXT: function f3
+# CONDITION: b3():
+# CONDITION-NEXT: v2: boolean = TypeTest v0 testedType=string
+# CONDITION-NEXT: Jump -> next b4(v2)
+# CONDITION-NEXT: b4([[merged]]: boolean):
+# CONDITION-NEXT: Branch [[merged]] -> taken b5(), notTaken b6()
+# CONDITION: [[test]]: boolean = TypeTest v0 testedType=string
+# CONDITION-NEXT: Jump -> next b4([[test]])
+function f4 name="allocationIsGuardAfterRegion" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b4()
+  b4():
+    v3 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+# ALLOCATION: check: OperandMustBeDefinition
+# ALLOCATION-NOT: function
+# INSIDE: check: CanClone
+# INSIDE-NEXT: function f4
+# INSIDE: v3: number = GetSlot v2, v2 key="x"
+# INSIDE: [[object]]: L0 = NewObject -, v1 layout=L0 fields=[0]
+# INSIDE: = GetSlot [[object]], [[object]] key="x"

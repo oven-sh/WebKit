@@ -1,0 +1,68 @@
+# The allocation of a full closure has room for an odd number of captures, so two capture counts share one, the list by capture count has no gap, and a slim closure names none
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place allocations
+# RUN(SITES): place program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = Call v1, -, v3
+    v5 = NewClosure v2 function=f2
+    v6 = Call v1, -, v5
+    v7 = NewClosure v2, v2 function=f3
+    v8 = Call v1, -, v7
+    v9 = NewClosure v2, v2, v2 function=f4
+    v10 = Call v1, -, v9
+    v11 = NewClosure v2, v2, v2, v2, v2, v2 function=f5
+    v12 = Call v1, -, v11
+    v13 = NewClosure v2 function=f6
+    v14 = Call v13
+    Return
+}
+function f1 name="noCapture" flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="oneCapture" flags=[HasNewTarget] captures=[{type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Return
+}
+function f3 name="twoCaptures" flags=[HasNewTarget] captures=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    Return
+}
+function f4 name="threeCaptures" flags=[HasNewTarget] captures=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: anything):
+    Return
+}
+function f5 name="sixCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number):
+    Return
+}
+function f6 name="onlyCalled" kind=Arrow captures=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+
+# CHECK: allocation 0 L0 shape=[[closure]] fields=[] size=48 order=0x0 captures=1
+# CHECK-NEXT: allocation 1 L0 shape=[[closure]] fields=[] size=64 order=0x0 captures=3
+# CHECK-NEXT: allocation 2 L0 shape=[[closure]] fields=[] size=80 order=0x0 captures=5
+# CHECK-NEXT: allocation 3 L0 shape=[[closure]] fields=[] size=96 order=0x0 captures=7
+# CHECK-NOT: allocation {{*}} L0
+
+# SITES-LABEL: function f0 name="main"
+# SITES: v3: f1 = NewClosure function=f1 {{*}}allocation=0
+# SITES: v5: f2 = NewClosure v2 function=f2 {{*}}allocation=0
+# SITES: v7: f3 = NewClosure v2, v2 function=f3 {{*}}allocation=1
+# SITES: v9: f4 = NewClosure v2, v2, v2 function=f4 {{*}}allocation=1
+# SITES: v11: f5 = NewClosure v2, v2, v2, v2, v2, v2 function=f5 {{*}}allocation=3
+# SITES-NOT: allocation=
+# SITES: v13: f6 = NewClosure v2 function=f6 {{*}}closureForm=Slim
+# SITES-NOT: allocation=
+# SITES-LABEL: function f1 name="noCapture"

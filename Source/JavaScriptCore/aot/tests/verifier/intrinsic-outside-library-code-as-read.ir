@@ -1,0 +1,17 @@
+# On the wire an intrinsic is sent only in the code of the library
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: IntrinsicOutsideLibraryCode 1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IsConstructor v0
+    Return
+}
+function f1 name="good" role=Library parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IsConstructor v0
+    Return
+}

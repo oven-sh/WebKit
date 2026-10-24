@@ -1,0 +1,50 @@
+# in a program as read: the variadic operands of an operation are as many as the parameters of the callee, the listed fields or the captures
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: ArgumentCountMismatch 4
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
+function f0 name="badCallDirectWithOneArgument" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    Return
+}
+function f1 name="badCallDirectWithThreeArguments" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0, v0 function=f7
+    Return
+}
+function f2 name="goodCallDirect" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f7
+    Return
+}
+function f3 name="badNewObject" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    Return
+}
+function f4 name="goodNewObject" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    Return
+}
+function f5 name="badNewClosure" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f8
+    Return
+}
+function f6 name="goodNewClosure" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewClosure v0 function=f8
+    Return
+}
+function f7 name="callee" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    Return
+}
+function f8 name="closure" captures=[{type=number}] results=[{type=undefined}]

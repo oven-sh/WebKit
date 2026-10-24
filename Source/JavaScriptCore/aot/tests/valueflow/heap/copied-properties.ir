@@ -1,0 +1,43 @@
+# source = { run: one, get made() { return two } }; target = { ...source }; target.run(); target.made(); source.later = three; untouched = {}; untouched.run()
+# The target of a copy finds what the source holds, under the name it has there. A getter of the source runs at the copy, and what it returns lies on the target under a key nobody knows.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f1 f2
+# CHECK: f0 v10 -> f2
+# CHECK-NOT: f0 v13 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Target"
+layout L2 name="Untouched"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3
+    DefineGetter v1, v2 key="made"
+    v4 = NewObject layout=L1 fields=[]
+    CopyDataProperties v4, v1
+    v6 = Integer integer=0
+    v7 = PropGet v4 key="run"
+    v8 = Call v7, v4
+    v9 = PropGet v4 key="made"
+    v10 = Call v9, v4
+    v11 = NewObject layout=L2 fields=[]
+    v12 = PropGet v11 key="run"
+    v13 = Call v12, v11
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="made" kind=Getter results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}

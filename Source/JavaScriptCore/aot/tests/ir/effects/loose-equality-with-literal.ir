@@ -1,0 +1,55 @@
+# A loose comparison of a value with a text has the effects of the comparison it replaces: an object is converted, which runs code of the program, a value that is never an object runs none, and a value that is never a string or an object is not looked at
+# FORM: Selected
+# RUN: effects
+# RUN(ANY): check-replacement f0 v3 v2
+# RUN(PRIMITIVE): check-replacement f1 v3 v2
+# RUN(NUMBER): check-replacement f2 v3 v2
+# RUN(USES): operands f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="anyValue" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = String string="constructor"
+    v2 = Eq v0, v1 form=Generic
+    v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v2 Eq: unknownCode
+# CHECK-NEXT: v3 ValueLooselyEqualsLiteral: unknownCode
+# ANY: valid
+# USES-LABEL: function f0
+# USES: v2 Eq 0: [Inspects, PassesToUserCode]
+# USES: v3 ValueLooselyEqualsLiteral 0: [Inspects, PassesToUserCode]
+function f1 name="neverObject" parameters=[{type=undefined|number|string}] results=[{type=undefined}] {
+  b0(v0: undefined|number|string):
+    v1 = String string="constructor"
+    v2 = Eq v0, v1 form=Generic
+    v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v2 Eq: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# CHECK-NEXT: v3 ValueLooselyEqualsLiteral: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# PRIMITIVE: valid
+# USES-LABEL: function f1
+# USES: v3 ValueLooselyEqualsLiteral 0: [Inspects]
+# USES-NOT: PassesToUserCode
+function f2 name="neverStringOrObject" parameters=[{type=undefined|boolean|number}] results=[{type=undefined}] {
+  b0(v0: undefined|boolean|number):
+    v1 = String string="constructor"
+    v2 = Eq v0, v1 form=Generic
+    v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v3 ValueLooselyEqualsLiteral: none
+# NUMBER: valid
+function f3 name="string" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = StringEqualsLiteral v0 literal="constructor"
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v1 StringEqualsLiteral: reads(StringStorage)
+# CHECK-NOT: unknownCode

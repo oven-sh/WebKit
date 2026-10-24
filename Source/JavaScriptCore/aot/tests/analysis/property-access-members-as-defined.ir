@@ -1,0 +1,55 @@
+# The test of a member that can change compares the holder with what the class definition creates, so such a lookup answers the last definition under the key, in definition order. A name that only a store or a computed key can create has no answer
+# FORM: Prepared
+# RUN(METHODGETTER): member-lookup layout=L0 key="m"
+# METHODGETTER: Accessor level=Expected holder=L0 getter=F11 setter=none conditions=[MemberUnchanged(L0, Prototype, K{{*}})]
+# RUN(GETTERMETHOD): member-lookup layout=L1 key="m"
+# GETTERMETHOD: Method level=Expected holder=L1 method=F10 conditions=[MemberUnchanged(L1, Prototype, K{{*}})]
+# RUN(TWICE): member-lookup layout=L2 key="m"
+# TWICE: Method level=Expected holder=L2 method=F10 conditions=[MemberUnchanged(L2, Prototype, K{{*}})]
+# RUN(PAIR): member-lookup layout=L3 key="m"
+# PAIR: Accessor level=Expected holder=L3 getter=F11 setter=F12 conditions=[MemberUnchanged(L3, Prototype, K{{*}})]
+# RUN(STORED): member-lookup layout=L4 key="m"
+# STORED: Method level=Expected holder=L4 method=F10 conditions=[MemberUnchanged(L4, Prototype, K{{*}})]
+# RUN(ONLYSTORED): member-lookup layout=L5 key="m"
+# ONLYSTORED: Unknown level=Unknown cause=PropertyAdded
+# RUN(STATICONLYSTORED): member-lookup start=ClassObject layout=L5 key="m"
+# STATICONLYSTORED: Unknown level=Unknown cause=PropertyAdded
+# RUN(COMPUTED): member-lookup layout=L6 key="m"
+# COMPUTED: Unknown level=Unknown cause=PropertyAdded
+# RUN(ONENAME): member-lookup layout=L7 key="m"
+# ONENAME: Method level=Proven holder=L7 method=F10
+# RUN(BELOW): member-lookup layout=L8 key="m"
+# BELOW: Unknown level=Unknown cause=PropertyAdded
+# RUN(OTHERKEY): member-lookup layout=L5 key="other"
+# OTHERKEY: Absent level=Proven
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="MethodThenGetter" constructor=f0 flow={baseState=None members=[L0] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f10}, {key="m" kind=Getter function=f11}] namedMembers=[{key="m" function=f10}, {key="m" kind=Getter function=f11}]}
+layout L1 kind=Instance name="GetterThenMethod" constructor=f1 flow={baseState=None members=[L1] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" kind=Getter function=f11}, {key="m" function=f10}] namedMembers=[{key="m" function=f10}, {key="m" kind=Getter function=f11}]}
+layout L2 kind=Instance name="MethodTwice" constructor=f2 flow={baseState=None members=[L2] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f13}, {key="m" function=f10}] namedMembers=[{key="m" function=f10}, {key="m" function=f13}]}
+layout L3 kind=Instance name="SetterBetweenGetters" constructor=f3 flow={baseState=None members=[L3] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" kind=Getter function=f14}, {key="m" kind=Setter function=f12}, {key="m" kind=Getter function=f11}] namedMembers=[{key="m" kind=Getter function=f11}, {key="m" kind=Getter function=f14}, {key="m" kind=Setter function=f12}]}
+layout L4 kind=Instance name="DefinedThenStored" constructor=f4 flow={baseState=None members=[L4] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f10}] namedMembers=[{key="m" function=f10}, {key="m" function=f13}]}
+layout L5 kind=Instance name="OnlyStored" constructor=f5 flow={baseState=None members=[L5] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f13}, {key="m" side=Static function=f13}]}
+layout L6 kind=Instance name="ComputedKeyMayNameMember" constructor=f6 flow={baseState=None members=[L6] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{function=f10}] namedMembers=[{key="m" function=f10}]}
+layout L7 kind=Instance name="ComputedKeyHasOneName" constructor=f7 flow={baseState=None members=[L7] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{function=f10}] namedMembers=[{key="m" function=f10 mutability=Fixed}]}
+layout L8 kind=Instance name="BelowOnlyStored" base=L5 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L5 members=[L8] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+
+function f0 name="MethodThenGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="GetterThenMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="MethodTwice" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="SetterBetweenGetters" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="DefinedThenStored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="OnlyStored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="ComputedKeyMayNameMember" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f7 name="ComputedKeyHasOneName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f8 name="BelowOnlyStored" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
+function f9 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="other"
+    Return v1
+}
+function f10 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f11 name="m" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f12 name="m" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f13 name="other" kind=Method flags=[HasThis] results=[{type=anything}]
+function f14 name="earlier" kind=Getter flags=[HasThis] results=[{type=anything}]

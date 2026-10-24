@@ -1,0 +1,153 @@
+# The closures of an environment need not be stored side by side. What a closure captures is stored right behind the place of the first closure that captures it, so code may run between two of them; closures that are stored in different blocks get fields of their own; and where two places share captures differently, a field serves only the captures that are one value at every place.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="codeBetween" fields=[{key="one" declared={type=f1}}, {key="two" declared={type=f2}}]
+layout L1 kind=Environment name="twoBlocks" fields=[{key="early" declared={type=f4}}, {key="late" declared={type=f5}}]
+layout L2 kind=Environment name="sharedDifferently" fields=[{key="left" declared={type=f7}}, {key="right" declared={type=f8}}]
+
+function f0 name="codeBetween" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1, v0 function=f1
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v4 = CallDirect v1, v0 function=f1
+    v5 = NewClosure v1, v0 function=f2
+    PutEnvironmentField v1, v5 layout=L0 field=1
+    v7 = CallDirect v1, v0 function=f2
+    v8 = Less v4, v7
+    Return v8
+}
+# CHECK-LABEL: function f0 name="codeBetween"
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L0 = NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L0 field=2
+# CHECK-NEXT: = CallDirect [[scope]], v0 function=f1
+# CHECK-NEXT: = CallDirect [[scope]], v0 function=f2
+
+function f1 name="one" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    Return v1
+}
+
+function f2 name="two" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = GetCapture v2 function=f1
+    v4 = GetCapture v2 function=f1 index=1
+    v5 = CallDirect v3, v4 function=f1
+    v6 = GetEnvironmentField v0 layout=L0 field=1
+    v7 = GetCapture v6 function=f2
+    v8 = GetCapture v6 function=f2 index=1
+    v9 = Less v1, v5
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = CallDirect v7, v8 function=f2
+    Return v10
+  b2():
+    Return v5
+}
+# The two capture one value, which lies in one field: the function has it at hand (read-captures-from-environments-own-captures.ir).
+# CHECK-LABEL: function f2 name="two"
+# CHECK-NOT: GetCapture
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = CallDirect v0, v1 function=f1
+
+function f3 name="twoBlocks" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    v2 = NewObject layout=L1
+    v3 = NewClosure v2, v0 function=f4
+    PutEnvironmentField v2, v3 layout=L1 field=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Add v0, v0
+    v6 = NewClosure v2, v5 function=f5
+    PutEnvironmentField v2, v6 layout=L1 field=1
+    v8 = CallDirect v2, v5 function=f5
+    Return v8
+  b2():
+    v9 = CallDirect v2, v0 function=f4
+    Return v9
+}
+# CHECK-LABEL: function f3 name="twoBlocks"
+# CHECK-NOT: NewClosure
+# CHECK: [[blocks]]: env L1 = NewObject layout=L1
+# CHECK-NEXT: PutEnvironmentField [[blocks]], v0 layout=L1 field=2
+# CHECK: [[double]]: number = Add v0, v0
+# CHECK-NEXT: PutEnvironmentField [[blocks]], [[double]] layout=L1 field=3
+# CHECK-NEXT: = CallDirect [[blocks]], [[double]] function=f5
+
+function f4 name="early" captures=[{type=env L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L1, v1: number):
+    Return v1
+}
+
+function f5 name="late" captures=[{type=env L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L1, v1: number):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = GetCapture v2 function=f4
+    v4 = GetCapture v2 function=f4 index=1
+    v5 = CallDirect v3, v4 function=f4
+    v6 = GetEnvironmentField v0 layout=L1 field=1
+    v7 = GetCapture v6 function=f5 index=1
+    v8 = Add v7, v1
+    v9 = Less v8, v5
+    Return v9
+}
+# CHECK-LABEL: function f5 name="late"
+# CHECK-NOT: GetCapture
+# CHECK: [[ofEarly]]: number = GetEnvironmentField v0 layout=L1 field=2
+# CHECK: = CallDirect v0, [[ofEarly]] function=f4
+# CHECK-NOT: field=3
+# CHECK: = Add v1, v1
+
+function f6 name="sharedDifferently" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: boolean):
+    v3 = NewObject layout=L2
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewClosure v3, v0 function=f7
+    PutEnvironmentField v3, v4 layout=L2 field=0
+    v6 = NewClosure v3, v0 function=f8
+    PutEnvironmentField v3, v6 layout=L2 field=1
+    Jump -> next b3()
+  b2():
+    v8 = NewClosure v3, v0 function=f7
+    PutEnvironmentField v3, v8 layout=L2 field=0
+    v10 = NewClosure v3, v1 function=f8
+    PutEnvironmentField v3, v10 layout=L2 field=1
+    Jump -> next b3()
+  b3():
+    v12 = CallDirect v3, v0 function=f7
+    Return v12
+}
+# CHECK-LABEL: function f6 name="sharedDifferently"
+# CHECK-NOT: NewClosure
+# CHECK: PutEnvironmentField v3, v0 layout=L2 field=2
+# CHECK-NEXT: PutEnvironmentField v3, v0 layout=L2 field=3
+# CHECK: PutEnvironmentField v3, v0 layout=L2 field=2
+# CHECK-NEXT: PutEnvironmentField v3, v1 layout=L2 field=3
+
+function f7 name="left" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L2, v1: number):
+    v2 = GetEnvironmentField v0 layout=L2 field=1
+    v3 = GetCapture v2 function=f8
+    v4 = GetCapture v2 function=f8 index=1
+    v5 = CallDirect v3, v4 function=f8
+    v6 = GetEnvironmentField v0 layout=L2 field=0
+    v7 = GetCapture v6 function=f7 index=1
+    v8 = Less v7, v5
+    Return v8
+}
+# CHECK-LABEL: function f7 name="left"
+# CHECK-NOT: GetCapture
+# CHECK: [[ofRight]]: number = GetEnvironmentField v0 layout=L2 field=3
+# CHECK: = CallDirect v0, [[ofRight]] function=f8
+# CHECK: = GetEnvironmentField v0 layout=L2 field=2
+
+function f8 name="right" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L2, v1: number):
+    Return v1
+}

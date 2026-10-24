@@ -1,0 +1,39 @@
+# Every regular expression literal that does not compile under its flags is a user error of its own, and the build gives no image
+# FORM: AsRead
+# RUN: pass CheckRegExpLiterals
+# DIAGNOSTIC: InvalidRegExpLiteral 6
+# CHECK: outcome: Unchanged
+# RUN(BUILD): compile
+# BUILD-COUNT-6: diagnostic InvalidRegExpLiteral
+# BUILD-NOT: diagnostic
+# BUILD: image empty
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="invalid" results=[{type=undefined}] {
+  b0():
+    v0 = NewRegExp pattern="("
+    v1 = NewRegExp pattern="a" regExpFlags=[Unicode, UnicodeSets]
+    v2 = NewRegExp pattern="{" regExpFlags=[Unicode]
+    v3 = NewRegExp pattern="[\u{dc00}-\u{d800}]"
+    v4 = NewRegExp pattern="("
+    Jump -> next b1()
+  b1():
+    v5 = NewRegExp pattern="(" regExpFlags=[Global]
+    Return
+}
+function f1 name="valid" results=[{type=undefined}] {
+  b0():
+    v0 = NewRegExp pattern="()"
+    v1 = NewRegExp pattern="a" regExpFlags=[Unicode]
+    v2 = NewRegExp pattern="a" regExpFlags=[UnicodeSets]
+    v3 = NewRegExp pattern="{"
+    v4 = NewRegExp pattern="[\u{d800}-\u{dc00}]"
+    v5 = NewRegExp pattern="\u{d800}"
+    v6 = NewRegExp pattern="\u{d800}" regExpFlags=[Unicode]
+    v7 = NewRegExp pattern="(a)" regExpFlags=[Unicode]
+    Jump -> next b1()
+  b1():
+    v8 = NewRegExp pattern="a" regExpFlags=[Global]
+    Return
+}

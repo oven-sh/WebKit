@@ -1,0 +1,357 @@
+# What dominating tests, constant steps and induction prove about numbers
+# FORM: Prepared
+# RUN(LESS): integer-relations function=f0 at-most=v0,v1,-1,b1 at-most=v0,v1,0,b1 at-most=v0,v1,-2,b1 at-most=v0,v1,-1,b2 at-most=v1,v0,0,b2
+# LESS: function f0
+# LESS-NEXT: v0 <= v1 + -1 at b1: Proven
+# LESS-NEXT: v0 <= v1 + 0 at b1: Proven
+# LESS-NEXT: v0 <= v1 + -2 at b1: Unknown
+# LESS-NEXT: v0 <= v1 + -1 at b2: Unknown
+# LESS-NEXT: v1 <= v0 + 0 at b2: Proven
+# RUN(GREATER): integer-relations function=f1 at-most=v0,v1,-1,b1
+# GREATER: function f1
+# GREATER-NEXT: v0 <= v1 + -1 at b1: Proven
+# RUN(GREATEROREQUAL): integer-relations function=f2 at-most=v0,v1,0,b1 at-most=v0,v1,-1,b1
+# GREATEROREQUAL: function f2
+# GREATEROREQUAL-NEXT: v0 <= v1 + 0 at b1: Proven
+# GREATEROREQUAL-NEXT: v0 <= v1 + -1 at b1: Unknown
+# RUN(SUM): integer-relations function=f3 at-most=v0,v3,-1,b1 at-most=v0,v3,9223372036854775807,b1
+# SUM: function f3
+# SUM-NEXT: v0 <= v3 + -1 at b1: Proven
+# SUM-NEXT: v0 <= v3 + 9223372036854775807 at b1: Unknown
+# RUN(JOIN): integer-relations function=f4 at-most=v0,v1,-1,b3
+# JOIN: function f4
+# JOIN-NEXT: v0 <= v1 + -1 at b3: Unknown
+# RUN(CONVERSIONS): integer-relations function=f5 at-most=v0,v1,-1,b1
+# CONVERSIONS: function f5
+# CONVERSIONS-NEXT: v0 <= v1 + -1 at b1: Proven
+# RUN(CONSTANT): integer-relations function=f6 at-most-constant=v0,99,b1 at-most-constant=v0,98,b1 at-least=v0,0,b1
+# CONSTANT: function f6
+# CONSTANT-NEXT: v0 <= 99 at b1: Proven
+# CONSTANT-NEXT: v0 <= 98 at b1: Unknown
+# CONSTANT-NEXT: v0 >= 0 at b1: Unknown
+# RUN(INDUCTION): integer-relations function=f7 at-least=v2,0,b2 at-least=v2,1,b2 at-most=v5,v0,-1,b2
+# INDUCTION: function f7
+# INDUCTION-NEXT: v2 >= 0 at b2: Proven
+# INDUCTION-NEXT: v2 >= 1 at b2: Unknown
+# INDUCTION-NEXT: v5 <= v0 + -1 at b2: Proven
+# RUN(WHOLE): integer-relations function=f8 whole=v1,b0 whole=v3,b0 whole=v7,b0 whole=v0,b0 whole=v4,b0 whole=v5,b0 whole=v6,b0
+# WHOLE: function f8
+# WHOLE-NEXT: v1 whole number at b0: Proven
+# WHOLE-NEXT: v3 whole number at b0: Proven
+# WHOLE-NEXT: v7 whole number at b0: Proven
+# WHOLE-NEXT: v0 whole number at b0: Unknown
+# WHOLE-NEXT: v4 whole number at b0: Unknown
+# WHOLE-NEXT: v5 whole number at b0: Unknown
+# WHOLE-NEXT: v6 whole number at b0: Unknown
+# RUN(TRANSITIVE): integer-relations function=f9 at-most=v0,v2,-2,b2 at-most=v0,v2,-3,b2
+# TRANSITIVE: function f9
+# TRANSITIVE-NEXT: v0 <= v2 + -2 at b2: Proven
+# TRANSITIVE-NEXT: v0 <= v2 + -3 at b2: Unknown
+# RUN(NUMBERS): integer-relations function=f10 whole=v3,b2 at-least=v3,0,b2 at-least=v3,1,b2
+# NUMBERS: function f10
+# NUMBERS-NEXT: v3 whole number at b2: Proven
+# NUMBERS-NEXT: v3 >= 0 at b2: Proven
+# NUMBERS-NEXT: v3 >= 1 at b2: Unknown
+# RUN(HALF): integer-relations function=f11 whole=v3,b2
+# HALF: function f11
+# HALF-NEXT: v3 whole number at b2: Unknown
+# RUN(PRODUCTS): integer-relations function=f12 at-least=v5,1,b1 at-least=v7,0,b2
+# PRODUCTS: function f12
+# PRODUCTS-NEXT: v5 >= 1 at b1: Proven
+# PRODUCTS-NEXT: v7 >= 0 at b2: Unknown
+# RUN(FALSEEDGE): integer-relations function=f13 at-most=v0,v1,0,b1 at-most=v0,v1,-1,b1 at-most=v1,v0,0,b2
+# FALSEEDGE: function f13
+# FALSEEDGE-NEXT: v0 <= v1 + 0 at b1: Proven
+# FALSEEDGE-NEXT: v0 <= v1 + -1 at b1: Unknown
+# FALSEEDGE-NEXT: v1 <= v0 + 0 at b2: Unknown
+# RUN(LOOPBOUND): integer-relations function=f14 at-most=v3,v5,0,b2 at-most=v3,v5,0,b1
+# LOOPBOUND: function f14
+# LOOPBOUND-NEXT: v3 <= v5 + 0 at b2: Proven
+# LOOPBOUND-NEXT: v3 <= v5 + 0 at b1: Unknown
+# RUN(NEST): integer-relations function=f15 at-least=v15,0,b8
+# NEST: function f15
+# NEST-NEXT: v15 >= 0 at b8: Proven
+# RUN(NARROWED): integer-relations function=f16 at-least=v3,0,b3 whole=v3,b3 at-most=v8,v0,0,b3 at-most=v8,v1,0,b3 at-most=v6,v1,0,b2
+# NARROWED: function f16
+# NARROWED-NEXT: v3 >= 0 at b3: Proven
+# NARROWED-NEXT: v3 whole number at b3: Proven
+# NARROWED-NEXT: v8 <= v0 + 0 at b3: Proven
+# NARROWED-NEXT: v8 <= v1 + 0 at b3: Proven
+# NARROWED-NEXT: v6 <= v1 + 0 at b2: Unknown
+# RUN(HANDLER): integer-relations function=f17 at-most=v0,v1,-1,b2 at-most=v0,v1,-1,b4
+# HANDLER: function f17
+# HANDLER-NEXT: v0 <= v1 + -1 at b2: Proven
+# HANDLER-NEXT: v0 <= v1 + -1 at b4: Unknown
+# RUN(RANGE): integer-relations function=f0 at-most=v0,v1,0,b9
+# RANGE: error: bad argument at-most=v0,v1,0,b9
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="less" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f1 name="greater" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = Greater v1, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f2 name="greaterOrEqual" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = GreaterEq v1, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f3 name="inclusiveBoundAgainstSum" parameters=[{type=number}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: number, v1: i32):
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = LessEq v0, v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f4 name="joinLosesTest" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return
+}
+
+function f5 name="throughConversions" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32):
+    v2 = Upcast v0 castType=number
+    v3 = ToNumeric v2
+    v4 = Less v3, v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f6 name="constantBound" parameters=[{type=i32}, {type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: i32, v1: int[0, 100]):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f7 name="induction" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+
+function f8 name="wholeNumbers" parameters=[{type=number}, {type=i32}] results=[{type=number}] {
+  b0(v0: number, v1: i32):
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Double number=0.5
+    v5 = Add v3, v4
+    v6 = Div v1, v2
+    v7 = Sub v3, v2
+    Return v5
+}
+
+function f9 name="twoTests" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32, v2: i32):
+    v3 = Less v0, v1
+    Branch v3 -> taken b1(), notTaken b3()
+  b1():
+    v4 = Less v1, v2
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3():
+    Return
+}
+
+function f10 name="inductionOnNumbers" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = Integer integer=2
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v2
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+
+function f11 name="halfSteps" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = Double number=0.5
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v2
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+
+function f12 name="products" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=1
+    v3 = Integer integer=0
+    v4 = GreaterEq v0, v2
+    Branch v4 -> taken b1(), notTaken b3()
+  b1():
+    v5 = Mul v0, v0
+    v6 = GreaterEq v1, v3
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Mul v1, v1
+    Return
+  b3():
+    Return
+}
+
+function f13 name="falseEdgeWithNumber" parameters=[{type=number}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: number, v1: i32):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+
+function f14 name="boundDefinedInLoop" parameters=[{type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: int[0, 100]):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Add v0, v1
+    v6 = LessEq v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Integer integer=1
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+
+function f15 name="unrelatedEnclosingTests" parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number):
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Jump -> next b1(v4)
+  b1(v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b2(), notTaken b12()
+  b2():
+    Jump -> next b3(v4)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v1
+    Branch v11 -> taken b4(), notTaken b11()
+  b4():
+    Jump -> next b5(v4)
+  b5(v12):
+    LoopHint
+    v14 = Less v12, v2
+    Branch v14 -> taken b6(), notTaken b10()
+  b6():
+    Jump -> next b7(v4)
+  b7(v15):
+    LoopHint
+    v17 = Less v15, v3
+    Branch v17 -> taken b8(), notTaken b9()
+  b8():
+    v18 = Add v15, v5
+    Jump -> next b7(v18)
+  b9():
+    v19 = Add v12, v5
+    Jump -> next b5(v19)
+  b10():
+    v20 = Add v9, v5
+    Jump -> next b3(v20)
+  b11():
+    v21 = Add v6, v5
+    Jump -> next b1(v21)
+  b12():
+    Return
+}
+
+function f16 name="counterPassesNarrowingEdges" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Less v6, v1
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    Jump -> next b1(v10)
+  b4():
+    Return
+}
+
+function f17 name="handlerEdgeOfTestingBlock" parameters=[{type=i32}, {type=i32}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: i32, v1: i32, v2: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v3 = Call v2
+    v4 = Less v0, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3():
+    Return
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return
+}

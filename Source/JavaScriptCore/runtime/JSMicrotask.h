@@ -26,12 +26,14 @@
 #pragma once
 
 #include "JSCast.h"
+#include "JSPromise.h"
 #include "Microtask.h"
 #include "Structure.h"
 
 namespace JSC {
 
 class MicrotaskCallCache;
+class JSAsyncFromSyncIterator;
 class JSAsyncGenerator;
 class JSModuleRecord;
 class ThrowScope;
@@ -49,6 +51,12 @@ void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRec
 // %AsyncGeneratorPrototype%.return / .throw host functions to drive a non-busy generator.
 void asyncGeneratorResume(JSGlobalObject*, JSAsyncGenerator*, MicrotaskCallCache*);
 void asyncGeneratorAwaitReturn(JSGlobalObject*, JSAsyncGenerator*);
+
+void finishAsyncGeneratorBodyCall(JSGlobalObject*, JSAsyncGenerator*, JSValue value, JSValue error, MicrotaskCallCache*);
+// What a function that queueMicrotask has queued throws.
+void reportErrorOfMicrotask(JSGlobalObject*, JSValue exceptionOrValue);
+
+void asyncFromSyncIteratorContinueOrDone(JSGlobalObject*, VM&, JSAsyncFromSyncIterator*, JSValue result, JSPromise::Status, bool done, MicrotaskCallCache*);
 
 void enqueueAsyncGeneratorDriver(JSGlobalObject*, JSAsyncGenerator* iterator, JSObject* driver, JSValue resumeValue, MicrotaskCallCache*);
 

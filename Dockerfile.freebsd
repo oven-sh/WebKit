@@ -14,7 +14,9 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 # -g is added per-stage below for Debug only — with -O3 + tmpfs, debug info
 # OOMs the linux-x64-gh runner during Release builds (not seen on Android,
 # but FreeBSD's libc++ headers generate notably more DWARF).
-ARG DEBUG_CFLAGS="-g"
+# -fno-standalone-debug is what clang does for Linux by itself: a type is described in full only by the unit that defines
+# it, which lies in the same library. With FreeBSD's default a debug lane's package passes the 2 GiB that GitHub takes.
+ARG DEBUG_CFLAGS="-g -fno-standalone-debug"
 
 FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -72,6 +74,15 @@ ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 # compiler-rt, renamed for ABI compat) and clang's freebsd driver finds it
 # via --sysroot, so no resource-dir symlinking is needed (unlike Android).
 RUN echo 'int main(){return 0;}' | $CC --target=${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION} --sysroot=$FREEBSD_SYSROOT -fuse-ld=lld -xc - -o /tmp/t && file /tmp/t | grep -q FreeBSD
+
+# Node runs the generators of Source/JavaScriptCore/aot (>=23.6 strips types by default). The one of Dockerfile.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    node --version
 
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
@@ -165,6 +176,10 @@ COPY --from=build_icu /output /icu
 ENV WEBKIT_OUT_DIR=/webkitbuild
 
 ARG DEBUG_CFLAGS
+#
+# The programs ship without debug info: each of them would carry another copy of the library's.
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. Here it only prints its rows so far: the list of expected rows was made on Linux x86-64 with glibc.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$([ "${WEBKIT_RELEASE_TYPE}" = "Debug" ] && echo "${DEBUG_CFLAGS}" || echo "") && \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
@@ -204,21 +219,36 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ]; then \
+        PATH="$(dirname "$(readlink -f "$(command -v "$AR")")"):$PATH" python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || echo "find-structures-decoded-behind-calls.py: not yet fatal here"; \
+    fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    "$(echo "$AR" | sed s/llvm-ar/llvm-strip/)" --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \( -name "*.h" -o -name "*.def" -o -name "*.inc" \) -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \
     cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/ /output/include && \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
-    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore
+    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir /output/Source/JavaScriptCore/aot/builtins/generated && \
+    (cd $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/aot && cp AOTBuiltinEngineDeclarations.json AOTBuiltinFeatures.h AOTBuiltinIDs.h AOTBuiltinTableEngineBindings.cpp AOTBuiltinTableWords.h /output/Source/JavaScriptCore/aot/builtins/generated) && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete
 
 FROM scratch AS artifact
 

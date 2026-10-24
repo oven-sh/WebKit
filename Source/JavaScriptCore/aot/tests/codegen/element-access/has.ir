@@ -1,0 +1,354 @@
+# The test for an array element has code for each storage kind and for an unknown one, as a value and as the condition of a branch, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-12: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="valueInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    v7 = HasArrayElement v0, v2 arrayStorage=Int32
+    v8 = HasArrayElement v0, v3 arrayStorage=Int32
+    v9 = HasArrayElement v0, v4 arrayStorage=Int32 [keyIsIntegral]
+    v10 = NewArray v6, v7, v8, v9 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = HasArrayElement v0, v1 arrayStorage=Int32
+    v13 = HasArrayElement v0, v2 arrayStorage=Int32
+    v14 = HasArrayElement v0, v3 arrayStorage=Int32
+    v15 = HasArrayElement v0, v4 arrayStorage=Int32 [keyIsIntegral]
+    v16 = NewArray v12, v13, v14, v15 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = HasArrayElement v0, v1 arrayStorage=Int32
+    v18 = HasArrayElement v0, v2 arrayStorage=Int32
+    v19 = HasArrayElement v0, v3 arrayStorage=Int32
+    v20 = HasArrayElement v0, v4 arrayStorage=Int32 [keyIsIntegral]
+    v21 = NewArray v17, v18, v19, v20 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="valueInInt32Storage"
+# R-COUNT-12: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f1 name="valueInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    v7 = HasArrayElement v0, v2 arrayStorage=Double
+    v8 = HasArrayElement v0, v3 arrayStorage=Double
+    v9 = HasArrayElement v0, v4 arrayStorage=Double [keyIsIntegral]
+    v10 = NewArray v6, v7, v8, v9 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = HasArrayElement v0, v1 arrayStorage=Double
+    v13 = HasArrayElement v0, v2 arrayStorage=Double
+    v14 = HasArrayElement v0, v3 arrayStorage=Double
+    v15 = HasArrayElement v0, v4 arrayStorage=Double [keyIsIntegral]
+    v16 = NewArray v12, v13, v14, v15 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = HasArrayElement v0, v1 arrayStorage=Double
+    v18 = HasArrayElement v0, v2 arrayStorage=Double
+    v19 = HasArrayElement v0, v3 arrayStorage=Double
+    v20 = HasArrayElement v0, v4 arrayStorage=Double [keyIsIntegral]
+    v21 = NewArray v17, v18, v19, v20 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+# R-LABEL: function f1 name="valueInDoubleStorage"
+# R-COUNT-12: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f2 name="valueInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    v7 = HasArrayElement v0, v2 arrayStorage=Contiguous
+    v8 = HasArrayElement v0, v3 arrayStorage=Contiguous
+    v9 = HasArrayElement v0, v4 arrayStorage=Contiguous [keyIsIntegral]
+    v10 = NewArray v6, v7, v8, v9 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    v13 = HasArrayElement v0, v2 arrayStorage=Contiguous
+    v14 = HasArrayElement v0, v3 arrayStorage=Contiguous
+    v15 = HasArrayElement v0, v4 arrayStorage=Contiguous [keyIsIntegral]
+    v16 = NewArray v12, v13, v14, v15 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    v18 = HasArrayElement v0, v2 arrayStorage=Contiguous
+    v19 = HasArrayElement v0, v3 arrayStorage=Contiguous
+    v20 = HasArrayElement v0, v4 arrayStorage=Contiguous [keyIsIntegral]
+    v21 = NewArray v17, v18, v19, v20 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+# R-LABEL: function f2 name="valueInContiguousStorage"
+# R-COUNT-12: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f3 name="valueInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = HasArrayElement v0, v1
+    v7 = HasArrayElement v0, v2
+    v8 = HasArrayElement v0, v3
+    v9 = HasArrayElement v0, v4 [keyIsIntegral]
+    v10 = NewArray v6, v7, v8, v9 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = HasArrayElement v0, v1
+    v13 = HasArrayElement v0, v2
+    v14 = HasArrayElement v0, v3
+    v15 = HasArrayElement v0, v4 [keyIsIntegral]
+    v16 = NewArray v12, v13, v14, v15 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = HasArrayElement v0, v1
+    v18 = HasArrayElement v0, v2
+    v19 = HasArrayElement v0, v3
+    v20 = HasArrayElement v0, v4 [keyIsIntegral]
+    v21 = NewArray v17, v18, v19, v20 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+# R-LABEL: function f3 name="valueInOtherStorage"
+# R-COUNT-12: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f4 name="conditionInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b2 Fast
+# S: f4 b4 Compact
+# R-LABEL: function f4 name="conditionInInt32Storage"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f5 name="conditionInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b2 Fast
+# S: f5 b4 Compact
+# R-LABEL: function f5 name="conditionInDoubleStorage"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f6 name="conditionInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b2 Fast
+# S: f6 b4 Compact
+# R-LABEL: function f6 name="conditionInContiguousStorage"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f7 name="conditionInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: boolean):
+    v3 = HasArrayElement v0, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b2 Fast
+# S: f7 b4 Compact
+# R-LABEL: function f7 name="conditionInOtherStorage"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f8 name="conditionInInt32StorageAtNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: number, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b2 Fast
+# S: f8 b4 Compact
+# R-LABEL: function f8 name="conditionInInt32StorageAtNumber"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f9 name="conditionInDoubleStorageAtNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: number, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b2 Fast
+# S: f9 b4 Compact
+# R-LABEL: function f9 name="conditionInDoubleStorageAtNumber"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f10 name="conditionInContiguousStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: number, v2: boolean):
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b2 Fast
+# S: f10 b4 Compact
+# R-LABEL: function f10 name="conditionInContiguousStorageAtNumber"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement
+function f11 name="conditionInOtherStorageAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: boolean):
+    v3 = HasArrayElement v0, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1
+    Branch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b2 Fast
+# S: f11 b4 Compact
+# R-LABEL: function f11 name="conditionInOtherStorageAtNumber"
+# R-COUNT-3: boolean @Boolean = HasArrayElement
+# R-NOT: = HasArrayElement

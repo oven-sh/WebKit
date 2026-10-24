@@ -1,0 +1,40 @@
+# Every entry parameter has a node with the declared mask of its type (`:`, no test stands in front of it), in the order of the function's entry block; the rest parameter holds the function's rest array. A generator has a node for what it yields and one for what is sent into it.
+# RUN: valueflow-body f0 f1
+# CHECK: body f0: nodes=10 sites=0 edges=1 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1 : number
+# CHECK-NEXT: n2 parameter v2
+# CHECK-NEXT: n3 parameter v3
+# CHECK-NEXT: n4 parameter v4 : int[0, 4294967295]
+# CHECK-NEXT: n5 parameter v5
+# CHECK-NEXT: n6 parameter v6
+# CHECK-NEXT: n7 parameter v7 : Array
+# CHECK-NEXT: n8 result
+# CHECK-NEXT: n9 thrown
+# CHECK-NEXT: edge n7 -> n8
+# CHECK-NEXT: reached: seed n7 <- rest f0
+# CHECK-NEXT: body f1: nodes=6 sites=0 edges=2 edgesOnceReached=0 seeds=1 statements=1
+# CHECK-NEXT: n0 parameter v0 : function
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: n4 yielded
+# CHECK-NEXT: n5 sent
+# CHECK-NEXT: edge n1 -> n4
+# CHECK-NEXT: edge n5 -> n2
+# CHECK-NEXT: reached: seed n3 <- unknown
+# CHECK-NEXT: Coroutine
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="everyEntryParameter" flags=[HasRestParameter, HasThis, HasNewTarget, HasArgumentCount] captures=[{type=anything}, {type=number}] parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: anything, v3: anything, v4: int[0, 4294967295], v5: anything, v6: anything, v7: Array):
+    Return v7
+}
+function f1 name="generator" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    InitialYield
+    v3 = Yield v1
+    v4 = ResultAt v3
+    Return v4
+}

@@ -1,0 +1,419 @@
+# Virtual objects in fields of virtual objects: reads through two levels, a copied live range after a rare use, cycles
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations
+# RUN(ONCE): pass SinkAllocations
+# STATISTIC: TailsDuplicatedForSinking = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0]}
+layout L1 name="Rectangle" fields=[{key="size" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L1]}
+layout L2 name="Node" fields=[{key="next" declared={type=anything}}]
+layout L3 name="Owned" fields=[{key="owner" declared={type=object}}]
+layout L4 kind=Environment name="scope" fields=[{key="value" declared={type=anything}}, {key="self" declared={type=anything}}]
+layout L5 name="Three" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}]
+
+function f0 name="readThroughTwoLevels" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v2, v1 layout=L1 fields=[0, 1]
+    v4 = PropGet v3 key="size" receivers=[L1]
+    v5 = PropGet v4 key="w" receivers=[L0]
+    Return v5
+}
+# CHECK-LABEL: function f0 name="readThroughTwoLevels"
+# CHECK: b0(
+# CHECK-NEXT: v5: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v5
+
+function f1 name="heldObjectIsReplaced" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = NewObject -, v2, v1 layout=L1 fields=[0, 1]
+    PropSet v4, v3 key="size" receivers=[L1]
+    v6 = PropGet v4 key="size" receivers=[L1]
+    v7 = PropGet v6 key="w" receivers=[L0]
+    Return v7
+}
+# CHECK-LABEL: function f1 name="heldObjectIsReplaced"
+# CHECK: b0(
+# CHECK-NEXT: v7: anything = Upcast v1 castType=anything
+# CHECK-NEXT: Return v7
+
+function f2 name="innerObjectIsBuiltFirst" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Return v5
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="innerObjectIsBuiltFirst"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[inner2]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: [[outer2]]:{{*}}= NewObject -, [[inner2]], v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[outer2]]
+# CHECK-NOT: NewObject
+
+function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = Call v0, -, v3
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v5 = PropGet v3 key="name" receivers=[L1]
+    Return v5
+}
+# CHECK-LABEL: function f3 name="flatLiteralAfterRareUse"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[cell3]]:{{*}}= NewObject -, v0, v1 layout=L1 fields=[0, 1]
+# CHECK: = Call v0, -, [[cell3]]
+# CHECK: [[name3]]:{{*}}= GetSlot [[cell3]]{{*}}key="name"
+# CHECK: Jump -> next b3({{*}}[[name3]])
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b3({{*}}v1)
+# CHECK: b3({{*}}[[read3]]: anything):
+# CHECK-NEXT: v5: anything = Upcast [[read3]] castType=anything
+# CHECK-NEXT: Return v5
+# CHECK-NOT: Return
+
+function f4 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="size" receivers=[L1]
+    v7 = PropGet v6 key="w" receivers=[L0]
+    Return v7
+}
+# ONCE-LABEL: function f4 name="nestedLiteralAfterRareUse"
+# ONCE: b0(
+# ONCE-NEXT: v3:{{*}}= NewObject -, v0 layout=L0
+# ONCE-NEXT: v4:{{*}}= NewObject -, v3, v1 layout=L1
+# ONCE: b1() frequency=Rare:
+# ONCE-NEXT: = Call v0, -, v4
+# ONCE-NEXT: Jump -> next [[copy4]]()
+# ONCE: b2():
+# ONCE-NEXT: Jump -> next b3()
+# ONCE: b3():
+# ONCE: Return
+# ONCE: [[copy4]]():
+# ONCE-NEXT: [[size4]]:{{*}}= PropGet v4 key="size"
+# ONCE-NEXT: [[w4]]:{{*}}= PropGet [[size4]] key="w"
+# ONCE-NEXT: Return [[w4]]
+# ONCE-LABEL: function f5
+# CHECK-LABEL: function f4 name="nestedLiteralAfterRareUse"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[inner4]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: [[outer4]]:{{*}}= NewObject -, [[inner4]], v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[outer4]]
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: v7: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v7
+# CHECK-NOT: NewObject
+# CHECK: = PropGet [[outer4]] key="size"
+
+function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="size" receivers=[L1]
+    v7 = Integer integer=1
+    v8 = ElemGet v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f5 name="arrayInFieldAfterRareUse"
+# CHECK: b0(
+# CHECK-NOT: NewArray
+# CHECK-NOT: NewObject
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[inner5]]:{{*}}= NewArray v0, v1 contents=anything
+# CHECK-NEXT: [[outer5]]:{{*}}= NewObject -, [[inner5]], v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[outer5]]
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NOT: ElemGet
+# CHECK: v8: anything = Upcast v1 castType=anything
+# CHECK-NEXT: Return v8
+# CHECK-NOT: NewArray
+# CHECK-NOT: NewObject
+
+function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewClosure v0 function=f12
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="size" receivers=[L1]
+    v7 = IsClosureOf v6 function=f12
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8):
+    v9 = GetCapture v8 function=f12 index=0
+    Return v9
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f6 name="closureInFieldAfterRareUse"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[inner6]]:{{*}}= NewClosure v0 function=f12
+# CHECK-NEXT: [[outer6]]:{{*}}= NewObject -, [[inner6]], v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[outer6]]
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NOT: IsClosureOf
+# CHECK: Jump -> next b4()
+# CHECK: b4():
+# CHECK-NEXT: v9: anything = Upcast v0 castType=anything
+# CHECK-NOT: NewClosure
+# CHECK-NOT: NewObject
+
+function f7 name="liveRangeIsLoop" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v7 = PropGet v4 key="size" receivers=[L1]
+    v8 = PropGet v7 key="w" receivers=[L0]
+    v9 = Call v8
+    v10 = ToBoolean v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b4():
+    Return v9
+}
+# CHECK-LABEL: function f7 name="liveRangeIsLoop"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: v4:{{*}}= NewObject -, v3, v1 layout=L1 fields=[0, 1]
+# CHECK: LoopHint
+# CHECK-NOT: LoopHint
+
+function f8 name="cycleBuiltFromNode" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L2
+    v3 = NewObject -, v2 layout=L3 fields=[0]
+    PropDefine v2, v3 key="next" receivers=[L2]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v2
+    Return v5
+  b2():
+    Return v0
+}
+# The allocation lists "owner" and undefined is no object, so "owner" stays listed and the node is built first. "next" takes any value, so undefined holds its place.
+# CHECK-LABEL: function f8 name="cycleBuiltFromNode"
+# CHECK: b0(
+# CHECK-NEXT: Branch v1
+# CHECK: b1():
+# CHECK-NEXT: [[placeholder8]]: undefined = Undefined
+# CHECK-NEXT: [[node8]]:{{*}}= NewObject -, [[placeholder8]] layout=L2 fields=[0]
+# CHECK-NEXT: [[owned8]]:{{*}}= NewObject -, [[node8]] layout=L3 fields=[0]
+# CHECK-NEXT: PutSlotOrAdd [[node8]], [[node8]], [[owned8]] key="next" receivers=[L2] level=Proven
+# CHECK-NEXT: = Call v0, -, [[node8]]
+
+function f9 name="cycleBuiltFromOwned" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L2
+    v3 = NewObject -, v2 layout=L3 fields=[0]
+    PropDefine v2, v3 key="next" receivers=[L2]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v3
+    Return v5
+  b2():
+    Return v0
+}
+# "next" takes any value, so undefined holds its place.
+# CHECK-LABEL: function f9 name="cycleBuiltFromOwned"
+# CHECK: b0(
+# CHECK-NEXT: Branch v1
+# CHECK: b1():
+# CHECK-NEXT: [[placeholder9]]: undefined = Undefined
+# CHECK-NEXT: [[node9]]:{{*}}= NewObject -, [[placeholder9]] layout=L2 fields=[0]
+# CHECK-NEXT: [[owned9]]:{{*}}= NewObject -, [[node9]] layout=L3 fields=[0]
+# CHECK-NEXT: PutSlotOrAdd [[node9]], [[node9]], [[owned9]] key="next" receivers=[L2] level=Proven
+# CHECK-NEXT: = Call v0, -, [[owned9]]
+
+function f10 name="cycleIsOnlyRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L2
+    v2 = NewObject -, v1 layout=L3 fields=[0]
+    PropDefine v1, v2 key="next" receivers=[L2]
+    v4 = PropGet v1 key="next" receivers=[L2]
+    v5 = PropGet v4 key="owner" receivers=[L3]
+    v6 = StrictEq v5, v1
+    Return v6
+}
+# CHECK-LABEL: function f10 name="cycleIsOnlyRead"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: [[same10]]: true = Boolean boolean=true
+# CHECK-NEXT: v6:{{*}}= Upcast [[same10]] castType=
+
+function f11 name="cycleWithoutPlaceholderIsNeverBuilt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L3
+    v3 = NewObject -, v2 layout=L3 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropDefine v2, v3 key="owner" receivers=[L3]
+    Return v0
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f11 name="cycleWithoutPlaceholderIsNeverBuilt"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropDefine
+
+function f12 name="callback" captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f13 name="readsScope" captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
+    Return v1
+}
+
+function f14 name="environmentIsBuiltBeforeItsClosure" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L4 fields=[0]
+    v3 = NewClosure v2 function=f13
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f14 name="environmentIsBuiltBeforeItsClosure"
+# CHECK: b0(
+# CHECK-NEXT: Branch v1
+# CHECK: b1():
+# CHECK-NEXT: [[scope14]]: env L4 = NewObject -, v0 layout=L4 fields=[0]
+# CHECK-NEXT: [[closure14]]:{{*}}= NewClosure [[scope14]] function=f13
+# CHECK-NEXT: = Call v0, -, [[closure14]]
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK-NOT: NewClosure
+
+function f15 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L4 fields=[0]
+    v3 = NewClosure v2 function=f13
+    PutEnvironmentField v2, v3 layout=L4 field=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v3
+    Return v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f15 name="closureInItsOwnEnvironment"
+# CHECK: b0(
+# CHECK-NEXT: Branch v1
+# CHECK: b1():
+# CHECK-NEXT: [[scope15]]: env L4 = NewObject -, v0 layout=L4 fields=[0]
+# CHECK-NEXT: [[closure15]]:{{*}}= NewClosure [[scope15]] function=f13
+# CHECK-NEXT: PutEnvironmentField [[scope15]], [[closure15]] layout=L4 field=1
+# CHECK-NEXT: = Call v0, -, [[closure15]]
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK-NOT: NewClosure
+
+function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean, v3: anything):
+    v4 = NewObject layout=L5
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Jump -> next b2()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v6 = NewObject -, v4, v3 layout=L5 fields=[0, 1]
+    Jump -> next b5(v6)
+  b4():
+    v7 = NewObject -, v3, v4 layout=L5 fields=[2, 1]
+    Jump -> next b5(v7)
+  b5(v8):
+    v9 = GetSlotOrUndefined v8 key="z" receivers=[L5] level=Proven
+    v10 = Call v0, -, v9
+    Return
+}
+# CHECK-LABEL: function f16 name="heldInDifferentFieldsOfTwoHolders"
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[early16]]:{{*}}= NewObject layout=L5
+# CHECK-NEXT: = Call v0, -, [[early16]]
+# CHECK-NOT: fields=[
+# CHECK: = Call v0, -, v9
+# CHECK-NOT: fields=[
+
+function f17 name="hardEdgeWouldCloseCycle" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure v0 function=f12
+    v3 = NewArray v2 contents=anything
+    v4 = NewArray v3 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=0
+    ElemSet v3, v5, v4 mode=Strict
+    Return v0
+  b2():
+    Return v0
+}
+# An element is listed by its array, so the store that would close the cycle builds what it stores.
+# CHECK-LABEL: function f17 name="hardEdgeWouldCloseCycle"
+# CHECK: b1():
+# CHECK: [[inner17]]:{{*}}= NewArray {{*}} contents=anything
+# CHECK-NEXT: [[outer17]]:{{*}}= NewArray [[inner17]] contents=anything
+# CHECK: ElemSet [[inner17]], {{*}}, [[outer17]]
+# CHECK: b2():
+# CHECK-NOT: NewArray

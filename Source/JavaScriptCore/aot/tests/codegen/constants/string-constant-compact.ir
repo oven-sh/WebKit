@@ -1,0 +1,43 @@
+# In compact code a string constant is one call of the stub that finds or creates its cell: the word of the cell is not loaded and tested in place
+# FORM: Selected
+# OPTIONS: heat=everything-is-cold
+# RUN: generate-code calls
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="inNormalCode" results=[{type=anything}] {
+  b0():
+    v0 = String string="some text"
+    Return v0
+}
+function f1 name="onRarePath" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = String string="some text"
+    Return v1
+  b2():
+    v2 = Undefined
+    Return v2
+}
+function f2 name="onUnlikelyPath" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v1 = String string="some text"
+    Return v1
+  b2():
+    v2 = Undefined
+    Return v2
+}
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub CreateConstant.String x1
+# CHECK: f1: size={{*}}
+# CHECK-NEXT: stub CreateConstant.String x1
+# CHECK: f2: size={{*}}
+# CHECK-NEXT: stub CreateConstant.String x1
+# X64: f0: size=11 frame
+# X64-NEXT: f1: size=21 frame
+# X64-NEXT: f2: size=21 frame

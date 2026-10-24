@@ -1,0 +1,86 @@
+# No use of an Unspecified value is reached, and an operand of the call of a shared function would be one: a cold site that takes a value which is Unspecified on some path stays where it is
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}]
+
+function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean, v2: L0, v3: anything, v4: L0):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    v5 = Unspecified valueType=L0
+    Jump -> next b3(v5)
+  b3(v6: L0):
+    Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
+  b4() frequency=Rare:
+    v7 = String string="bad"
+    v8 = PropGet v3 key="logger"
+    v9 = CallMethod v8, v7, v6 key="report"
+    Return v9
+  b5() frequency=Rare:
+    v10 = String string="bad"
+    v11 = PropGet v3 key="logger"
+    v12 = CallMethod v11, v10, v6 key="report"
+    Return v12
+  b6() frequency=Rare:
+    v13 = String string="bad"
+    v14 = PropGet v3 key="logger"
+    v15 = CallMethod v14, v13, v6 key="report"
+    Return v15
+  b7() frequency=Rare:
+    v16 = String string="bad"
+    v17 = PropGet v3 key="logger"
+    v18 = CallMethod v17, v16, v6 key="report"
+    Return v18
+  b8():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-4: = CallMethod
+# CHECK-NOT: CallDirect
+
+function f1 name="inputSpecifiedOnBothPaths" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean, v2: L0, v3: anything, v4: L0):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5: L0):
+    Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
+  b4() frequency=Rare:
+    v6 = String string="bad"
+    v7 = PropGet v3 key="logger"
+    v8 = CallMethod v7, v6, v5 key="report"
+    Return v8
+  b5() frequency=Rare:
+    v9 = String string="bad"
+    v10 = PropGet v3 key="logger"
+    v11 = CallMethod v10, v9, v5 key="report"
+    Return v11
+  b6() frequency=Rare:
+    v12 = String string="bad"
+    v13 = PropGet v3 key="logger"
+    v14 = CallMethod v13, v12, v5 key="report"
+    Return v14
+  b7() frequency=Rare:
+    v15 = String string="bad"
+    v16 = PropGet v3 key="logger"
+    v17 = CallMethod v16, v15, v5 key="report"
+    Return v17
+  b8():
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallMethod
+# CHECK-COUNT-4: = CallDirect v3, v5 function=[[body]]
+# CHECK-NOT: CallMethod
+# CHECK-LABEL: function f2 name="" module=m0 role=OutlinedBody
+# CHECK: = CallMethod

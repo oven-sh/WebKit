@@ -1,0 +1,29 @@
+# A locked prototype takes no key that the language makes of undefined, null, true or false. A store by such a key names one property, so at the top of the entry module it is an error. A key that may be something else is a warning, and an ordinary new name is stored
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 2
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    v1 = Integer integer=1
+    v2 = Undefined
+    ElemSet v0, v2, v1 mode=Strict @10
+    v4 = Boolean boolean=true
+    ElemSet v0, v4, v1 mode=Strict @20
+    PropSet v0, v1 key="nothing" mode=Strict @30
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName] @40
+    v9 = Call v8 @50
+    v10 = TypeTest v9 testedType=undefined|null @60
+    Branch v10 -> taken b1(| 0), notTaken b2()
+  b1(v11):
+    ElemSet v0, v11, v1 mode=Strict @70
+    Jump -> next b2()
+  b2():
+    v13 = Builtin builtin=Promise
+    ElemSet v13, v2, v1 mode=Strict @80
+    Return
+}

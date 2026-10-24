@@ -1,0 +1,67 @@
+# for (const item of items), one loop for every kind of iteration: the array is there only where the kind says so, and is whatever the register holds otherwise.
+# In the loop the test of the array's storage stands behind the switch on the kind. On the edge that enters the loop it would read through a value that may not be there, so it stays at its use.
+# The same loop over an array that is always there has its test on the entering edge
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v9:v10
+# RUN(F1): test-placement function=f1 site=v9:v10
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="arrayOnlyForOneKind" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Jump -> next b3(v2, v0)
+  b2():
+    v3 = Integer integer=1
+    v4 = Unspecified valueType=Array
+    Jump -> next b3(v3, v4)
+  b3(v5: int[0, 1], v6: Array):
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Switch v5 cases=[0] -> case b5(), otherwise b6()
+  b5():
+    v8 = Integer
+    v9 = ElemGet v6, v8
+    Branch v1 -> taken b4(), notTaken b6()
+  b6():
+    Switch v5 cases=[0] -> case b7(), otherwise b8()
+  b7():
+    v10 = HasArrayStorage v6 arrayStorage=Contiguous
+    Return
+  b8():
+    Return
+}
+# F0: test HasArrayStorage v6 arrayStorage=Contiguous before v9
+# F0-NOT: on b3
+
+function f1 name="arrayForEveryKind" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Jump -> next b3(v2, v0)
+  b2():
+    v3 = Integer integer=1
+    v4 = Upcast v0 castType=Array
+    Jump -> next b3(v3, v4)
+  b3(v5: int[0, 1], v6: Array):
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Switch v5 cases=[0] -> case b5(), otherwise b6()
+  b5():
+    v8 = Integer
+    v9 = ElemGet v6, v8
+    Branch v1 -> taken b4(), notTaken b6()
+  b6():
+    Switch v5 cases=[0] -> case b7(), otherwise b8()
+  b7():
+    v10 = HasArrayStorage v6 arrayStorage=Contiguous
+    Return
+  b8():
+    Return
+}
+# F1: test HasArrayStorage v0 arrayStorage=Contiguous on b3.0

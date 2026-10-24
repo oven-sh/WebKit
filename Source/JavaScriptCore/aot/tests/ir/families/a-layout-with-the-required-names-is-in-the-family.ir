@@ -1,0 +1,38 @@
+# interface Named { name: string; id: number; note?: string }  class Base { name }  class Derived extends Base { id }  namespace Registry { export let name, id }
+# The family of a type holds every layout that has all the names the type requires, whatever brings an object there: no layout here has a supertype.
+# A plain object has them, with names of its own beside them (WithMore) or with both of them optional (BothOptional). An instance has its own fields and those of its bases (Derived).
+# A namespace or enum object has its members (Registry). The optional `note` of Named is not asked for: none of them has it.
+# Beside them: a layout that lacks one required name stays out (Base and OnlyName have no `id`, OnlyNote has nothing but the optional name).
+# Only a type takes layouts by name. A class and a namespace do not: an object with the names of Base is no Base
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Named" fields=[{key="name" declared={type=string} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=string}}]
+layout L1 name="WithMore" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Base" constructor=f1 fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+layout L3 kind=Instance name="Derived" base=L2 constructor=f2 fields=[{key="id" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L4 kind=Container name="Registry" module=m0 fields=[{key="name" declared={type=string}}, {key="id" declared={type=number}}]
+layout L5 name="OnlyName" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+layout L6 name="BothOptional" fields=[{key="name" declared={type=string}}, {key="id" declared={type=number}}]
+layout L7 name="OnlyNote" fields=[{key="note" declared={type=string}}]
+# CHECK: L0: members [L0, L1, L3, L4, L6]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: L2: members [L2, L3]
+# CHECK-NEXT: L3: members [L3]
+# CHECK-NEXT: L4: members [L4]
+# All but OnlyNote have a `name`.
+# CHECK-NEXT: L5: members [L0, L1, L2, L3, L4, L5, L6]
+# CHECK-NEXT: L6: members [L6]
+# CHECK-NEXT: L7: members [L7]
+
+function f0 name="take" parameters=[{type=L0}, {type=undefined|L0}, {type=Array<L0>}, {type=L2}] results=[{type=anything}] {
+  b0(v0: L0, v1: undefined|L0, v2: Array<L0>, v3: L2):
+    Return
+}
+# READ-LABEL: function f0 name="take"
+# READ: parameters=[{type=L0|L1|L3|L4|L6}, {type=undefined|L0|L1|L3|L4|L6}, {type=Array<L0|L1|L3|L4|L6>}, {type=L2|L3}]
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L2 flags=[IsFromCompiler]}]
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=L3 flags=[IsFromCompiler]}]

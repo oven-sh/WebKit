@@ -1,0 +1,75 @@
+# The type of a NarrowByField loses a member only if the member's field keeps values of its type: the position is more than expected, the slot is always filled,
+# and the field is never deleted, never redefined and never stored with another type. A field that left its slot is read by name in the generic copy, and that copy
+# may come back into typed code between the read and the test. What is expected of the result leaves such a member out all the same
+# FORM: Prepared
+# RUN: result-types
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Tested" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="KeepsItsValues" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L2 name="OnlyExpected" fields=[{key="kind" declared={type=2 flags=[IsExpected]} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L3 name="NotAlwaysFilled" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L4 name="MayBeDeleted" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L5 name="MayBeRedefined" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}]
+layout L6 name="MayBeStoredWithAnotherType" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}]
+layout L7 kind=Instance name="BaseStoredWithAnotherType" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}]
+layout L8 kind=Instance name="InheritsTheField" fields=[{key="own" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=2} flags=[IsRequired, IsInherited] originLayout=L7 originField=0}] ownFieldCount=1 flow={baseState=Layout base=L7}
+layout L9 name="TestedBeforeFlow" fields=[{key="kind" declared={type=1} flags=[IsRequired]}]
+layout L10 name="OtherBeforeFlow" fields=[{key="kind" declared={type=2} flags=[IsRequired]}]
+
+# Of the six members that cannot hold 1, only the one that lacks nothing goes
+function f0 name="oneConditionMissingInEach" parameters=[{type=L0|L1|L2|L3|L4|L5|L6}] results=[{type=undefined}] {
+  b0(v0: L0|L1|L2|L3|L4|L5|L6):
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v0: L0|L1|L2|L3|L4|L5|L6
+# CHECK-NEXT: v1: anything ~ int[1, 2]
+# CHECK: v4: 1
+# CHECK-NEXT: v5: L0|L2|L3|L4|L5|L6 ~ L0
+# CHECK-NOT: |L
+
+function f1 name="inheritedFieldIsJudgedWhereItIsDeclared" parameters=[{type=L0|L7|L8}] results=[{type=undefined}] {
+  b0(v0: L0|L7|L8):
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v4: 1
+# CHECK-NEXT: v5: L0|L7|L8 ~ L0
+# CHECK-NOT: |L
+
+# No field has these facts until the flow analysis has run: until then the cast proves only that the holder is neither undefined nor null
+function f2 name="beforeTheFlowAnalysis" parameters=[{type=undefined|L9|L10}] results=[{type=undefined}] {
+  b0(v0: undefined|L9|L10):
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v0: undefined|L9|L10
+# CHECK-NEXT: v1: anything ~ int[1, 2]
+# CHECK: v4: 1
+# CHECK-NEXT: v5: L9|L10 ~ L9
+# CHECK-NOT: |L

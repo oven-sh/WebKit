@@ -1,0 +1,182 @@
+# A protocol asks for its own keys on the chain of its operand: it runs nothing, the functions and built-ins it finds, or unknown code (?) where a lookup is not proven
+# FORM: Prepared
+# RUN(KEYS): members-run-by OwnKeys f0
+# RUN(VALUES): members-run-by OwnValues f0
+# RUN(PRIMITIVE): members-run-by ToPrimitive f0
+# RUN(THENABLE): members-run-by Thenable f0
+# RUN(ITERATE): members-run-by Iterate f0
+# RUN(SPECIES): members-run-by Species f0
+# RUN(JSON): members-run-by ToJSON f0
+# RUN(INSTANCE): members-run-by HasInstance f0
+# RUN(CHAIN): members-run-by PrototypeChain f0
+# RUN(READ): members-run-by Named:prototype f0
+# RUN(READTHEN): members-run-by Named:then f0
+# RUN(CALLED): members-run-by CallsNamed:then f0
+# RUN(UNNAMED): members-run-by Named f0
+# RUN(UNNAMEDCALL): members-run-by CallsNamed f0
+# RUN(BOTH): members-run-by ToPrimitive+Thenable f0
+# RUN(BADPROTOCOL): members-run-by Sideways f0
+# RUN(BADNAME): members-run-by Named:nosuchmember f0
+# RUN(BADLIST): members-run-by Thenable:then f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 kind=Instance name="Cache" constructor=f1 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="get" function=f7 mutability=Fixed}]}
+layout L2 kind=Instance name="Amount" constructor=f2 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="valueOf" function=f8 mutability=Fixed}]}
+layout L3 kind=Instance name="LazyThen" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="then" kind=Getter function=f9 mutability=Fixed}]}
+layout L4 kind=Instance name="Deferred" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="then" function=f10 mutability=Fixed}]}
+layout L5 kind=Instance name="Report" constructor=f5 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="toJSON" function=f11 mutability=Fixed}]}
+layout L6 kind=Instance name="Range" constructor=f6 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f12 mutability=Fixed}]}
+layout L7 name="Printer" fields=[{key="toString" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L8 name="MayGainNames" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, ChangePrototype]}
+layout L9 name="GainsListedNames" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, ChangePrototype] addedKeysAreComplete=true}
+layout L10 name="MayChangePrototype" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty]}
+layout L11 kind=Instance name="Matcher" constructor=f13 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f14 mutability=Fixed}]}
+function f0 name="operands" parameters=[{type=number}, {type=string}, {type=bigint}, {type=object}, {type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}, {type=L7}, {type=L8}, {type=L9}, {type=L10}, {type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}, {type=builtin(Promise)}, {type=f1}, {type=function}, {type=f13}, {type=BoundFunction<pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: number, v1: string, v2: bigint, v3: object, v4: L0, v5: L1, v6: L2, v7: L3, v8: L4, v9: L5, v10: L6, v11: L7, v12: L8, v13: L9, v14: L10, v15: Array<number>, v16: Array<number, pristine[Storage, Names]>, v17: builtin(Promise), v18: f1, v19: function, v20: f13, v21: BoundFunction<pristine[Storage, Names]>):
+    Return
+}
+function f1 name="Cache" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="LazyThen" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="Deferred" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="Report" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="Range" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f7 name="get" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f8 name="valueOf" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f9 name="then" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f10 name="then" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f11 name="toJSON" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f12 name="iterator" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f13 name="Matcher" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11
+function f14 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+
+# KEYS: v0: none
+# KEYS: v3: ?
+# KEYS-NEXT: v4: none
+# KEYS-NEXT: v5: none
+# KEYS: v12: none
+# KEYS: v15: ?
+
+# VALUES: v0: none
+# VALUES: v3: ?
+# VALUES-NEXT: v4: none
+# VALUES-NEXT: v5: none
+# VALUES: v12: ?
+# VALUES-NEXT: v13: ?
+# VALUES-NEXT: v14: none
+# VALUES-NEXT: v15: ?
+
+# PRIMITIVE: v0: none
+# PRIMITIVE-NEXT: v1: none
+# PRIMITIVE: v3: ?
+# PRIMITIVE-NEXT: v4: ObjectPrototypeToString, ObjectPrototypeValueOf
+# PRIMITIVE-NOT: ?
+# PRIMITIVE: v5: ObjectPrototypeToString, ObjectPrototypeValueOf
+# PRIMITIVE-NOT: ?
+# PRIMITIVE: v6: f8, ObjectPrototypeToString
+# PRIMITIVE-NOT: ObjectPrototypeValueOf
+# PRIMITIVE-NOT: ?
+# PRIMITIVE: v7: ObjectPrototypeToString, ObjectPrototypeValueOf
+# PRIMITIVE: v11: ObjectPrototypeValueOf, ?
+# PRIMITIVE-NEXT: v12: ?
+# PRIMITIVE-NEXT: v13: ObjectPrototypeToString, ObjectPrototypeValueOf
+# PRIMITIVE-NEXT: v14: ?
+# PRIMITIVE-NEXT: v15: ?
+
+# THENABLE: v0: none
+# THENABLE: v3: ?
+# THENABLE-NEXT: v4: none
+# THENABLE-NEXT: v5: none
+# THENABLE-NEXT: v6: none
+# THENABLE-NEXT: v7: f9
+# THENABLE-NOT: ?
+# THENABLE: v8: none
+# THENABLE: v12: ?
+# THENABLE-NEXT: v13: none
+# THENABLE-NEXT: v14: ?
+# THENABLE-NEXT: v15: ?
+# THENABLE-NEXT: v16: none
+
+# ITERATE: v0: none
+# ITERATE-NEXT: v1: none
+# ITERATE: v3: ?
+# ITERATE-NEXT: v4: none
+# ITERATE-NEXT: v5: none
+# ITERATE: v10: ?
+# ITERATE-NEXT: v11: none
+# ITERATE: v15: ?
+# ITERATE-NEXT: v16: ?
+
+# SPECIES: v0: none
+# SPECIES: v3: ?
+# SPECIES-NEXT: v4: ?
+# SPECIES: v15: ?
+
+# JSON: v0: none
+# JSON-NEXT: v1: none
+# JSON-NEXT: v2: ?
+# JSON-NEXT: v3: ?
+# JSON-NEXT: v4: none
+# JSON-NEXT: v5: none
+# JSON: v9: f11
+# JSON-NOT: ?
+# JSON: v10: none
+# JSON: v12: ?
+
+# INSTANCE: v0: none
+# INSTANCE: v3: ?
+# INSTANCE-NEXT: v4: none
+# INSTANCE: v17: none
+# INSTANCE-NEXT: v18: none
+# INSTANCE-NEXT: v19: ?
+# INSTANCE-NEXT: v20: f14
+# INSTANCE-NOT: ?
+# INSTANCE: v21: ?
+
+# CHAIN: v0: none
+# CHAIN: v3: ?
+# CHAIN-NEXT: v4: none
+# CHAIN-NEXT: v5: none
+# CHAIN: v12: none
+# CHAIN-NEXT: v13: none
+# CHAIN-NEXT: v14: ?
+# CHAIN-NEXT: v15: ?
+
+# READ: v3: ?
+# READ-NEXT: v4: none
+# READ: v17: none
+# READ-NEXT: v18: none
+# READ-NEXT: v19: ?
+# READ-NEXT: v20: none
+# READTHEN: v4: none
+# READTHEN: v7: f9
+# READTHEN-NOT: ?
+# READTHEN: v8: none
+
+# CALLED: v4: none
+# CALLED: v7: f9, ?
+# CALLED-NEXT: v8: f10
+# CALLED-NOT: ?
+# CALLED: v9: none
+
+# UNNAMED: v3: ?
+# UNNAMED-NEXT: v4: ?
+# UNNAMEDCALL: v3: ?
+# UNNAMEDCALL-NEXT: v4: ?
+
+# BOTH: v0: none
+# BOTH: v3: ?
+# BOTH-NEXT: v4: ObjectPrototypeToString, ObjectPrototypeValueOf
+# BOTH: v7: f9, ObjectPrototypeToString, ObjectPrototypeValueOf
+# BOTH-NOT: ?
+# BOTH: v8: ObjectPrototypeToString, ObjectPrototypeValueOf
+
+# BADPROTOCOL-NOT: function f0
+# BADPROTOCOL: error: bad argument Sideways
+# BADPROTOCOL-NOT: v0
+# BADNAME-NOT: function f0
+# BADNAME: error: bad argument Named:nosuchmember
+# BADNAME-NOT: v0
+# BADLIST: error: bad argument Thenable:then
+# BADLIST-NOT: v0

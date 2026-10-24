@@ -1,0 +1,20 @@
+# A range that is only passed to parseInt is parsed in the base string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-parse-int" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = CallBuiltin -, v7 overload=ParseInt/0
+    Return v8
+}
+# CHECK-NOT: = Substring
+# CHECK: [[result]]: number = StringRangeParseInt v0, v5, v6
+# CHECK-NEXT: Return [[result]]
+# CHECK-NOT: overload=ParseInt

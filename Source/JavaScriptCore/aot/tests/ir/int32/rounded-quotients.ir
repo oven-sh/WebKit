@@ -1,0 +1,186 @@
+# A type has no bounds for fractions. The proof follows a quotient of integers to where it is rounded or compared, and knows when a rounding can give -0
+# FORM: AsRead
+# RUN: int32-bounds
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Variable
+function f0 name="half" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="floor"
+    v5 = Convert v4 declared={type=builtin(MathFloor) flags=[IsExpected]}
+    v6 = Integer integer=2
+    v7 = Div v0, v6
+    v8 = Call v5, v3, v7
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v9
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v9: integers [-1073741824, 1073741824]
+function f1 name="halfRoundedUp" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="ceil"
+    v5 = Convert v4 declared={type=builtin(MathCeil) flags=[IsExpected]}
+    v6 = Integer integer=2
+    v7 = Div v0, v6
+    v8 = Call v5, v3, v7
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v9
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v9: unknown AnyNumber
+function f2 name="thirdRoundedUp" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="ceil"
+    v5 = Convert v4 declared={type=builtin(MathCeil) flags=[IsExpected]}
+    v6 = Integer integer=1023
+    v7 = BitAnd v0, v6
+    v8 = Integer integer=3
+    v9 = Div v7, v8
+    v10 = Call v5, v3, v9
+    v11 = Convert v10 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v11
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v11: integers [0, 341]
+function f3 name="quarterRounded" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="round"
+    v5 = Convert v4 declared={type=builtin(MathRound) flags=[IsExpected]}
+    v6 = Integer integer=1023
+    v7 = BitAnd v0, v6
+    v8 = Integer integer=4
+    v9 = Div v7, v8
+    v10 = Call v5, v3, v9
+    v11 = Convert v10 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v11
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v11: integers [0, 256]
+function f4 name="negativeThird" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="trunc"
+    v5 = Convert v4 declared={type=builtin(MathTrunc) flags=[IsExpected]}
+    v6 = Integer integer=1023
+    v7 = BitAnd v0, v6
+    v8 = Integer integer=3
+    v9 = Add v7, v8
+    v10 = Negate v9
+    v11 = Div v10, v8
+    v12 = Call v5, v3, v11
+    v13 = Convert v12 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v13
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v13: integers [-342, -1]
+function f5 name="eitherQuotient" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32, v1: i32):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Math" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
+    v5 = PropGet v4 key="floor"
+    v6 = Convert v5 declared={type=builtin(MathFloor) flags=[IsExpected]}
+    v7 = Integer
+    v8 = Greater v0, v7
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v9):
+    v10 = Integer integer=2
+    v11 = Div v9, v10
+    Jump -> next b3(v11)
+  b2(v12):
+    v13 = Integer integer=3
+    v14 = Div v1, v13
+    Jump -> next b3(v14)
+  b3(v15):
+    v16 = Call v6, v4, v15
+    v17 = Convert v16 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v17
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v17: integers [-715827883, 1073741824]
+function f6 name="quotientByPossibleZero" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32, v1: i32):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Math" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
+    v5 = PropGet v4 key="floor"
+    v6 = Convert v5 declared={type=builtin(MathFloor) flags=[IsExpected]}
+    v7 = Div v0, v1
+    v8 = Call v6, v4, v7
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v9
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v9: unknown AnyNumber
+function f7 name="quotientByNegativeDivisor" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Math" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Math) flags=[IsExpected]}
+    v4 = PropGet v3 key="floor"
+    v5 = Convert v4 declared={type=builtin(MathFloor) flags=[IsExpected]}
+    v6 = Integer integer=-2
+    v7 = Div v0, v6
+    v8 = Call v5, v3, v7
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v9
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v9: unknown AnyNumber
+function f8 name="sumWithQuotient" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v4
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: v4: reals [-1073741823, 1073741825]
+function f9 name="wrappedQuotient" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: i32):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = Integer
+    v4 = BitOr v2, v3
+    v5 = Convert v4 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v5
+}
+# CHECK-LABEL: function f9
+# CHECK-NEXT: v5: integers [-2147483648, 2147483647]
+function f10 name="belowHalf" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = Convert v1 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = Integer integer=2
+    v5 = Div v0, v4
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v7):
+    v8 = Increment v7
+    v9 = Convert v8 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v9)
+  b3(v10):
+    Return v10
+}
+# CHECK-LABEL: function f10
+# CHECK: v9: integers [-2147483647, 1073741824]

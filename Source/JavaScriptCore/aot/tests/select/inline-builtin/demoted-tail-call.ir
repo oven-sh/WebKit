@@ -1,0 +1,44 @@
+# Inline code for a built-in keeps the mark of a demoted tail call, and so does the call on the miss side of inline code that may miss
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass Select
+# STATISTIC: InlineBuiltinGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="markedWhole" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map<anything, anything, pristine[Names]>, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=MapPrototypeHas/0 [isDemotedTailCall]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="markedWhole"
+# CHECK: = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0 [isDemotedTailCall]
+
+function f1 name="whole" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map<anything, anything, pristine[Names]>, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=MapPrototypeHas/0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="whole"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+# CHECK-NOT: isDemotedTailCall
+
+function f2 name="markedTwoWay" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0 [isDemotedTailCall]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="markedTwoWay"
+# CHECK: TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done [[done2]](), miss [[miss2]]()
+# CHECK: [[miss2]]()
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0 [isDemotedTailCall]
+
+function f3 name="twoWay" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="twoWay"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+# CHECK-NOT: isDemotedTailCall

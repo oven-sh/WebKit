@@ -1,0 +1,57 @@
+# function make() { var table = { x: 1 }; var late; function read() { return table } function early() { return late } early(); late = 1; var cleared = 2; cleared = undefined; function last() { return cleared } return [read, last] }
+# The allocation of the environment lists a `var` with the undefined that it holds until its first store.
+# table: its one store comes before the first use of the only closure that reads it. Nobody sees the undefined: the field holds the object alone, is stored at most once, and the allocation leaves it out, as for `let`.
+# late: early() runs in front of the store and sees the undefined.
+# cleared: a store comes before every read, and one of the stores brings undefined
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Environment {{*}}{key="table" declared={type=L1} {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead} {{*}}{key="late" declared={type=undefined|1} {{*}}initialization=SetAtCreation} {{*}}{key="cleared" declared={type=undefined|2} {{*}}initialization=StoredBeforeEveryRead}
+# CHECK-LABEL: name="make"
+# CHECK: NewObject -, [[undefined]] layout=L0 fields=[1]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="table" declared={type=anything}}, {key="late" declared={type=anything}}, {key="cleared" declared={type=anything}}]
+layout L1 kind=Record name="Table" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Call v0
+    v3 = Call v1
+    Return v3
+}
+function f1 name="make" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]
+    v2 = NewClosure v1 function=f2
+    v3 = NewClosure v1 function=f3
+    v4 = NewClosure v1 function=f4
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutEnvironmentField v1, v7 layout=L0
+    v9 = Call v3
+    PutEnvironmentField v1, v5 layout=L0 field=1
+    v11 = Integer integer=2
+    PutEnvironmentField v1, v11 layout=L0 field=2
+    v13 = Undefined
+    PutEnvironmentField v1, v13 layout=L0 field=2
+    v15 = Call v4
+    Return v2
+}
+function f2 name="read" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    Return v1
+}
+function f3 name="early" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    Return v1
+}
+function f4 name="last" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=2
+    Return v1
+}

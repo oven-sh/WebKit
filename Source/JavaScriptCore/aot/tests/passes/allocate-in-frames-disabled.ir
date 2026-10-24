@@ -1,0 +1,36 @@
+# With the pass off a closure and an environment that never leave their activation stay on the heap
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames disable=pass:AllocateInFrames
+# STATISTIC: ClosuresInFrames = 0
+# STATISTIC: EnvironmentsInFrames = 0
+# CHECK: nothing in frames
+# CHECK-NOT: storage=
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK-NOT: storage=
+# CHECK: = NewClosure {{*}}function=f2
+# CHECK-NOT: storage=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f2
+    v4 = CallDirect v3 function=f1
+    Return
+}
+function f1 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f2 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

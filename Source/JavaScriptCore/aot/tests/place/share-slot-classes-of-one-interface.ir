@@ -1,0 +1,65 @@
+# Two classes implement one interface and declare its members in another order, among members of their own. What reads through the interface reads each member at one location.
+# "tag" is a number in one class and a string in the other, and each class reads its own more often than anything reads it through the interface: it keeps two representations, and the read through the interface has two groups
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 3
+# STATISTIC: SharesRefused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shape" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}, {key="next" declared={type=undefined|object} flags=[IsRequired]}, {key="tag" declared={type=number|string} flags=[IsRequired]}]
+layout L1 kind=Instance name="Circle" constructor=f1 fields=[{key="radius" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key="name" declared={type=string} flags=[IsRequired] originLayout=L0 originField=1}, {key="next" declared={type=undefined|object} flags=[IsRequired] originLayout=L0 originField=2}, {key="tag" declared={type=number|string} flags=[IsRequired] originLayout=L0 originField=3}] supertypes=[L0]
+layout L2 kind=Instance name="Rectangle" constructor=f2 fields=[{key="tag" declared={type=number|string} flags=[IsRequired] originLayout=L0 originField=3}, {key="name" declared={type=string} flags=[IsRequired] originLayout=L0 originField=1}, {key="width" declared={type=number} flags=[IsRequired]}, {key="height" declared={type=number} flags=[IsRequired]}, {key="next" declared={type=undefined|object} flags=[IsRequired] originLayout=L0 originField=2}, {key="id" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}] supertypes=[L0]
+variable g0 name="shape" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f2
+    v8 = NewClass v7 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Construct v6, -, v2, v3
+    v11 = Construct v9, -, v2, v3
+    PutModuleVariable v10 variable=g0
+    PutModuleVariable v11 variable=g0
+    v14 = GetModuleVariable variable=g0
+    PropSet v14, v10 key="next"
+    v16 = PropGet v14 key="id"
+    v17 = PropGet v14 key="name"
+    v18 = PropGet v14 key="next"
+    v19 = PropGet v14 key="tag"
+    v20 = PropGet v10 key="tag"
+    v21 = PropGet v10 key="tag"
+    v22 = PropGet v10 key="radius"
+    v23 = PropGet v11 key="width"
+    v24 = PropGet v11 key="height"
+    Return
+}
+function f1 name="Circle" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: string):
+    v3 = GetConstructPrototype v0 layout=L1
+    v4 = Undefined
+    v5 = NewObject v3, v1, v1, v2, v4, v1 layout=L1 fields=[0, 1, 2, 3, 4]
+    v6 = FinishObject v5
+    Return v6
+}
+function f2 name="Rectangle" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: string):
+    v3 = GetConstructPrototype v0 layout=L2
+    v4 = Undefined
+    v5 = NewObject v3, v2, v2, v1, v1, v4, v1 layout=L2 fields=[0, 1, 2, 3, 4, 5]
+    v6 = FinishObject v5
+    Return v6
+}
+# CHECK: "id" {L1 L2} read
+# CHECK-NEXT: one location Double @
+# CHECK: "name" {L1 L2} read
+# CHECK-NEXT: one location Cell32 @
+# CHECK: "tag" {L1 L2} read
+# CHECK-NEXT: 2 groups: {L1} Double @{{*}}, {L2} Cell32 @

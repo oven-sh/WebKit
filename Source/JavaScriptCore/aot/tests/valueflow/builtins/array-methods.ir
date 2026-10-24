@@ -1,0 +1,64 @@
+# A method of arrays that calls a callback goes by the records of its entry at each call, though one function of the library runs for all of them: a callback gets the elements of the array it is called over and of no other, and the array that map returns holds what its own callback returns.
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> ArrayPrototypeForEach
+# CHECK-NEXT: f0 v8 -> ArrayPrototypeForEach
+# CHECK-NEXT: f0 v11 -> ArrayPrototypeMap
+# CHECK-NEXT: f0 v14 -> f6
+# CHECK-NEXT: f3 v1 -> f1
+# CHECK-NEXT: f4 v1 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+# UNREACHED-NOT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = NewArray v2 contents=anything
+    v4 = Builtin builtin=ArrayPrototypeForEach
+    v5 = NewClosure function=f3
+    v6 = Call v4, v1, v5
+    v7 = NewClosure function=f4
+    v8 = Call v4, v3, v7
+    v9 = Builtin builtin=ArrayPrototypeMap
+    v10 = NewClosure function=f5
+    v11 = Call v9, v1, v10
+    v12 = Integer integer=0
+    v13 = ElemGet v11, v12
+    v14 = Call v13
+    Return
+}
+function f1 name="inFirstArray" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="inSecondArray" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="overFirstArray" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f4 name="overSecondArray" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return
+}
+function f5 name="mapper" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6
+    Return v1
+}
+function f6 name="mapped" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

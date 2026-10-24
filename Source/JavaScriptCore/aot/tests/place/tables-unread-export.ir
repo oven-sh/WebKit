@@ -1,0 +1,43 @@
+# An export that nothing reads has no row. A namespace read by a computed key may read any export, so its module keeps all of them
+# RUN: tables
+# RUN(ROWS): tables modules
+# CHECK: moduleExports 3 24
+# ROWS-NOT: name="b"
+# ROWS: export 0 name="a" kind=Variable
+# ROWS-NEXT: export 1 name="c" kind=Variable
+# ROWS-NEXT: export 2 name="d" kind=Variable
+# ROWS-NOT: name="b"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="named.js" displayPath="named.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}]
+module m2 path="computed.js" displayPath="computed.js" body=f2 exports=[{name="c" variable=g2}, {name="d" variable=g3}]
+entry module=m0
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="b" module=m1 declared={type=anything}
+variable g2 name="c" module=m2 declared={type=anything}
+variable g3 name="d" module=m2 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="a"
+    v2 = ModuleNamespace module=m2
+    v3 = String string="c"
+    v4 = Strcat v3, v3
+    v5 = ElemGet v2, v4
+    Return
+}
+function f1 name="named" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="computed" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    PutModuleVariable v0 variable=g3
+    Return
+}

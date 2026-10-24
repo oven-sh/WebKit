@@ -1,0 +1,44 @@
+# When typing gives up on its rounds a loop parameter gets the type it had before, and no value keeps a type from the middle of the solve
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass limit=MaxTypeValuesRounds:2
+# RUN: pass RetypeValues
+# LOSS: MaxTypeValuesRounds
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="counter" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3: number):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v2
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f0 name="counter"
+# CHECK: b1(v3: number):
+# CHECK: v5: number = Add v3, v2
+# CHECK: Return v3
+
+function f1 name="counterWithoutWrittenType" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v2
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="counterWithoutWrittenType"
+# CHECK: b1(v3: anything):
+# CHECK: v5: number|string|bigint = Add v3, v2
+# CHECK: Return v3

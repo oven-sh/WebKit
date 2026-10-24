@@ -1,0 +1,101 @@
+# An allocation in a loop has at most one live instance unless an alias or unescaped container of an earlier instance is live when it runs again
+# FORM: AsRead
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point"
+layout L1 kind=Environment name="scope" fields=[{key="last" declared={type=anything}}]
+layout L2 kind=Environment name="shared" fields=[{key="written" declared={type=anything}}, {key="reread" declared={type=anything}}]
+function f0 name="instances" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Undefined
+    v3 = NewObject layout=L0 fields=[]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    Jump -> next b1(v2, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = TypeTest v1 testedType=object
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = TypeTest v6 testedType=object
+    v10 = NewObject layout=L0 fields=[]
+    v11 = TypeTest v10 testedType=object
+    v12 = NewObject layout=L0 fields=[]
+    v13 = TypeTest v5 testedType=object
+    v14 = NewObject layout=L0 fields=[]
+    v15 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v4, v15 layout=L1 field=0
+    Jump -> next b1(v12, v14)
+  b3():
+    v17 = TypeTest v3 testedType=object
+    Return v2
+}
+function f1 name="escapedContainer" results=[{type=function}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Undefined
+    v3 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v4 = NewClosure v3 function=f2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = TypeTest v1 testedType=object
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v3, v7 layout=L2 field=0
+    v9 = GetEnvironmentField v3 layout=L2 field=1
+    v10 = NewObject layout=L0 fields=[]
+    v11 = TypeTest v9 testedType=object
+    PutEnvironmentField v3, v10 layout=L2 field=1
+    Jump -> next b1()
+  b3():
+    Return v4
+}
+function f2 name="capturing" kind=Arrow captures=[{type=env L2}] results=[{type=undefined}] {
+  b0(v0: env L2):
+    Return
+}
+# CHECK: function f0
+# CHECK: objects: 6
+# CHECK: o0 definition: v3
+# CHECK: o0 live instances: AtMostOne
+# CHECK: o1 definition: v4
+# CHECK: o1 state: DoesNotEscape
+# CHECK: o1 live instances: AtMostOne
+# CHECK: o1 contents: [o5]
+# CHECK: o2 definition: v10
+# CHECK: o2 state: DoesNotEscape
+# CHECK: o2 live instances: AtMostOne
+# CHECK: o3 definition: v12
+# CHECK: o3 state: DoesNotEscape
+# CHECK: o3 live instances: Unknown
+# CHECK: o3 aliases: [v5 v12]
+# CHECK: o4 definition: v14
+# CHECK: o4 state: DoesNotEscape
+# CHECK: o4 live instances: AtMostOne
+# CHECK: o4 aliases: [v6 v14]
+# CHECK: o5 definition: v15
+# CHECK: o5 state: DoesNotEscape
+# CHECK: o5 live instances: Unknown
+# CHECK: o5 containers: [o1]
+# CHECK: function f1
+# CHECK: objects: 4
+# CHECK: o0 definition: v3
+# CHECK: o0 state: Escapes
+# CHECK: o0 reasons: [StoredInEscapingObject]
+# CHECK: o0 contents: [o2 o3]
+# CHECK: o2 definition: v7
+# CHECK: o2 state: Escapes
+# CHECK: o2 live instances: AtMostOne
+# CHECK: o2 aliases: [v7]
+# CHECK: o2 containers: [o0]
+# CHECK: o3 definition: v10
+# CHECK: o3 state: Escapes
+# CHECK: o3 live instances: Unknown
+# CHECK: o3 aliases: [v9 v10]
+# CHECK: o3 containers: [o0]

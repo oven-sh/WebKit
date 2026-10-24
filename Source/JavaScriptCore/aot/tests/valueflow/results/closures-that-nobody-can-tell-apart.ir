@@ -1,0 +1,60 @@
+# a = first(), b = first(): a === b           two closures of `inner1` stand on both sides of a comparison: somebody can tell them apart
+# c = second(): c === a                       a closure of `inner2` is compared with closures of another function alone: the answer is false whichever closure it is
+# d = third(): [d].includes(d)                a built-in looks at a closure of `inner3`
+# e = fourth(): new Map().set(e, 1)           a closure of `inner4` is a key
+# f = fifth(): f()                            a closure of `inner5` is called, and that is all
+# All five are only called.
+# RUN: valueflow-results
+# CHECK: closures-compared f1
+# CHECK-NOT: closures-compared f2
+# CHECK: closures-compared f3
+# CHECK: closures-compared f4
+# CHECK-NOT: closures-compared f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f1
+    v2 = StrictEq v0, v1
+    v3 = NewClosure function=f2
+    v4 = StrictEq v3, v0
+    v5 = NewClosure function=f3
+    v6 = NewArray v5
+    v7 = PropGet v6 key="includes"
+    v8 = Call v7, v6, v5 calleeKey="includes"
+    v9 = NewClosure function=f4
+    v10 = Builtin builtin=Map
+    v11 = Construct v10
+    v12 = PropGet v11 key="set"
+    v13 = Integer integer=1
+    v14 = Call v12, v11, v9, v13 calleeKey="set"
+    v15 = NewClosure function=f5
+    v16 = Call v15, -
+    v17 = Call v0, -
+    v18 = Call v3, -
+    v19 = Call v5, -
+    v20 = Call v9, -
+    Return
+}
+function f1 name="inner1" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="inner2" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="inner3" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="inner4" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="inner5" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

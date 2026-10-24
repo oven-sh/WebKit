@@ -1,0 +1,10 @@
+# only a base constructor is a naked constructor
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badPlainFunction" flags=[IsNakedConstructor] results=[{type=anything}]
+function f1 name="badDerivedConstructor" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsNakedConstructor] results=[{type=object}]
+function f2 name="goodBaseConstructor" kind=BaseConstructor flags=[HasNewTarget, IsNakedConstructor] results=[{type=object}]
+function f3 name="goodClassConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]

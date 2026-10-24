@@ -1,0 +1,180 @@
+# A block parameter that only ever receives one value, or itself, is that value
+# FORM: Prepared optimizing
+# RUN: pass RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sameValueOnBothEdges" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2):
+    Return v2
+}
+# CHECK-LABEL: function f0 name="sameValueOnBothEdges"
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: Return v0
+
+function f1 name="itselfOverBackEdge" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    Branch v1 -> taken b1(v2), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="itselfOverBackEdge"
+# CHECK: b1():
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: Return v0
+
+function f2 name="checkOfItselfOverBackEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = Check v2 castType=number
+    Branch v1 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="checkOfItselfOverBackEdge"
+# CHECK: b1():
+# CHECK: Check v0
+# CHECK: Return v0
+
+function f3 name="parametersFeedEachOther" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Jump -> next b1(v0, v0)
+  b1(v2, v3):
+    LoopHint
+    Branch v1 -> taken b1(v3, v2), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f3 name="parametersFeedEachOther"
+# CHECK: b1():
+# CHECK: Return v0
+
+function f4 name="parameterChain" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2):
+    Jump -> next b4(v2)
+  b4(v3):
+    Return v3
+}
+# CHECK-LABEL: function f4 name="parameterChain"
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK: Return v0
+
+function f5 name="opaqueParameter" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean) handler=b2():
+    v2 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchException
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v3)
+  b4():
+    Jump -> next b5(v3)
+  b5(v4):
+    Rethrow v4
+}
+# CHECK-LABEL: function f5 name="opaqueParameter"
+# CHECK: b5():
+# CHECK-NEXT: Rethrow v3
+
+function f6 name="twoIncomingValues" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f6 name="twoIncomingValues"
+# CHECK: b3(v3: number):
+# CHECK-NEXT: Return v3
+
+function f7 name="differingExpectedType" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2: number ~ i32):
+    Return v2
+}
+# CHECK-LABEL: function f7 name="differingExpectedType"
+# CHECK: b3():
+# CHECK-NEXT: v2: number ~ i32 = Upcast v0
+# CHECK-NEXT: Return v2
+
+function f8 name="swappedValues" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Jump -> next b1(v0, v1)
+  b1(v3, v4):
+    LoopHint
+    Branch v2 -> taken b1(v4, v3), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f8 name="swappedValues"
+# CHECK: b1(v3: number, v4: number):
+# CHECK: Branch v2 -> taken b1(v4, v3), notTaken b2()
+
+function f9 name="secondValueInsideLoop" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v3)
+  b3():
+    Jump -> next b4(v1)
+  b4(v5):
+    Branch v2 -> taken b1(v5), notTaken b5()
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f9 name="secondValueInsideLoop"
+# CHECK: b1(v3: number):
+# CHECK: b4(v5: number):
+# CHECK-NEXT: Branch v2 -> taken b1(v5), notTaken b5()
+
+function f10 name="valueOfCoveredBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean) handler=b3():
+    v2 = Call v0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v1 -> taken b1(v3), notTaken b2()
+  b2():
+    Return v3
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f10 name="valueOfCoveredBlock"
+# CHECK: b0(v0: anything, v1: boolean) handler=b3():
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK: Return v2

@@ -1,0 +1,50 @@
+# The key orders of a layout cover its objects in constant data: the empty literal of a type with an optional member, and a literal that lists the members the other way round.
+# A member of constant data that is no field of the layout is a key that no order lists, so the orders are no proof about every object.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Options" {{*}}constructorOrders=[{}, {fields=[0]}] fieldCreation=OnlyAtConstruction
+# CHECK: layout L1 name="Pair" {{*}}constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}] fieldCreation=OnlyAtConstruction
+# CHECK: layout L2 name="Nested" {{*}}constructorOrders=[{}, {fields=[0]}] fieldCreation=OnlyAtConstruction
+# CHECK: layout L3 name="WithOtherMember" {{*}}constructorOrders=[{fields=[0]}] impossibleMutations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Options" fields=[{key="retries" declared={type=undefined|number}}]
+layout L1 kind=Record name="Pair" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
+layout L2 kind=Record name="Nested" fields=[{key="deep" declared={type=undefined|number}}]
+layout L3 kind=Record name="WithOtherMember" fields=[{key="known" declared={type=undefined|number}}]
+data d0 root=Object{layout=L0} module=m0
+data d1 root=Object{layout=L1 members=[{key="b" value=Number{value=2}}, {key="a" value=Number{value=1}}]} module=m0
+data d2 root=Array{contents=anything elements=[Object{layout=L2}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="known" value=Number{value=1}}, {key="other" value=Number{value=2}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Call v0, -, v3
+    v5 = Data data=d0
+    v6 = Call v0, -, v5
+    v7 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Call v0, -, v8
+    v10 = Data data=d1
+    v11 = Call v0, -, v10
+    v12 = NewObject -, v1 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    v14 = Call v0, -, v13
+    v15 = Data data=d2
+    v16 = Integer
+    v17 = ElemGet v15, v16
+    v18 = Call v0, -, v17
+    v19 = NewObject -, v1 layout=L3 fields=[0]
+    v20 = FinishObject v19
+    v21 = Call v0, -, v20
+    v22 = Data data=d3
+    v23 = Call v0, -, v22
+    Return v23
+}
+function f1 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    Return v0
+}

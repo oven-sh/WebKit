@@ -1,0 +1,136 @@
+# The test whether a key is an object folds for a key that has no object part, and the cleanup passes remove the conversion of the key around it
+# FORM: Prepared
+# RUN: pass FoldConstants
+# RUN(SIMPLIFIED): pass FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads CompactBlocks
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="testsOfKeys" parameters=[{type=i32}, {type=number}, {type=string}, {type=symbol}, {type=number|string}] results=[{type=boolean}] {
+  b0(v0: i32, v1: number, v2: string, v3: symbol, v4: number|string):
+    v5 = TypeTest v0 testedType=object
+    v6 = TypeTest v1 testedType=object
+    v7 = TypeTest v2 testedType=object
+    v8 = TypeTest v3 testedType=object
+    v9 = TypeTest v4 testedType=object
+    Return v5
+}
+# CHECK-LABEL: function f0 name="testsOfKeys"
+# CHECK-NOT: TypeTest
+# CHECK: v5: false = Boolean
+# CHECK-NEXT: v6: false = Boolean
+# CHECK-NEXT: v7: false = Boolean
+# CHECK-NEXT: v8: false = Boolean
+# CHECK-NEXT: v9: false = Boolean
+# CHECK-NEXT: Return v5
+# SIMPLIFIED-LABEL: function f0 name="testsOfKeys"
+# SIMPLIFIED-NOT: TypeTest
+
+function f1 name="testsOfKeysThatMayBeObjects" parameters=[{type=anything}, {type=number|object}] results=[{type=boolean}] {
+  b0(v0: anything, v1: number|object):
+    v2 = TypeTest v0 testedType=object
+    v3 = TypeTest v1 testedType=object
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="testsOfKeysThatMayBeObjects"
+# CHECK: v2: boolean = TypeTest v0 testedType=object
+# CHECK-NEXT: v3: boolean = TypeTest v1 testedType=object
+# SIMPLIFIED-LABEL: function f1 name="testsOfKeysThatMayBeObjects"
+# SIMPLIFIED: = TypeTest v0 testedType=object
+# SIMPLIFIED-NEXT: = TypeTest v1 testedType=object
+
+function f2 name="updateAtIntegerKey" parameters=[{type=anything}, {type=i32}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32, v2: number):
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Unreachable
+  b2(v5):
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = ElemGet v0, v6
+    v8 = Add v7, v2
+    ElemSet v0, v6, v8
+    Return v8
+}
+# CHECK-LABEL: function f2 name="updateAtIntegerKey"
+# CHECK: = TypeTest v1 testedType=object
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+# SIMPLIFIED-LABEL: function f2 name="updateAtIntegerKey"
+# SIMPLIFIED-NEXT: b0(v0: anything, v1: i32, v2: number):
+# SIMPLIFIED-NEXT: [[read]]:{{*}}= ElemGet v0, v1
+# SIMPLIFIED-NEXT: [[sum]]:{{*}}= Add [[read]], v2
+# SIMPLIFIED-NEXT: ElemSet v0, v1, [[sum]]
+# SIMPLIFIED-NEXT: Return [[sum]]
+# SIMPLIFIED-NEXT: }
+
+function f3 name="updateAtStringKey" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: number):
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Unreachable
+  b2(v5):
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = ElemGet v0, v6
+    v8 = Add v7, v2
+    ElemSet v0, v6, v8
+    Return v8
+}
+# CHECK-LABEL: function f3 name="updateAtStringKey"
+# SIMPLIFIED-LABEL: function f3 name="updateAtStringKey"
+# SIMPLIFIED-NEXT: b0(v0: anything, v1: string, v2: number):
+# SIMPLIFIED-NEXT: [[readAtString]]:{{*}}= ElemGet v0, v1
+# SIMPLIFIED-NEXT: [[sumAtString]]:{{*}}= Add [[readAtString]], v2
+# SIMPLIFIED-NEXT: ElemSet v0, v1, [[sumAtString]]
+# SIMPLIFIED-NEXT: Return [[sumAtString]]
+# SIMPLIFIED-NEXT: }
+
+function f4 name="updateAtUnknownKey" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = RequireObjectCoercible v0 nullishAccess=Read
+    v6 = ToPropertyKey v4
+    Jump -> next b3(v6)
+  b2(v7):
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v9, v2
+    ElemSet v0, v8, v10
+    Return v10
+}
+# CHECK-LABEL: function f4 name="updateAtUnknownKey"
+# CHECK: = TypeTest v1 testedType=object
+# SIMPLIFIED-LABEL: function f4 name="updateAtUnknownKey"
+# SIMPLIFIED: [[test]]:{{*}}= TypeTest v1 testedType=object
+# SIMPLIFIED-NEXT: Branch [[test]] -> taken b1(| 0), notTaken b2(| 0)
+# SIMPLIFIED: = RequireObjectCoercible v0
+# SIMPLIFIED-NEXT: = ToPropertyKey
+
+function f5 name="updateAtObjectKey" parameters=[{type=anything}, {type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: number):
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = RequireObjectCoercible v0 nullishAccess=Read
+    v6 = ToPropertyKey v4
+    Jump -> next b3(v6)
+  b2(v7):
+    Unreachable
+  b3(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v9, v2
+    ElemSet v0, v8, v10
+    Return v10
+}
+# CHECK-LABEL: function f5 name="updateAtObjectKey"
+# SIMPLIFIED-LABEL: function f5 name="updateAtObjectKey"
+# SIMPLIFIED-NOT: TypeTest
+# SIMPLIFIED-NOT: Branch
+# SIMPLIFIED: = RequireObjectCoercible v0
+# SIMPLIFIED-NEXT: [[key]]:{{*}}= ToPropertyKey v1
+# SIMPLIFIED-NEXT: = ElemGet v0, [[key]]

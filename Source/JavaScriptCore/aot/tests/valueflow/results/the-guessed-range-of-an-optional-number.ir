@@ -1,0 +1,27 @@
+# function guessed(flags?: Flags) {}  guessed(int32 + 1); guessed()
+# The range of an expected number is a guess. `guessed` expects undefined or an int32 and gets undefined and integers of 33 bits from callers that are all known:
+# its parameter is proven to hold those, as it is without the undefined, and its check stays.
+# RUN: valueflow-apply
+# CHECK: function f1 name="guessed" {{*}}parameters=[{type=undefined|int[-2147483647, 2147483648]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v6
+    v9 = Call v7, -
+    Return
+}
+function f1 name="guessed" parameters=[{type=undefined|i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Check v0 castType=undefined|i32
+    Return v1
+}

@@ -1,0 +1,655 @@
+# One test finds that a typed array has a fixed length and that a position lies inside it. Behind it a read is the load of the vector and the load of the element, and a store the same with a store:
+# no test of the mode, no arm that looks the position up by value or calls the run time, so a function that only tests and accesses has no frame. The read finds an element, so its type has no `undefined` and its result is unboxed.
+# Each kind of view with element accesses in line has such code, for integer and double positions and stored values, in the three code shapes. Beside them stand the accesses without the test, and the one store that takes the operation whatever is known
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readOfInt8Array" parameters=[{type=Int8Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Int8Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=1
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=1 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f0: size={{*}} frame=none
+# R-LABEL: function f0 name="readOfInt8Array"
+# R: v4: int[-128, 127] @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=1 level=Proven [isInsideView]
+function f1 name="readOfUint8Array" parameters=[{type=Uint8Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=2
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=2 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f1: size={{*}} frame=none
+# R-LABEL: function f1 name="readOfUint8Array"
+# R: v4: int[0, 255] @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=2 level=Proven [isInsideView]
+function f2 name="readOfUint8ClampedArray" parameters=[{type=Uint8ClampedArray}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Uint8ClampedArray, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=3
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=3 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f2: size={{*}} frame=none
+# R-LABEL: function f2 name="readOfUint8ClampedArray"
+# R: v4: int[0, 255] @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=3 level=Proven [isInsideView]
+function f3 name="readOfInt16Array" parameters=[{type=Int16Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Int16Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=4
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=4 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f3: size={{*}} frame=none
+# R-LABEL: function f3 name="readOfInt16Array"
+# R: v4: int[-32768, 32767] @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=4 level=Proven [isInsideView]
+function f4 name="readOfUint16Array" parameters=[{type=Uint16Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Uint16Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=5
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=5 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f4: size={{*}} frame=none
+# R-LABEL: function f4 name="readOfUint16Array"
+# R: v4: int[0, 65535] @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=5 level=Proven [isInsideView]
+function f5 name="readOfInt32Array" parameters=[{type=Int32Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Int32Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=6
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=6 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f5: size={{*}} frame=none
+# R-LABEL: function f5 name="readOfInt32Array"
+# R: v4: i32 @Int32 = GetTypedArrayElement v0, v1, v3 typedArrayType=6 level=Proven [isInsideView]
+function f6 name="readOfUint32Array" parameters=[{type=Uint32Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Uint32Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=7
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=7 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NEXT: f6: size={{*}} frame=none
+# R-LABEL: function f6 name="readOfUint32Array"
+# R: v4: int[0, 4294967295] @Int64 = GetTypedArrayElement v0, v1, v3 typedArrayType=7 level=Proven [isInsideView]
+function f7 name="readOfFloat32Array" parameters=[{type=Float32Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Float32Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=9
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=9 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f7: size={{*}} frame=none
+# R-LABEL: function f7 name="readOfFloat32Array"
+# R: v4: number @Double = GetTypedArrayElement v0, v1, v3 typedArrayType=9 level=Proven [isInsideView]
+function f8 name="readOfFloat64Array" parameters=[{type=Float64Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Float64Array, v1: i32):
+    v2 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=10 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f8: size={{*}} frame=none
+# R-LABEL: function f8 name="readOfFloat64Array"
+# R: v4: number @Double = GetTypedArrayElement v0, v1, v3 typedArrayType=10 level=Proven [isInsideView]
+function f9 name="storeInInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Int8Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=1
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=1 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK: f9: size={{*}} frame=none
+function f10 name="storeInUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=2
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=2 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f10: size={{*}} frame=none
+function f11 name="storeInUint8ClampedArray" parameters=[{type=Uint8ClampedArray}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Uint8ClampedArray, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=3
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=3 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f11: size={{*}} frame=none
+function f12 name="storeInInt16Array" parameters=[{type=Int16Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Int16Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=4
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=4 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f12: size={{*}} frame=none
+function f13 name="storeInUint16Array" parameters=[{type=Uint16Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Uint16Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=5
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=5 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f13: size={{*}} frame=none
+function f14 name="storeInInt32Array" parameters=[{type=Int32Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Int32Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=6
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=6 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f14: size={{*}} frame=none
+function f15 name="storeInUint32Array" parameters=[{type=Uint32Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Uint32Array, v1: i32, v2: i32):
+    v3 = IsInsideView v0, v1 typedArrayType=7
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=7 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f15: size={{*}} frame=none
+function f16 name="storeInFloat32Array" parameters=[{type=Float32Array}, {type=i32}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Float32Array, v1: i32, v2: number):
+    v3 = IsInsideView v0, v1 typedArrayType=9
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=9 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f16: size={{*}} frame=none
+function f17 name="storeInFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Float64Array, v1: i32, v2: number):
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=10 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f17: size={{*}} frame=none
+function f18 name="testAsValue" parameters=[{type=Uint8Array}, {type=number}] results=[{type=boolean}] {
+  b0(v0: Uint8Array, v1: number):
+    v2 = IsInsideView v0, v1 typedArrayType=2
+    Return v2
+}
+# CHECK-NEXT: f18: size={{*}} frame=none
+# R-LABEL: function f18 name="testAsValue"
+# R: v1: number @Double):
+# R-NEXT: v2: boolean @Boolean = IsInsideView v0, v1 typedArrayType=2
+function f19 name="branchOnValue" parameters=[{type=Uint8Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number):
+    v2 = IsInsideView v0, v1 typedArrayType=2
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=2 level=Proven [isInsideView]
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-NEXT: f19: size={{*}} frame=none
+function f20 name="elementIsNextPosition" parameters=[{type=Uint8Array}, {type=int[0, 255]}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: int[0, 255]):
+    v2 = IsInsideView v0, v1 typedArrayType=2
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=2 level=Proven [isInsideView]
+    v5 = IsInsideView v0, v4 typedArrayType=2
+    TestAndBranch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = GetTypedArrayElement v0, v4, v6 typedArrayType=2 level=Proven [isInsideView]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+# The element is an int32 and the next test takes it as it is.
+# CHECK-NEXT: f20: size={{*}} frame=none
+# R-LABEL: function f20 name="elementIsNextPosition"
+# R: v4: int[0, 255] @Int32 = GetTypedArrayElement v0, v1, v3
+# R-NEXT: = IsInsideView v0, v4 typedArrayType=2
+function f21 name="readWithoutTest" parameters=[{type=Uint8Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: i32):
+    v2 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
+    Return v2
+}
+# CHECK-NEXT: f21: size=
+# CHECK-NOT: frame=none
+# CHECK: stub GetByValCached
+# R-LABEL: function f21 name="readWithoutTest"
+# R: v2: undefined|int[0, 255] @OptionalInt64 = GetTypedArrayElement
+function f22 name="storeWithoutTest" parameters=[{type=Uint8Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: i32, v2: i32):
+    PutTypedArrayElement v0, v1, v2 typedArrayType=2 level=Proven
+    Return
+}
+# CHECK: f22: size=
+# CHECK-NOT: frame=none
+# CHECK: operation operationAOTTypedArrayPut x1
+function f23 name="storeOfDoubleInUint8ClampedArray" parameters=[{type=Uint8ClampedArray}, {type=i32}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Uint8ClampedArray, v1: i32, v2: number):
+    v3 = IsInsideView v0, v1 typedArrayType=3
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=3 level=Proven [isInsideView]
+    Return
+  b2():
+    Return
+}
+# Rounding a double to the nearest of 0 to 255 is left to the operation, which tests the position for itself.
+# CHECK: f23: size=
+# CHECK-NOT: frame=none
+# CHECK: operation operationAOTTypedArrayPut x1
+function f24 name="readsOfUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsInsideView v0, v1 typedArrayType=2
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsInsideView v0, v2 typedArrayType=2
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsInsideView v0, v3 typedArrayType=2
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsInsideView v0, v4 typedArrayType=2 [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetTypedArrayElement v0, v1, v7 typedArrayType=2 level=Proven [isInsideView]
+    v15 = GetTypedArrayElement v0, v2, v9 typedArrayType=2 level=Proven [isInsideView]
+    v16 = GetTypedArrayElement v0, v3, v11 typedArrayType=2 level=Proven [isInsideView]
+    v17 = GetTypedArrayElement v0, v4, v13 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetTypedArrayElement v0, v1, v7 typedArrayType=2 level=Proven [isInsideView]
+    v22 = GetTypedArrayElement v0, v2, v9 typedArrayType=2 level=Proven [isInsideView]
+    v23 = GetTypedArrayElement v0, v3, v11 typedArrayType=2 level=Proven [isInsideView]
+    v24 = GetTypedArrayElement v0, v4, v13 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetTypedArrayElement v0, v1, v7 typedArrayType=2 level=Proven [isInsideView]
+    v27 = GetTypedArrayElement v0, v2, v9 typedArrayType=2 level=Proven [isInsideView]
+    v28 = GetTypedArrayElement v0, v3, v11 typedArrayType=2 level=Proven [isInsideView]
+    v29 = GetTypedArrayElement v0, v4, v13 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f24: size=
+# CHECK-NOT: ByVal
+# S: f24 b4 Balanced
+# S: f24 b6 Fast
+# S: f24 b9 Compact
+# R-LABEL: function f24 name="readsOfUint8Array"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : int[0, 255] @Int32 = GetTypedArrayElement v0,
+# R-NOT: = GetTypedArrayElement
+function f25 name="readsOfUint32Array" parameters=[{type=Uint32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Uint32Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsInsideView v0, v1 typedArrayType=7
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsInsideView v0, v2 typedArrayType=7
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsInsideView v0, v3 typedArrayType=7
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsInsideView v0, v4 typedArrayType=7 [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetTypedArrayElement v0, v1, v7 typedArrayType=7 level=Proven [isInsideView]
+    v15 = GetTypedArrayElement v0, v2, v9 typedArrayType=7 level=Proven [isInsideView]
+    v16 = GetTypedArrayElement v0, v3, v11 typedArrayType=7 level=Proven [isInsideView]
+    v17 = GetTypedArrayElement v0, v4, v13 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetTypedArrayElement v0, v1, v7 typedArrayType=7 level=Proven [isInsideView]
+    v22 = GetTypedArrayElement v0, v2, v9 typedArrayType=7 level=Proven [isInsideView]
+    v23 = GetTypedArrayElement v0, v3, v11 typedArrayType=7 level=Proven [isInsideView]
+    v24 = GetTypedArrayElement v0, v4, v13 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetTypedArrayElement v0, v1, v7 typedArrayType=7 level=Proven [isInsideView]
+    v27 = GetTypedArrayElement v0, v2, v9 typedArrayType=7 level=Proven [isInsideView]
+    v28 = GetTypedArrayElement v0, v3, v11 typedArrayType=7 level=Proven [isInsideView]
+    v29 = GetTypedArrayElement v0, v4, v13 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f25: size=
+# CHECK-NOT: ByVal
+# S: f25 b4 Balanced
+# S: f25 b6 Fast
+# S: f25 b9 Compact
+# R-LABEL: function f25 name="readsOfUint32Array"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : int[0, 4294967295] @Int64 = GetTypedArrayElement v0,
+# R-NOT: = GetTypedArrayElement
+function f26 name="readsOfFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Float64Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v6 -> taken b1(| 0), notTaken b11()
+  b1(v7):
+    v8 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v8 -> taken b2(| 0), notTaken b11()
+  b2(v9):
+    v10 = IsInsideView v0, v3 typedArrayType=10
+    TestAndBranch v10 -> taken b3(| 0), notTaken b11()
+  b3(v11):
+    v12 = IsInsideView v0, v4 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v12 -> taken b4(| 0), notTaken b11()
+  b4(v13):
+    v14 = GetTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven [isInsideView]
+    v15 = GetTypedArrayElement v0, v2, v9 typedArrayType=10 level=Proven [isInsideView]
+    v16 = GetTypedArrayElement v0, v3, v11 typedArrayType=10 level=Proven [isInsideView]
+    v17 = GetTypedArrayElement v0, v4, v13 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v18 = NewArray v14, v15, v16, v17 contents=anything
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    v21 = GetTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven [isInsideView]
+    v22 = GetTypedArrayElement v0, v2, v9 typedArrayType=10 level=Proven [isInsideView]
+    v23 = GetTypedArrayElement v0, v3, v11 typedArrayType=10 level=Proven [isInsideView]
+    v24 = GetTypedArrayElement v0, v4, v13 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Branch v5 -> taken b6(), notTaken b7()
+  b7():
+    Branch v5 -> taken b5(), notTaken b8()
+  b8():
+    Branch v5 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v26 = GetTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven [isInsideView]
+    v27 = GetTypedArrayElement v0, v2, v9 typedArrayType=10 level=Proven [isInsideView]
+    v28 = GetTypedArrayElement v0, v3, v11 typedArrayType=10 level=Proven [isInsideView]
+    v29 = GetTypedArrayElement v0, v4, v13 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v30 = NewArray v26, v27, v28, v29 contents=anything
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f26: size=
+# CHECK-NOT: ByVal
+# S: f26 b4 Balanced
+# S: f26 b6 Fast
+# S: f26 b9 Compact
+# R-LABEL: function f26 name="readsOfFloat64Array"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-12: : number @Double = GetTypedArrayElement v0,
+# R-NOT: = GetTypedArrayElement
+function f27 name="storesInUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
+    v9 = IsInsideView v0, v1 typedArrayType=2
+    TestAndBranch v9 -> taken b1(| 0), notTaken b11()
+  b1(v10):
+    v11 = IsInsideView v0, v2 typedArrayType=2
+    TestAndBranch v11 -> taken b2(| 0), notTaken b11()
+  b2(v12):
+    v13 = IsInsideView v0, v3 typedArrayType=2
+    TestAndBranch v13 -> taken b3(| 0), notTaken b11()
+  b3(v14):
+    v15 = IsInsideView v0, v4 typedArrayType=2 [keyIsIntegral]
+    TestAndBranch v15 -> taken b4(| 0), notTaken b11()
+  b4(v16):
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Branch v8 -> taken b6(), notTaken b7()
+  b7():
+    Branch v8 -> taken b5(), notTaken b8()
+  b8():
+    Branch v8 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=2 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f27: size=
+# CHECK-NOT: operationAOTTypedArrayPut
+# S: f27 b4 Balanced
+# S: f27 b6 Fast
+# S: f27 b9 Compact
+# R-LABEL: function f27 name="storesInUint8Array"
+# R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
+# R: PutTypedArrayElement v0, v1, v5, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v6, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v7, v10 typedArrayType=
+function f28 name="storesInUint32Array" parameters=[{type=Uint32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Uint32Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
+    v9 = IsInsideView v0, v1 typedArrayType=7
+    TestAndBranch v9 -> taken b1(| 0), notTaken b11()
+  b1(v10):
+    v11 = IsInsideView v0, v2 typedArrayType=7
+    TestAndBranch v11 -> taken b2(| 0), notTaken b11()
+  b2(v12):
+    v13 = IsInsideView v0, v3 typedArrayType=7
+    TestAndBranch v13 -> taken b3(| 0), notTaken b11()
+  b3(v14):
+    v15 = IsInsideView v0, v4 typedArrayType=7 [keyIsIntegral]
+    TestAndBranch v15 -> taken b4(| 0), notTaken b11()
+  b4(v16):
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    Branch v8 -> taken b6(), notTaken b7()
+  b7():
+    Branch v8 -> taken b5(), notTaken b8()
+  b8():
+    Branch v8 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=7 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=7 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f28: size=
+# CHECK-NOT: operationAOTTypedArrayPut
+# S: f28 b4 Balanced
+# S: f28 b6 Fast
+# S: f28 b9 Compact
+# R-LABEL: function f28 name="storesInUint32Array"
+# R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
+# R: PutTypedArrayElement v0, v1, v5, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v6, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v7, v10 typedArrayType=
+function f29 name="storesInFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Float64Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
+    v9 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v9 -> taken b1(| 0), notTaken b11()
+  b1(v10):
+    v11 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v11 -> taken b2(| 0), notTaken b11()
+  b2(v12):
+    v13 = IsInsideView v0, v3 typedArrayType=10
+    TestAndBranch v13 -> taken b3(| 0), notTaken b11()
+  b3(v14):
+    v15 = IsInsideView v0, v4 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v15 -> taken b4(| 0), notTaken b11()
+  b4(v16):
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b5()
+  b5():
+    LoopHint
+    Jump -> next b6()
+  b6():
+    LoopHint
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    Branch v8 -> taken b6(), notTaken b7()
+  b7():
+    Branch v8 -> taken b5(), notTaken b8()
+  b8():
+    Branch v8 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    PutTypedArrayElement v0, v1, v5, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v6, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v1, v7, v10 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v5, v12 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v3, v7, v14 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v4, v7, v16 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    Jump -> next b10()
+  b10():
+    Return
+  b11() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: f29: size=
+# CHECK-NOT: operationAOTTypedArrayPut
+# S: f29 b4 Balanced
+# S: f29 b6 Fast
+# S: f29 b9 Compact
+# R-LABEL: function f29 name="storesInFloat64Array"
+# R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
+# R: PutTypedArrayElement v0, v1, v5, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v6, v10 typedArrayType=
+# R-NEXT: PutTypedArrayElement v0, v1, v7, v10 typedArrayType=

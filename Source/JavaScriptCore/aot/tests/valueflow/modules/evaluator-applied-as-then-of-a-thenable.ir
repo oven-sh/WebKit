@@ -1,0 +1,22 @@
+# Promise.all([{ then: Function }])
+# Promise.all finds the member by the name of its protocol and calls it. No operation of the program spells the call out and the evaluator is no operand of a call,
+# and it is applied all the same: a built-in that lets in unseen code does so wherever it is applied, also in a protocol that native code runs for a statement of the program
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v6 -> {{*}}PromiseAll
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thenable" fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewArray v2 contents=anything
+    v4 = Builtin builtin=Promise
+    v5 = PropGet v4 key="all"
+    v6 = Call v5, v4, v3 calleeKey="all"
+    Return
+}

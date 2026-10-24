@@ -1,0 +1,45 @@
+# The call sites of a function: direct calls and calls by value whose callee set lists it. Without flow's word about the callers the count is complete only where nothing but direct calls names the function
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+
+variable g0 name="calledHereAndThere" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="oneOfTwoCallees" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 callees=[f1]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g1
+    Jump -> next b3(v3)
+  b2():
+    v4 = GetModuleVariable variable=g0
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v5, -, v2 callees=[f1, f2]
+    v7 = CallDirect v6 function=f3
+    v8 = CallDirect v7 function=f4
+    v9 = CallDirect v8 function=f4
+    Return v9
+}
+function f1 name="calledHereAndThere" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="oneOfTwoCallees" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="calledDirectlyOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="calledDirectlyTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f1: {{*}} | sites 0 | {{*}} | call sites 2 Unknown
+# CHECK: f2: {{*}} | sites 0 | {{*}} | call sites 1 Unknown
+# CHECK: f3: {{*}} | sites 1 | {{*}} | call sites 1 Complete
+# CHECK: f4: {{*}} | sites 2 | {{*}} | call sites 2 Complete

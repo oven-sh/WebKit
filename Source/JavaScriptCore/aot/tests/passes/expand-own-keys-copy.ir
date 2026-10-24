@@ -1,0 +1,141 @@
+# `{ ...source }` of code without types: under the tests of each layout and key order the copy is an allocation of the source's layout that lists the slots in that order, and the operation stays on the rare path
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}]}
+layout L1 name="Closed" fields=[{key="x" declared={type=number} flow={location={stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={baseState=None constructorOrders=[{fields=[0, 1]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L2 name="WithSymbol" fields=[{key="a" declared={type=number}}, {key=@@iterator declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L3 name="WithMethod" fields=[{key="n" declared={type=number}}, {key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f9}}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L4 kind=Instance name="Instance" constructor=f10 fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+layout L5 name="ReadOnly" fields=[{key="x" declared={type=number} form=[IsReadOnly]}] flow={constructorOrders=[{fields=[0]}]}
+
+function f0 name="expected" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = CopyObject v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="expected"
+# CHECK: [[done0]](v1: object):
+# CHECK-NEXT: Return v1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[original0]]: object = CopyObject v0
+# CHECK-NEXT: Jump -> next [[done0]]([[original0]])
+# CHECK: = ShapeTest {{*}} layouts=[L0]
+# CHECK: = HasKeyOrder {{*}} layout=L0 fields=[0, 1]
+# CHECK: [[xA]]: {{*}} = GetSlot {{*}} key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: [[yA]]: {{*}} = GetSlot {{*}} key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: [[copyA]]: L0 = NewObject -, [[xA]], [[yA]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[done0]]([[copyA]])
+# CHECK: = HasKeyOrder {{*}} layout=L0 fields=[1, 0]
+# CHECK: [[yB]]: {{*}} = GetSlot {{*}} key="y" receivers=[L0] level=Expected
+# CHECK-NEXT: [[xB]]: {{*}} = GetSlot {{*}} key="x" receivers=[L0] level=Expected
+# CHECK-NEXT: [[copyB]]: L0 = NewObject -, [[yB]], [[xB]] layout=L0 fields=[1, 0]
+# CHECK-NEXT: Jump -> next [[done0]]([[copyB]])
+
+function f1 name="provenWithOneOrder" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = CopyObject v0
+    Return v1
+}
+# A field that is set once, at creation, is set once in the copy too.
+# CHECK-LABEL: function f1 name="provenWithOneOrder"
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyObject
+# CHECK: [[x1]]: {{*}} = GetSlot v0 key="x" receivers=[L1] level=Proven
+# CHECK-NEXT: [[y1]]: {{*}} = GetSlot v0 key="y" receivers=[L1] level=Proven
+# CHECK-NEXT: [[copy1]]: L1 = NewObject -, [[x1]], [[y1]] layout=L1 fields=[0, 1]
+# CHECK-NOT: CopyObject
+
+function f2 name="provenOrNullish" parameters=[{type=undefined|L1}] results=[{type=anything}] {
+  b0(v0: undefined|L1):
+    v1 = CopyObject v0
+    Return v1
+}
+# undefined and null give an empty object, which the operation makes.
+# CHECK-LABEL: function f2 name="provenOrNullish"
+# CHECK: = TypeTest v0 testedType=object
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = CopyObject v0
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[0, 1]
+
+function f3 name="oneOfTwoLayoutsIsCopiedSo" parameters=[{type=L1|L4}] results=[{type=anything}] {
+  b0(v0: L1|L4):
+    v1 = CopyObject v0
+    Return v1
+}
+# The copy of an instance is no instance: it stays with the operation, though flow has proven the layouts.
+# CHECK-LABEL: function f3 name="oneOfTwoLayoutsIsCopiedSo"
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK-NOT: layouts=[L4]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = CopyObject v0
+# CHECK-NOT: layout=L4
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[0, 1]
+# CHECK-NOT: layout=L4
+
+function f4 name="symbolKey" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = CopyObject v0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="symbolKey"
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+
+function f5 name="closureMadeAtTheFirstRead" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
+    v1 = CopyObject v0
+    Return v1
+}
+# CHECK-LABEL: function f5 name="closureMadeAtTheFirstRead"
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+
+function f6 name="instance" parameters=[{type=L4}] results=[{type=anything}] {
+  b0(v0: L4):
+    v1 = CopyObject v0
+    Return v1
+}
+# CHECK-LABEL: function f6 name="instance"
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+
+function f7 name="readOnlyField" parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = CopyObject v0
+    Return v1
+}
+# CHECK-LABEL: function f7 name="readOnlyField"
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+
+function f8 name="leavesKeysOut" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = CopyObject v0 excludedKeys=["x"]
+    Return v1
+}
+# CHECK-LABEL: function f8 name="leavesKeysOut"
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0 excludedKeys=["x"]
+# CHECK-NOT: NewObject
+# CHECK-LABEL: function f9 name="run"
+
+function f9 name="run" results=[{type=undefined}] {
+  b0():
+    Return
+}
+
+function f10 name="Instance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}

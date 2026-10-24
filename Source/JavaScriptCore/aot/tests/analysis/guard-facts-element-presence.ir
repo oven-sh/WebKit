@@ -1,0 +1,265 @@
+# The guard of a passed test for a present element proves that this position of this array holds an element: to a read of a present element, which then needs nothing of the prototypes, and to an access inside the length. The test of the bounds proves no element, because a position inside the length may hold a hole. The test read the element, so its proof ends where an element of an array that may be this one is written. The guard of a passed test for a position inside a view lasts until the view may change its length. Each function named bad is refused for one reason, and differs in it from a function named good
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 9
+# DIAGNOSTIC: GuardNotAvailable 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodPresentRead" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [isPresent]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f1 name="goodReadInsideTheLength" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double [keyIsIntegral]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="goodTestOfArrayWithProvenKind" parameters=[{type=Array<number, proven, Double>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double>, v1: number):
+    v2 = IsElementPresent v0, v1 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Double level=Proven [isPresent]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+function f3 name="goodReadInsideTheLengthBehindTheTestOfTheBounds" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f4 name="badPresentReadAtAnotherPosition" parameters=[{type=Array<number>}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: number):
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v2, v7 arrayStorage=Double level=Expected [isPresent]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f5 name="badReadInsideTheLengthAtAnotherPosition" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000], v2: int[0, 1000]):
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double [keyIsIntegral]
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f6 name="badPresentReadBehindTheTestOfTheBounds" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f7 name="badPresentReadOfAnotherArray" parameters=[{type=Array<number>}, {type=number}, {type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: Array<number>):
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v2, v1, v7 arrayStorage=Double level=Expected [isPresent]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f8 name="badReadThatMayFindNothingWithoutThePrototypes" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f9 name="badTestWithoutTheKindOfStorage" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = IsElementPresent v0, v1 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v1
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f10 name="badTestUnderAnotherKindOfStorage" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    Return v1
+  b3():
+    v6 = Undefined
+    Return v6
+}
+function f11 name="badPresentReadAfterStoreIntoArrayThatMayBeThisOne" parameters=[{type=Array<number>}, {type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: Array<number, pristine[Storage, Names]>, v3: int[0, 1000], v4: number):
+    v5 = HasArrayStorage v0 arrayStorage=Double
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsElementPresent v0, v1, v6 arrayStorage=Double
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    PutArrayElement v2, v3, v4 arrayStorage=Other mode=Strict level=Proven [keyIsIntegral]
+    v11 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Expected [isPresent]
+    Return v11
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f12 name="badPresentReadAfterCall" parameters=[{type=Array<number>}, {type=number}, {type=function}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: function):
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = Call v2, -
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [isPresent]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f13 name="badPresentReadAfterStoreInsideTheLength" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000], v2: i32):
+    v3 = HasArrayStorage v0 arrayStorage=Double [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsElementPresent v0, v1, v4 arrayStorage=Double [keyIsIntegral]
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Double mode=Strict level=Expected [keyIsIntegral, isInBounds]
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f14 name="goodReadInsideTheLengthAfterStoreInsideTheLength" parameters=[{type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: int[0, 1000], v2: i32):
+    v3 = HasArrayStorage v0 arrayStorage=Double [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Double mode=Strict level=Expected [keyIsIntegral, isInBounds]
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f15 name="goodAccessesInsideTheView" parameters=[{type=Uint8Array}, {type=number}, {type=int[0, 255]}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number, v2: int[0, 255]):
+    v3 = IsInsideView v0, v1 typedArrayType=2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutTypedArrayElement v0, v1, v2, v4 typedArrayType=2 level=Proven [isInsideView]
+    v6 = GetTypedArrayElement v0, v1, v4 typedArrayType=2 level=Proven [isInsideView]
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f16 name="badAccessInsideTheViewAtAnotherPosition" parameters=[{type=Uint8Array}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number, v2: number):
+    v3 = IsInsideView v0, v1 typedArrayType=2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v2, v4 typedArrayType=2 level=Proven [isInsideView]
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+}
+function f17 name="badAccessInsideTheViewWithoutGuard" parameters=[{type=Uint8Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number):
+    v2 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven [isInsideView]
+    Return v2
+}
+function f18 name="badAccessInsideTheViewAfterCall" parameters=[{type=Uint8Array}, {type=number}, {type=function}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number, v2: function):
+    v3 = IsInsideView v0, v1 typedArrayType=2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Call v2, -
+    v6 = GetTypedArrayElement v0, v1, v4 typedArrayType=2 level=Proven [isInsideView]
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

@@ -1,0 +1,98 @@
+# Seven rows are one exact read or write of one location; a row that does more, answers a test, or names a place that holds many values is not exact
+# FORM: Prepared
+# RUN: locations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Widget" fields=[{key="run" declared={type=f7} flow={location={deferral=CapturesNothing deferredFunction=f7} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+variable g0 name="first" declared={type=anything} initialization=Undefined
+variable g1 name="second" declared={type=anything} initialization=Undefined
+function f0 name="variables" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1 GetModuleVariable: read ModuleVariables[g1] stability=Unknown
+# CHECK-NEXT: v2 PutModuleVariable: write ModuleVariables[g0] stored=v0 stability=Unknown
+function f1 name="environmentFields" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v2 GetEnvironmentField: read EnvironmentFields[L0, 1] base=v0 stability=Unknown
+# CHECK-NEXT: v3 PutEnvironmentField: write EnvironmentFields[L0, 0] base=v0 stored=v1 stability=Unknown
+function f2 name="slots" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L1, v1: number):
+    v2 = GetSlot v0 key="x" receivers=[L1] level=Proven
+    v3 = GetSlotOrUndefined v0 key="y" receivers=[L1] level=Proven
+    PutSlot v0, -, v1 key="y" receivers=[L1] level=Proven
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 GetSlot: read ObjectFields["x"] base=v0 stability=Unknown
+# CHECK-NEXT: v3 GetSlotOrUndefined: read ObjectFields["y"] base=v0 stability=Unknown
+# CHECK-NEXT: v4 PutSlot: write ObjectFields["y"] base=v0 stored=v1 stability=Unknown
+function f3 name="slotsUnderGuard" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
+  b0(v0: object, v1: number):
+    v2 = ShapeTest v0 layouts=[L1]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L1] level=Proven
+    PutSlot v0, v3, v1 key="x" receivers=[L1] level=Proven
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v2 ShapeTest: not exact
+# CHECK-NEXT: v4 GetSlot: read ObjectFields["x"] base=v0 stability=Unknown
+# CHECK-NEXT: v5 PutSlot: write ObjectFields["x"] base=v0 stored=v1 stability=Unknown
+# CHECK-NOT: overlap
+function f4 name="slotRowsWithMoreEffects" parameters=[{type=L1}, {type=number}, {type=L2}] results=[{type=undefined}] {
+  b0(v0: L1, v1: number, v2: L2):
+    v3 = IsSlotFilled v0 key="x" receivers=[L1] level=Proven
+    v4 = GetDeferredClosureSlot v2 key="run" receivers=[L2] level=Proven
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L1] level=Proven
+    v6 = PropGet v0 key="x"
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 IsSlotFilled: not exact
+# CHECK-NEXT: v4 GetDeferredClosureSlot: not exact
+# CHECK-NEXT: v5 PutSlotOrAdd: not exact
+# CHECK-NEXT: v6 PropGet: not exact
+function f5 name="twoLocations" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = IsPlainDataObject v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetOwnDataProperty v0, v2 key="x"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: v3 GetOwnDataProperty: not exact
+function f6 name="contents" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Arguments}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: Arguments, v2: number):
+    v3 = GetArrayLength v0
+    v4 = GetMappedArgument v1 index=0
+    SetMappedArgument v1, v2 index=0
+    AppendElement v0, v2
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v3 GetArrayLength: not exact
+# CHECK-NEXT: v4 GetMappedArgument: not exact
+# CHECK-NEXT: v5 SetMappedArgument: not exact
+# CHECK-NEXT: v6 AppendElement: not exact
+# CHECK-NEXT: overlap Elements[Array] Elements[Arguments]: None
+function f7 name="callback" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}

@@ -1,0 +1,44 @@
+# A walk over own keys in a block that runs at most once stays a call, and the same walk in a function that is called twice is expanded
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot only-passes=ResolveBuiltins,ExpandOwnKeys
+# RUN: pipeline ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=ObjectValues
+    v4 = Call v3, -, v2
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v4
+    v7 = CallDirect v1 function=f1
+    v8 = Call v5, -, v7
+    v9 = CallDirect v1 function=f1
+    v10 = Call v5, -, v9
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v2:{{*}}= NewObject -, v1, v1 layout=L0 fields=[0, 1]
+# CHECK: v4:{{*}}= CallBuiltin -, v2 overload=ObjectValues/0
+# CHECK-NOT: GetSlot
+
+function f1 name="calledTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f1 name="calledTwice"
+# CHECK: v1:{{*}}= NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NOT: CallBuiltin
+# CHECK: [[x]]:{{*}}= GetSlot v1{{*}} key="x" receivers=[L0]
+# CHECK-NEXT: [[y]]:{{*}}= GetSlot v1{{*}} key="y" receivers=[L0]
+# CHECK-NEXT: = NewArray [[x]], [[y]] contents=anything
+# CHECK-NOT: CallBuiltin

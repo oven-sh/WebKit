@@ -1,0 +1,40 @@
+# A stack check belongs to the code that sets a frame up: a leaf without a frame has none, a function that calls has one at its entry, and a leaf that calls only in rare code has one there
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:ElideStackChecks
+# CHECK: f1: size={{*}} frame=none {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: f2: size={{*}} frame={{*}}@[[setup]]-{{*}} prologueChecks=1
+# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: f3: size=
+# CHECK-NOT: @[[setup]]-
+# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: prologueChecks=1
+# CHECK: f5: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="leaf" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="callsOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f3 name="callsInRareCode" results=[{type=anything}] {
+  b0():
+    v0 = BigInt digits="12345678901234567890"
+    Return v0
+}

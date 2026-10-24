@@ -1,0 +1,45 @@
+# The namespace object of a compiled module whose export names are all known is made from tables: asking for it runs no code, so one that nobody uses goes.
+# A module that takes names from a module of another kind, a CommonJS module, the face of one whose names only a run shows, code that is not compiled and a deferred import are asked at run time, and stay
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=number} initialization=Undefined
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 phase=Defer}, {target=m6 completes=true}]
+module m1 path="lib.js" displayPath="lib.js" exports=[{name="a" variable=g0}]
+module m2 path="star.js" displayPath="star.js" requests=[{target=m4 isDynamicStarExport=true completes=true}]
+module m3 path="common.cjs" displayPath="common.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m4 path="plain.js" displayPath="plain.js" kind=External referrer=m2
+module m5 path="lazy.js" displayPath="lazy.js"
+module m6 path="#6" displayPath="common.cjs" exportRule=CommonJs requests=[{target=m3 kind=Require completes=true}]
+
+function f0 name="unused" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = ModuleNamespace module=m2
+    v2 = ModuleNamespace module=m3
+    v3 = ModuleNamespace module=m4
+    v4 = ModuleNamespace module=m5 phase=Defer
+    v5 = ModuleNamespace module=m6
+    v6 = Undefined
+    Return v6
+}
+# CHECK-LABEL: function f0 name="unused"
+# CHECK-NOT: ModuleNamespace module=m1
+# CHECK: = ModuleNamespace module=m2
+# CHECK-NEXT: = ModuleNamespace module=m3
+# CHECK-NEXT: = ModuleNamespace module=m4
+# CHECK-NEXT: = ModuleNamespace module=m5 phase=Defer
+# CHECK-NEXT: = ModuleNamespace module=m6
+function f1 name="common" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="used" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    Return v0
+}
+# CHECK-LABEL: function f2 name="used"
+# CHECK: = ModuleNamespace module=m1

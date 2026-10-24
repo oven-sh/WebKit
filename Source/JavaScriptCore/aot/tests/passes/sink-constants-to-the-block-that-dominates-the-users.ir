@@ -1,0 +1,181 @@
+# A value whose users lie in a cycle or reach each other is created once, in the lowest block outside of every cycle that dominates them
+# FORM: Prepared
+# RUN: pass SinkConstants
+# STATISTIC: SinkConstantsChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callback" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f1 name="userInACycleBehindAnEarlyReturn" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: anything):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Return v3
+  b2():
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v5 = Call v1, -, v2
+    v6 = ToBoolean v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b4():
+    v7 = Undefined
+    Return v7
+}
+# CHECK-LABEL: function f1
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b2():
+# CHECK-NEXT: [[moved1]]: f0 = NewClosure function=f0
+# CHECK-NEXT: Jump
+# CHECK: b3():
+# CHECK: = Call v1, -, [[moved1]]
+# CHECK-NOT: NewClosure
+
+function f2 name="userReachesOtherUserBehindAnEarlyReturn" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    v3 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Call v2, -, v3
+    Jump -> next b4()
+  b4():
+    v5 = Call v2, -, v3
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b2():
+# CHECK-NEXT: [[moved2]]: f0 = NewClosure function=f0
+# CHECK-NEXT: Branch
+# CHECK: b3():
+# CHECK-NEXT: = Call v2, -, [[moved2]]
+# CHECK: b4():
+# CHECK-NEXT: = Call v2, -, [[moved2]]
+
+function f3 name="firstUserStandsInTheDominatingBlock" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v3 = ToBoolean v1
+    v4 = Call v1, -, v2
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v5 = Call v1, -, v2
+    Return v5
+  b4():
+    Return v4
+}
+# CHECK-LABEL: function f3
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b2():
+# CHECK-NEXT: = ToBoolean
+# CHECK-NEXT: [[moved3]]: f0 = NewClosure function=f0
+# CHECK-NEXT: = Call v1, -, [[moved3]]
+# CHECK: b3():
+# CHECK-NEXT: = Call v1, -, [[moved3]]
+
+function f4 name="createdInACycle" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewClosure function=f0
+    Branch v0 -> taken b2(), notTaken b4()
+  b2():
+    v4 = Call v1, -, v3
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    v5 = Call v1, -, v3
+    Jump -> next b4()
+  b4():
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b5()
+  b5():
+    v7 = Undefined
+    Return v7
+}
+# CHECK-LABEL: function f4
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = NewClosure
+# CHECK: b2():
+# CHECK-NOT: NewClosure
+
+function f5 name="usersInBothArms" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Call v1, -, v2
+    Jump -> next b2()
+  b2():
+    v4 = Call v1, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f5
+# CHECK: b0(
+# CHECK-NEXT: = NewClosure
+# CHECK: b1(
+# CHECK-NOT: NewClosure
+
+function f6 name="handlerOfTheDominatingBlockIsAUser" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3():
+    v3 = Call v1, -, v2
+    Return v3
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Call v1, -, v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f6
+# CHECK: b0(
+# CHECK-NEXT: = NewClosure
+# CHECK: b1(
+# CHECK-NOT: NewClosure
+
+function f7 name="handlerBehindTheDominatingBlockIsAUser" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Return v1
+  b3() handler=b4():
+    v3 = Call v1, -, v2
+    Return v3
+  b4() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Call v1, -, v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f7
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[moved7]]: f0 = NewClosure function=f0
+# CHECK-NEXT: Jump
+# CHECK: = Call v1, -, [[moved7]]
+# CHECK: = Call v1, -, [[moved7]], v4

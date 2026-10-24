@@ -1,0 +1,54 @@
+# A variable that is stored once, with a RegExp literal, and that no read sees before the store stays empty until its first read: the body does not make the object, and each read makes it where it finds the variable empty
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass DeferDefinitions
+# STATISTIC: RegExpsDeferredInVariables = 1
+# CHECK: outcome: Changed
+# CHECK: variable g0 name="deferred" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g1 name="exported" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g2 name="mayBeReadWhileUndefined" module=m0 declared={type=undefined|RegExp} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g3 name="usedAtStart" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: pattern="deferred"
+# CHECK-NOT: variable=g0
+# CHECK: = NewRegExp pattern="exported"
+# CHECK: = NewRegExp pattern="early"
+# CHECK: = NewRegExp pattern="used"
+# CHECK: Return
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: [[held]]:{{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: [[isEmpty]]: boolean = TypeTest [[held]] testedType=absent
+# CHECK-NEXT: Branch [[isEmpty]] -> taken [[make]](| 0), notTaken [[filled]](| 0)
+# CHECK: = Call {{*}}v0
+# CHECK: [[make]]({{*}}) frequency=Rare:
+# CHECK-NEXT: [[made]]:{{*}}= NewRegExp pattern="deferred" regExpFlags=[Global]
+# CHECK-NEXT: PutModuleVariable [[made]] variable=g0
+# CHECK-NEXT: Jump {{*}}([[made]])
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 exports=[{name="exported" variable=g1}]
+entry module=m0
+variable g0 name="deferred" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="exported" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g2 name="mayBeReadWhileUndefined" module=m0 declared={type=undefined|RegExp} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce}
+variable g3 name="usedAtStart" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="deferred" regExpFlags=[Global]
+    PutModuleVariable v0 variable=g0
+    v2 = NewRegExp pattern="exported"
+    PutModuleVariable v2 variable=g1
+    v4 = NewRegExp pattern="early"
+    PutModuleVariable v4 variable=g2
+    v6 = NewRegExp pattern="used"
+    PutModuleVariable v6 variable=g3
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v6
+    Return
+}
+function f1 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0, -, v1
+    Return v2
+}

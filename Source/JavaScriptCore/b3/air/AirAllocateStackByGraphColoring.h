@@ -27,6 +27,8 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirStackColoring.h"
+
 namespace JSC { namespace B3 { namespace Air {
 
 class Code;
@@ -39,7 +41,7 @@ class Code;
 // This is meant to be an optimal stack allocator, focused on generating great code. It's not
 // particularly fast, though.
 
-void allocateStackByGraphColoring(Code&);
+JS_EXPORT_PRIVATE StackColoring allocateStackByGraphColoring(Code&);
 
 } } } // namespace JSC::B3::Air
 

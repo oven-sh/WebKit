@@ -1,0 +1,42 @@
+# function* numbers() { yield 1 }  for (const n of numbers()) break
+# The loop steps the generator by rule. A later pass links the functions of the library behind next and return, so both are reached with the loop (runtimefunction 71 and 87).
+# Nothing throws into the generator (runtimefunction 93).
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=70 function=f2 visibility=Private
+runtimefunction id=86 function=f3 visibility=Private
+runtimefunction id=92 function=f4 visibility=Private
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = IteratorOpen v1
+    v3 = IteratorResume v2
+    IteratorClose v2
+    Return
+}
+function f1 name="numbers" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="return" role=Library flags=[HasThis] enclosingRuntimeFunction=86 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f4 name="throw" role=Library flags=[HasThis] enclosingRuntimeFunction=92 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

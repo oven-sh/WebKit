@@ -1,0 +1,51 @@
+# The parameter of a typed function is only expected to be of its type, and a Check at the head of the body proves it. A call that passes one known function still goes to a copy for that function,
+# where the type of the parameter says so and the Check asks for nothing
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls SimplifyCasts
+# STATISTIC: CalleeVersions = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="apply" flags=[IsChecked] parameters=[{type=undefined|null|f0|f1 site=w0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|f0|f1, v1: anything):
+    v2 = Check v0 castType=undefined|null|f0|f1 site=w0
+    v3 = Call v2, -, v1
+    v4 = Add v3, v1
+    v5 = Add v4, v1
+    v6 = Add v5, v1
+    v7 = Add v6, v1
+    v8 = Add v7, v1
+    v9 = Add v8, v1
+    v10 = Add v9, v1
+    v11 = Add v10, v1
+    v12 = Add v11, v1
+    v13 = Add v12, v1
+    v14 = Add v13, v1
+    v15 = Add v14, v1
+    Return v15
+}
+function f3 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f0
+    v2 = CallDirect v1, v0 function=f2
+    v3 = CallDirect v1, v0 function=f2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="passesKnownFunction"
+# CHECK: = CallDirect v1, v0 function=[[forDouble]]
+# CHECK-NEXT: = CallDirect v1, v0 function=[[forDouble]]
+# CHECK: function [[forDouble]] name="apply" {{*}}role=CalleeVersion {{*}}parameters=[{type=f0}, {type=anything}]
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NOT: Check

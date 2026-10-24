@@ -1,0 +1,66 @@
+# A callee may be copied for each function that its parameter is seen to receive. What the copies would take in all is bounded: beyond it one copy serves whatever function is passed
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxBytesOfCalleeVersions:700
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 3
+# LOSS: MaxBytesOfCalleeVersions
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="square" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    Return v1
+}
+function f2 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Sub v0, v0
+    Return v1
+}
+function f3 name="handedTwoFunctions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1, v1: anything):
+    v2 = Call v0, -, v1
+    v3 = Call v0, -, v2
+    v4 = Call v0, -, v3
+    v5 = Call v0, -, v4
+    v6 = Call v0, -, v5
+    v7 = Call v0, -, v6
+    v8 = Call v0, -, v7
+    v9 = Call v0, -, v8
+    Return v9
+}
+function f4 name="handedThreeFunctions" parameters=[{type=f0|f1|f2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1|f2, v1: anything):
+    v2 = Call v0, -, v1
+    v3 = Call v0, -, v2
+    v4 = Call v0, -, v3
+    v5 = Call v0, -, v4
+    v6 = Call v0, -, v5
+    v7 = Call v0, -, v6
+    v8 = Call v0, -, v7
+    v9 = Call v0, -, v8
+    Return v9
+}
+function f5 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v1, v0 function=f3
+    v4 = CallDirect v2, v3 function=f3
+    v5 = CallDirect v1, v4 function=f4
+    v6 = CallDirect v2, v5 function=f4
+    Return v6
+}
+# CHECK-LABEL: name="caller"
+# CHECK: = CallDirect v1, v0 function=[[forDouble]]
+# CHECK: = CallDirect v2, {{*}} function=[[forSquare]]
+# CHECK: = CallDirect v1, {{*}} function=[[forAny]]
+# CHECK: = CallDirect v2, {{*}} function=[[forAny]]
+# CHECK: function [[forDouble]] name="handedTwoFunctions"{{*}}role=CalleeVersion
+# CHECK: function [[forSquare]] name="handedTwoFunctions"{{*}}role=CalleeVersion
+# CHECK: function [[forAny]] name="handedThreeFunctions"{{*}}role=CalleeVersion

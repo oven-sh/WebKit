@@ -1,0 +1,451 @@
+# A callee may read, fill, call and pass on a cell of its caller's frame. It may not store the pointer in a cell, however soon that cell dies, capture it, keep it across a suspension, return it, throw it, hand it to a built-in or look it up under a computed key, and neither may a function it passes the pointer to
+# FORM: AsRead
+# RUN: frame-pointers flow
+# DIAGNOSTIC: CalleeRetainsFramePointer 20
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="y" declared={type=anything}}]
+layout L1 name="Holder" fields=[{key="held" declared={type=anything}}]
+layout L2 kind=Environment name="scope" fields=[{key="o" declared={type=anything}}]
+layout L3 name="OnlyRead" fields=[{key="y" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    v5 = CallDirect v1 function=f4
+    v6 = CallDirect v1 function=f5
+    v7 = CallDirect v1 function=f6
+    v8 = CallDirect v1 function=f7
+    v9 = CallDirect v1 function=f8
+    v10 = CallDirect v1 function=f9
+    v11 = CallDirect v1 function=f10
+    v12 = CallDirect v1 function=f11
+    v13 = CallDirect v1 function=f12
+    v14 = CallDirect v1 function=f13
+    v15 = CallDirect v1 function=f14
+    v16 = CallDirect v1 function=f15
+    v17 = CallDirect v1 function=f16
+    v18 = CallDirect v1 function=f17
+    v19 = CallDirect v1 function=f18
+    v20 = CallDirect v1 function=f19
+    v21 = CallDirect v1 function=f20
+    v22 = CallDirect v1 function=f21
+    v23 = CallDirect v1 function=f22
+    v24 = CallDirect v1 function=f23
+    Return
+}
+
+function f1 name="givenToReadsField" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L3 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f24
+    Return
+}
+# CHECK: function f1
+# CHECK: v2 v3(0) may leak: no
+
+function f2 name="givenToPassesToReading" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L3 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f25
+    Return
+}
+# CHECK: function f2
+# CHECK: v2 v3(0) may leak: no
+
+function f3 name="givenToCalls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f49 storage=Frame
+    v2 = CallDirect v1 function=f26
+    Return
+}
+# CHECK: function f3
+# CHECK: v1 v2(0) may leak: no
+
+function f4 name="givenToStoresInArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f27
+    Return
+}
+# CHECK: function f4
+# CHECK: v2 v3(0) may leak: yes
+
+function f5 name="givenToStoresInRecord" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f28
+    Return
+}
+# CHECK: function f5
+# CHECK: v2 v3(0) may leak: yes
+
+function f6 name="givenToStoresInFieldLater" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f29
+    Return
+}
+# CHECK: function f6
+# CHECK: v2 v3(0) may leak: yes
+
+function f7 name="givenToStoresInElement" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f30
+    Return
+}
+# CHECK: function f7
+# CHECK: v2 v3(0) may leak: yes
+
+function f8 name="givenToStoresInOtherParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = Null
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = CallDirect v2, v4 function=f31
+    Return
+}
+# CHECK: function f8
+# CHECK: v2 v5(0) may leak: yes
+
+function f9 name="givenToStoresInVariable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f32
+    Return
+}
+# CHECK: function f9
+# CHECK: v2 v3(0) may leak: yes
+
+function f10 name="givenToCapturesInClosure" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f33
+    Return
+}
+# CHECK: function f10
+# CHECK: v2 v3(0) may leak: yes
+
+function f11 name="givenToStoresInEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f34
+    Return
+}
+# CHECK: function f11
+# CHECK: v2 v3(0) may leak: yes
+
+function f12 name="givenToTakesRest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = NewClosure function=f35
+    v4 = Call v3, -, v2
+    Return
+}
+# CHECK: function f12
+# CHECK: v2 v4(2) may leak: yes
+
+function f13 name="givenToSuspends" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f36
+    Return
+}
+# CHECK: function f13
+# CHECK: v2 v3(0) may leak: yes
+
+function f14 name="givenToReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f37
+    Return
+}
+# CHECK: function f14
+# CHECK: v2 v3(0) may leak: yes
+
+function f15 name="givenToThrows" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f38
+    Return
+}
+# CHECK: function f15
+# CHECK: v2 v3(0) may leak: yes
+
+function f16 name="givenToPassesToStoring" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f39
+    Return
+}
+# CHECK: function f16
+# CHECK: v2 v3(0) may leak: yes
+
+function f17 name="givenToListsKeys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f40
+    Return
+}
+# CHECK: function f17
+# CHECK: v2 v3(0) may leak: yes
+
+function f18 name="givenToAsksForPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f41
+    Return
+}
+# CHECK: function f18
+# CHECK: v2 v3(0) may leak: yes
+
+function f19 name="givenToAsksForOwnKey" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f42
+    Return
+}
+# CHECK: function f19
+# CHECK: v2 v3(0) may leak: yes
+
+function f20 name="givenToPassesToListing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f43
+    Return
+}
+# CHECK: function f20
+# CHECK: v2 v3(0) may leak: yes
+
+function f21 name="givenToReadsByKey" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2, v0 function=f44
+    Return
+}
+# CHECK: function f21
+# CHECK: v2 v3(0) may leak: yes
+
+function f22 name="givenToRevives" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f49 storage=Frame
+    v2 = CallDirect v1 function=f45
+    Return
+}
+# CHECK: function f22
+# CHECK: v1 v2(0) may leak: yes
+
+function f23 name="givenToPassesToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
+    v3 = CallDirect v2 function=f46
+    Return
+}
+# CHECK: function f23
+# CHECK: v2 v3(0) may leak: yes
+
+function f24 name="readsField" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+
+function f25 name="passesToReading" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: L3):
+    v1 = CallDirect v0 function=f24
+    Return v1
+}
+
+function f26 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+
+function f27 name="storesInArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v1 key="length"
+    Return v2
+}
+
+function f28 name="storesInRecord" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = PropGet v1 key="held"
+    v3 = PropGet v2 key="y"
+    Return v3
+}
+
+function f29 name="storesInFieldLater" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    PropSet v2, v0 key="held" mode=Strict
+    Return
+}
+
+function f30 name="storesInElement" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = NewArray v1 contents=anything
+    ElemSet v2, v1, v0 mode=Strict
+    Return
+}
+
+function f31 name="storesInOtherParameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v1, v0 key="held" mode=Strict
+    Return
+}
+
+function f32 name="storesInVariable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+
+function f33 name="capturesInClosure" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f47
+    v2 = Call v1
+    Return v2
+}
+
+function f34 name="storesInEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = NewClosure v1 function=f48
+    v3 = Call v2
+    Return v3
+}
+
+function f35 name="takesRest" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+
+function f36 name="suspends" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+
+function f37 name="returns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f38 name="throws" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Throw v0
+}
+
+function f39 name="passesToStoring" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f27
+    Return v1
+}
+
+function f40 name="listsKeys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="keys"
+    v4 = Call v3, v2, v0
+    Return
+}
+
+function f41 name="asksForPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Object" [isFreeName]
+    v3 = PropGet v2 key="getPrototypeOf"
+    v4 = Call v3, v2, v0
+    Return
+}
+
+function f42 name="asksForOwnKey" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="hasOwnProperty"
+    v2 = String string="y"
+    v3 = Call v1, v0, v2 calleeKey="hasOwnProperty"
+    Return v3
+}
+
+function f43 name="passesToListing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f40
+    Return v1
+}
+
+function f44 name="readsByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+
+function f45 name="revives" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="JSON" [isFreeName]
+    v3 = PropGet v2 key="parse"
+    v4 = String string="1"
+    v5 = Call v3, v2, v4, v0
+    Return
+}
+
+function f46 name="passesToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+
+function f47 name="readsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+
+function f48 name="readsEnvironment" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    v2 = PropGet v1 key="y"
+    Return v2
+}
+
+function f49 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,52 @@
+# The generic version of a function is made in the hotter part of the program only. In the colder part, by how often a function is taken to run for its size, a check becomes a guard
+# at each use of its value: `seldom` and `often` have the same body, and `often` is called in a loop
+# FORM: Prepared
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 1
+# STATISTIC: GenericVersionsNotCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f3
+entry module=m0
+function f0 name="seldom" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Call v0
+    v3 = Check v2 castType=number
+    v4 = Add v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f0 name="seldom"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: frequency=Unlikely
+
+function f1 name="often" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Call v0
+    v3 = Check v2 castType=number
+    v4 = Add v3, v1
+    Return v4
+}
+# CHECK-LABEL: function f1 name="often"
+# CHECK: = TypeTest v2 testedType=number
+# CHECK: frequency=Unlikely:
+
+function f2 name="drive" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Integer integer=1
+    v3 = CallDirect v0, v2 function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v0, v2 function=f1
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="drive"
+function f3 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Boolean boolean=true
+    v2 = CallDirect v0, v1 function=f2
+    Return v2
+}

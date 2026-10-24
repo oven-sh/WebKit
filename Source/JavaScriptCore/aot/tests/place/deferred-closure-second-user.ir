@@ -1,0 +1,43 @@
+# A closure with a second user is created, so the field it is stored into defers nothing
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow,DeferClosuresInFields references=narrow
+# RUN: place program
+# RUN(PLAN): plan-slots layouts
+# STATISTIC: DeferredClosureSlots = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="SecondUser" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L1 name="OnlyStored" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v0 variable=g0
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f1 name="run" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="other" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# PLAN: L0 CompiledObject
+# PLAN-NOT: DeferredClosure
+# PLAN: L1 CompiledObject
+# PLAN-NEXT: .0 "run" DeferredClosure @16 f2 record=0
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: closureForm=Deferred
+# CHECK: v5: f2 = NewClosure function=f2 {{*}}closureForm=Deferred
+# CHECK-LABEL: function f1 name="run"

@@ -1,0 +1,20 @@
+# from Prepared on blocks are in any order and may be unreachable
+# FORM: Prepared
+# RUN: verify
+# CHECK: valid
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodLaterBlockFirst" results=[{type=undefined}] {
+  b0():
+    Jump -> next b2()
+  b1():
+    Return
+  b2():
+    Jump -> next b1()
+}
+function f1 name="goodUnreachable" results=[{type=undefined}] {
+  b0():
+    Return
+  b1():
+    Return
+}

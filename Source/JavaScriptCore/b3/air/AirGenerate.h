@@ -28,6 +28,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3Common.h"
+#include <span>
 
 namespace JSC {
 
@@ -40,6 +41,10 @@ class Code;
 // This takes an Air::Code that hasn't had any stack allocation and optionally hasn't had any
 // register allocation and does both of those things.
 JS_EXPORT_PRIVATE void prepareForGeneration(Code&);
+
+// This does the same to a batch of Air::Codes, one phase at a time: each Code gets the code it would
+// get alone. A Code whose Procedure fails (see Procedure::report()) skips the remaining phases.
+JS_EXPORT_PRIVATE void prepareForGeneration(std::span<Code* const>);
 
 // This generates the code using the given CCallHelpers instance. Note that this may call callbacks
 // in the supplied code as it is generating.

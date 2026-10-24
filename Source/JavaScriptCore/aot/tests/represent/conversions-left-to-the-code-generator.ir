@@ -1,0 +1,35 @@
+# ChooseRepresentations writes the forms and adds no operation: an operand names the value as it was defined, and the code generator converts it where it fetches it, an argument on its edge
+# FORM: Placed
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumIsReturnedBoxed" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f0 name="sumIsReturnedBoxed"
+# CHECK: number @Double = Add v0, v1 form=Numbers
+# CHECK-NEXT: Return v2
+
+function f1 name="numberMeetsTextOnAnEdge" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    v2 = Add v0, v0 form=Numbers
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    v3 = String string="text"
+    Jump -> next b3(v3)
+  b3(v4: number | string):
+    Return v4
+}
+# CHECK-LABEL: function f1 name="numberMeetsTextOnAnEdge"
+# CHECK: number @Double = Add v0, v0 form=Numbers
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK: b3(v4: number|string @JSValue):
+# CHECK-NEXT: Return v4
+# CODE-NOT: diagnostic

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "Options.h"
 
+#include "AOTRemovableFeature.h"
 #include "CPU.h"
 #include "JITOperationValidation.h"
 #include "LLIntCommon.h"
@@ -796,6 +797,27 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
+double Options::sizeClassProgressionWithAOT()
+{
+    return OptionsHelper::wasOverridden(sizeClassProgressionID) ? Options::sizeClassProgression() : sizeClassProgressionForCompiledCode;
+}
+
+static void applyCompiledCodeDefaults()
+{
+#if ENABLE(AOT)
+    if (Options::aotImagePath())
+        Options::useAOT() = true;
+#else
+    Options::useAOT() = false;
+#endif
+    if (!Options::runsCompiledImage())
+        return;
+    Options::useJIT() = false;
+    Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
+    // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
+    if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))
+        Options::warmUpMarkedBlockStartAfterBlocks() = 4096;
+}
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -806,6 +828,8 @@ void Options::notifyOptionsChanged()
     unsigned thresholdForGlobalLexicalBindingEpoch = Options::thresholdForGlobalLexicalBindingEpoch();
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
+
+    applyCompiledCodeDefaults();
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
@@ -855,6 +879,9 @@ void Options::notifyOptionsChanged()
     if (!Options::allowDoubleShape())
         Options::useJIT() = false; // We don't support JIT with !allowDoubleShape. So disable it.
 
+#if !ENABLE(WEBASSEMBLY)
+    Options::useWasm() = false;
+#endif
     if (!Options::useWasm())
         disableAllWasmOptions();
 
@@ -878,6 +905,10 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (isFeatureRemoved(RemovableFeature::JIT))
+        Options::useJIT() = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
 #if OS(DARWIN)

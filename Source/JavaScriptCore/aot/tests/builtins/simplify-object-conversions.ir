@@ -1,0 +1,47 @@
+# The conversion of a value that is proven an object is the value itself
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="toObjectOfArray" parameters=[{type=Array<string>}] results=[{type=object}] {
+  b0(v0: Array<string>):
+    v1 = ToObject v0 message="requires that |this| not be null or undefined"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="toObjectOfArray"
+# CHECK-NOT: ToObject
+# CHECK: v1: Array<string> = Upcast v0 castType=Array<string>
+
+function f1 name="toThisOfFunction" parameters=[{type=function}] results=[{type=object}] {
+  b0(v0: function):
+    v1 = ToThis v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="toThisOfFunction"
+# CHECK-NOT: ToThis
+# CHECK: v1: function = Upcast v0 castType=function
+
+function f2 name="toObjectThrowsForUndefined" parameters=[{type=undefined|Array<string>}] results=[{type=object}] {
+  b0(v0: undefined|Array<string>):
+    v1 = ToObject v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="toObjectThrowsForUndefined"
+# CHECK: v1: Array<string> = ToObject v0
+
+function f3 name="toObjectWrapsString" parameters=[{type=string|Array<string>}] results=[{type=object}] {
+  b0(v0: string|Array<string>):
+    v1 = ToObject v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="toObjectWrapsString"
+# CHECK: v1: object = ToObject v0
+
+function f4 name="toThisReplacesUndefined" parameters=[{type=undefined|Array<string>}] results=[{type=object}] {
+  b0(v0: undefined|Array<string>):
+    v1 = ToThis v0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="toThisReplacesUndefined"
+# CHECK: v1: object = ToThis v0

@@ -1,0 +1,40 @@
+# An array holds cells, whatever the type of its elements. The word of a cell is found by a search for its text, which costs more than a comparison with a written text or a switch over
+# a few: both take the element as it is.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="switchOnElement" parameters=[{type=Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=i32}] {
+  b0(v0: Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    SwitchString v2 strings=["open", "close"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=10
+    Return v3
+  b2():
+    v4 = Integer integer=20
+    Return v4
+  b3():
+    v5 = Integer
+    Return v5
+}
+# CHECK-LABEL: function f0 name="switchOnElement"
+# CHECK: undefined|"close"|"open" @JSValue = GetArrayElement
+# CHECK-NEXT: SwitchString v2
+
+function f1 name="compareElement" parameters=[{type=Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v3 = String string="open"
+    v4 = StrictEq v2, v3 form=NullableStrings
+    Return v4
+}
+# CHECK-LABEL: function f1 name="compareElement"
+# CHECK: undefined|"close"|"open" @JSValue = GetArrayElement
+# CODE-NOT: ToLiteralString
+# CODE: f1:
+# CODE: stub ValueEqualsLiteralOfLength.n4 x1
+# CODE-NOT: ToLiteralString
+# CODE-NOT: diagnostic

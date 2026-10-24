@@ -1,0 +1,36 @@
+# the arguments in memory are read only by an entrypoint that takes a buffer
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="target" results=[{type=anything}]
+function f1 name="badInSourceFunction" results=[{type=anything}] {
+  b0():
+    v0 = GetArgument argumentIndex=0
+    Return v0
+}
+function f2 name="badRestInSourceFunction" results=[{type=anything}] {
+  b0():
+    v0 = CreateRest firstArgument=0
+    Return v0
+}
+function f3 name="badArgumentsInRegisters" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 arguments=Registers} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    Return v1
+}
+function f4 name="badInOutlinedBody" role=OutlinedBody results=[{type=anything}] {
+  b0():
+    v0 = GetRestLength firstArgument=0
+    Return v0
+}
+function f5 name="goodArgumentsInBuffer" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    v2 = GetRestLength firstArgument=1
+    v3 = CreateRest firstArgument=1
+    v4 = GetMyArgumentByVal v2 firstArgument=0
+    v5 = CallForwardVarargs v1, v1 firstArgument=0
+    Return v5
+}

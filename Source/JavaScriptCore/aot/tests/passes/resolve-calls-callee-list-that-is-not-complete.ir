@@ -1,0 +1,49 @@
+# A list of callees that is not complete proves nothing. It names the functions that flow has followed to the call, so it is a prediction, and a prediction is tested:
+# one function is tested for by the planner of tests, and the call by value stays, with its list, for whatever else arrives. Several functions get no arms: the call that has to stay serves them as well
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# RUN(PLACED): pass PlaceTypeTests
+# CHECK: outcome: Unchanged
+# PLACED: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="oneFunctionIsListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 callees=[f0, ..]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="oneFunctionIsListed"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[f0, ..]
+# CHECK-NEXT: Return v2
+# PLACED-LABEL: function f2 name="oneFunctionIsListed"
+# PLACED: = IsClosureOf v0 function=f0
+# PLACED: = CallDirect v1 function=f0
+# PLACED: frequency=Unlikely:
+# PLACED-NEXT: = Call v0, -, v1 callees=[f0, ..]
+function f3 name="twoFunctionsAreListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 callees=[f0, f1, ..]
+    Return v2
+}
+# CHECK-LABEL: function f3 name="twoFunctionsAreListed"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[f0, f1, ..]
+# CHECK-NEXT: Return v2
+function f4 name="noFunctionIsListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v0, -, v1 callees=[builtin(MathMax), ..]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="noFunctionIsListed"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[builtin(MathMax), ..]
+# CHECK-NEXT: Return v2

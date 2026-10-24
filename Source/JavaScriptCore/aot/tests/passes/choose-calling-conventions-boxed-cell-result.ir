@@ -1,0 +1,55 @@
+# A caller that returns a cell jumps to a callee that returns a boxed value: the casts of the tail call prove a cell, and a boxed cell is the pointer. A boxed number has to be unboxed after the call
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 0
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: f0 Direct ({{*}}:Cell) -> ({{*}}:Cell)
+# CHECK-NEXT: f1 Direct ({{*}}:Cell, {{*}}:Cell) -> ({{*}}:Cell)
+# CHECK-NEXT: f2 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: f3 Direct ({{*}}:JSValue) -> ({{*}}:JSValue)
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+
+function f0 name="returnsCell" parameters=[{type=L0}] results=[{type=L0}] {
+  b0(v0: L0):
+    v1 = CallDirect v0 function=f3
+    ReturnCall v1 casts=[{declared={type=L0} resolution=Assume}] requirement=Allowed
+}
+# CHECK-LABEL: function f0 name="returnsCell"
+# CHECK: v1: number|L0 = CallDirect v0 function=f3
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=L0} resolution=Assume}] requirement=Allowed
+
+function f1 name="returnsCellOfCallByValue" parameters=[{type=function}, {type=L0}] results=[{type=L0}] {
+  b0(v0: function, v1: L0):
+    v2 = Call v0, -, v1
+    ReturnCall v2 casts=[{declared={type=L0} resolution=Assume}] requirement=Allowed
+}
+# CHECK-LABEL: function f1 name="returnsCellOfCallByValue"
+# CHECK: v2: anything = Call v0, -, v1
+# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=L0} resolution=Assume}] requirement=Allowed
+
+function f2 name="returnsNumber" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f3
+    ReturnCall v1 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
+}
+# CHECK-LABEL: function f2 name="returnsNumber"
+# CHECK: v1: number|L0 = CallDirect v0 function=f3 [isDemotedTailCall]
+# CHECK-NEXT: [[number]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: Return [[number]]
+
+function f3 name="returnsArgument" parameters=[{type=number|L0}] results=[{type=number|L0}] {
+  b0(v0: number|L0):
+    Return v0
+}
+function f4 name="usesResults" parameters=[{type=L0}, {type=number}, {type=function}] results=[{type=anything}] {
+  b0(v0: L0, v1: number, v2: function):
+    v3 = CallDirect v0 function=f0
+    v4 = CallDirect v2, v0 function=f1
+    v5 = CallDirect v1 function=f2
+    v6 = CallDirect v0 function=f3
+    v7 = NewArray v3, v4, v5, v6 contents=anything
+    Return v7
+}

@@ -1,0 +1,378 @@
+# A use that lists a virtual array or copies a virtual object takes the values one by one, so the cell is never built
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 20
+# STATISTIC: AllocationsSunk = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Instance name="Base" constructor=f24 flow={baseState=None}
+layout L2 kind=Instance name="Derived" base=L1 constructor=f25 flags=[HasHeritage] flow={baseState=Layout base=L1}
+layout L3 name="Sized" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+layout L4 name="Many" fields=[{key="k0" declared={type=anything}}, {key="k1" declared={type=anything}}, {key="k2" declared={type=anything}}, {key="k3" declared={type=anything}}, {key="k4" declared={type=anything}}, {key="k5" declared={type=anything}}, {key="k6" declared={type=anything}}, {key="k7" declared={type=anything}}, {key="k8" declared={type=anything}}]
+layout L5 name="WithMethod" fields=[{key="x" declared={type=anything}}, {key="m" declared={type=anything} flags=[IsMethod]}]
+layout L6 kind=Instance name="Secret" fields=[{key="x" declared={type=anything}}, {key=#"s"@L6 declared={type=anything} flags=[IsPrivate]}] flow={baseState=None}
+
+function f0 name="appendElementsIntoVirtualArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v1 contents=anything
+    AppendElements v3, v2, v2
+    v5 = Integer integer=2
+    v6 = ElemGet v3, v5
+    v7 = PropGet v3 key="length"
+    v8 = StrictEq v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f0 name="appendElementsIntoVirtualArray"
+# CHECK-NOT: NewArray
+# CHECK-NOT: AppendElement
+# CHECK: v6: anything = Upcast v1 castType=anything
+# CHECK-NEXT: [[length0]]: 3 = Integer integer=3
+# CHECK-NEXT: v7: anything = Upcast [[length0]] castType=anything
+
+function f1 name="appendElementsIntoReturnedArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray contents=anything
+    AppendElements v3, v2, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="appendElementsIntoReturnedArray"
+# CHECK-NOT: AppendElement
+# CHECK: [[list1]]: Array = NewArray v0, v1 contents=anything
+# CHECK-NEXT: Return [[list1]]
+
+function f2 name="appendElementsIntoRealArray" parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = NewArray v0, v1 contents=anything
+    AppendElements v2, v3, v3
+    Return v2
+}
+# CHECK-LABEL: function f2 name="appendElementsIntoRealArray"
+# CHECK-NOT: NewArray
+# CHECK: AppendElement v2, v0
+# CHECK-NEXT: AppendElement v2, v1
+# CHECK-NEXT: Return v2
+
+function f3 name="holesAreListedAsUndefined" parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = NewArray v0, v1 contents=anything holes=[1]
+    AppendElements v2, v3, v3
+    Return v2
+}
+# CHECK-LABEL: function f3 name="holesAreListedAsUndefined"
+# CHECK-NOT: NewArray
+# CHECK: [[hole3]]: undefined = Undefined
+# CHECK: AppendElement v2, v0
+# CHECK-NEXT: AppendElement v2, [[hole3]]
+# CHECK-NEXT: AppendElement v2, v1
+# CHECK-NEXT: Return v2
+
+function f4 name="appendElementsUnderHandler" parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = NewArray v0, v1 contents=anything
+    AppendElements v2, v3, v3
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f4 name="appendElementsUnderHandler"
+# CHECK-NOT: NewArray
+# CHECK: b1() handler=b3():
+# CHECK: AppendElement v2, v0
+# CHECK-NEXT: AppendElement v2, v1
+
+function f5 name="callList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v0 contents=anything
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="callList"
+# CHECK-NOT: NewArray
+# CHECK: v3: anything = Call v0, v1, v1, v0
+
+function f6 name="constructList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 ~ L1 = ConstructList v0, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="constructList"
+# CHECK-NOT: NewArray
+# CHECK: v3: anything ~ L1 = Construct v0, -, v1
+
+function f7 name="superConstructList" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = NewArray v2 contents=anything
+    v4 = SuperConstructList v0, v1, v3 layout=L2
+    Return v4
+}
+# CHECK-LABEL: function f7 name="superConstructList"
+# CHECK-NOT: NewArray
+# CHECK: v4:{{*}}= SuperConstruct v0, v1, v2 layout=L2
+
+function f8 name="elementStoreThenRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v0 contents=anything
+    v3 = Integer integer=1
+    ElemSet v2, v3, v1 mode=Strict
+    v5 = ElemGet v2, v3
+    Return v5
+}
+# CHECK-LABEL: function f8 name="elementStoreThenRead"
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemSet
+# CHECK: v5: anything = Upcast v1 castType=anything
+
+function f9 name="elementStorePastEnd" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v0 contents=anything
+    v3 = Integer integer=2
+    ElemSet v2, v3, v1 mode=Strict
+    v5 = ElemGet v2, v3
+    Return v5
+}
+# CHECK-LABEL: function f9 name="elementStorePastEnd"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewArray v0, v0
+# CHECK: ElemSet v2, v3, v1
+# CHECK-NEXT: = ElemGet v2, v3
+
+function f10 name="fewerResultsThanElements" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1, v0 contents=anything
+    v3 = DestructureIterable v2 count=2
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = StrictEq v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f10 name="fewerResultsThanElements"
+# CHECK-NOT: NewArray
+# CHECK-NOT: DestructureIterable
+# CHECK: v4: anything = Upcast v0 castType=anything
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+
+function f11 name="moreResultsThanElements" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = DestructureIterable v1 count=2
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f11 name="moreResultsThanElements"
+# CHECK-NOT: NewArray
+# CHECK-NOT: DestructureIterable
+# CHECK: v3: anything = Upcast v0 castType=anything
+# CHECK: [[missing11]]: undefined = Undefined
+# CHECK-NEXT: v4: anything = Upcast [[missing11]] castType=anything
+
+function f12 name="storeBetweenDestructuringAndResult" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v0 contents=anything
+    v3 = DestructureIterable v2 count=2
+    v4 = Integer integer=0
+    ElemSet v2, v4, v1 mode=Strict
+    v6 = ResultAt v3 index=0
+    Return v6
+}
+# CHECK-LABEL: function f12 name="storeBetweenDestructuringAndResult"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewArray v0, v0
+# CHECK-NEXT: v3{{*}}= DestructureIterable v2 count=2
+# CHECK: ElemSet v2, v4, v1
+# CHECK-NEXT: = ResultAt v3
+
+function f13 name="copyIntoVirtualObject" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject layout=L0
+    CopyDataProperties v4, v3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v4
+    Return v6
+  b2():
+    v7 = PropGet v4 key="y" receivers=[L0]
+    Return v7
+}
+# CHECK-LABEL: function f13 name="copyIntoVirtualObject"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[copy13]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[copy13]]
+# CHECK: b2():
+# CHECK-NEXT: v7: anything = Upcast v1 castType=anything
+
+function f14 name="copyWithExcludedKeys" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject layout=L0
+    CopyDataProperties v4, v3 excludedKeys=["x"]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v4
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f14 name="copyWithExcludedKeys"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[copy14]]:{{*}}= NewObject -, v1 layout=L0 fields=[1]
+# CHECK-NEXT: = Call v0, -, [[copy14]]
+
+function f15 name="computedExcludedKey" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: string):
+    v4 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v5 = NewObject layout=L0
+    CopyDataProperties v5, v4, v3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v0, -, v5
+    Return v7
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f15 name="computedExcludedKey"
+# CHECK: b0(
+# CHECK-NEXT: v4:{{*}}= NewObject -, v0, v1
+# CHECK-NEXT: v5:{{*}}= NewObject layout=L0
+# CHECK-NEXT: CopyDataProperties v5, v4, v3
+# CHECK-NEXT: Branch
+
+function f16 name="copyOutsideFieldType" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject layout=L3
+    CopyDataProperties v4, v3
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v4
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f16 name="copyOutsideFieldType"
+# CHECK: b0(
+# CHECK-NEXT: v4:{{*}}= NewObject layout=L3
+# CHECK-NEXT: PropDefine v4, v0 key="x"
+# CHECK-NEXT: PropDefine v4, v1 key="y"
+# CHECK-NEXT: Branch
+
+function f17 name="copyOfSevenFields" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0, v0, v0, v0, v0, v0 layout=L4 fields=[0, 1, 2, 3, 4, 5, 6]
+    v3 = NewObject layout=L4
+    PropDefine v3, v0 key="k8" receivers=[L4]
+    CopyDataProperties v3, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v3
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f17 name="copyOfSevenFields"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[copy17]]:{{*}}= NewObject -, v0, v0, v0, v0, v0, v0, v0, v0 layout=L4 fields=[8, 0, 1, 2, 3, 4, 5, 6]
+# CHECK-NEXT: = Call v0, -, [[copy17]]
+
+function f18 name="copyIntoRealObject" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    CopyDataProperties v1, v2
+    Return v1
+}
+# CHECK-LABEL: function f18 name="copyIntoRealObject"
+# CHECK: b0(
+# CHECK-NEXT: PropDefine v1, v0 key="x"
+# CHECK-NEXT: PropDefine v1, v0 key="y"
+# CHECK-NEXT: Return v1
+
+function f19 name="listedElementIsBuilt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewArray v2 contents=anything
+    v4 = CallList v0, -, v3
+    Return v4
+}
+# CHECK-LABEL: function f19 name="listedElementIsBuilt"
+# CHECK-NOT: NewArray
+# CHECK: v2:{{*}}= NewObject -, v0, v1
+# CHECK: v4: anything = Call v0, -, v2
+
+function f20 name="listOfUnknownLength" parameters=[{type=anything}, {type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array<anything, proven, pristine[Storage, Names]>):
+    v2 = NewArray v0 contents=anything
+    AppendElements v2, v1
+    v4 = CallList v0, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f20 name="listOfUnknownLength"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewArray v0
+# CHECK-NEXT: AppendElements v2, v1
+# CHECK-NEXT: = CallList v0, -, v2
+
+function f21 name="copyOfMethodField" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = NewObject -, v0, v1 layout=L5 fields=[0, 1]
+    CopyDataProperties v2, v3
+    Return v2
+}
+# CHECK-LABEL: function f21 name="copyOfMethodField"
+# CHECK: b0(
+# CHECK-NEXT: PropDefine v2, v0 key="x"
+# CHECK-NEXT: PropDefine v2, v1 key="m"
+# CHECK-NEXT: Return v2
+
+function f22 name="methodFieldExcluded" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = NewObject -, v0, v1 layout=L5 fields=[0, 1]
+    CopyDataProperties v2, v3 excludedKeys=["m"]
+    Return v2
+}
+# CHECK-LABEL: function f22 name="methodFieldExcluded"
+# CHECK: b0(
+# CHECK-NEXT: PropDefine v2, v0 key="x"
+# CHECK-NEXT: Return v2
+
+function f23 name="copyOfPrivateField" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = NewObject -, v0, v1 layout=L6 fields=[0, 1]
+    CopyDataProperties v2, v3
+    Return v2
+}
+# CHECK-LABEL: function f23 name="copyOfPrivateField"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0, v1 layout=L6
+# CHECK-NEXT: CopyDataProperties v2, v3
+
+function f24 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+# CHECK-LABEL: function f24 name="Base"
+
+function f25 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = SuperConstruct v1, v0 layout=L2
+    Return v2
+}
+# CHECK-LABEL: function f25 name="Derived"

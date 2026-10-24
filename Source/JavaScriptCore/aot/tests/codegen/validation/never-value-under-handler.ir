@@ -1,0 +1,33 @@
+# The block that follows a call under a handler has no predecessor in B3 when the call never returns, and the value it reads is still defined
+# RUN: compile
+# OPTIONS: validate check=validate-back-end
+# OPTIONS: disable=pass:InlineCalls
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="catches" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = CallDirect function=f2
+    Jump -> next b1()
+  b1():
+    v1 = Upcast v0 castType=anything
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f2 name="neverReturns" results=[{type=never}] {
+  b0():
+    v0 = Undefined
+    Throw v0
+}

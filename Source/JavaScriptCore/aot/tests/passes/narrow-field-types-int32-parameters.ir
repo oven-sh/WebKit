@@ -1,0 +1,116 @@
+# A function that is handed on as a value is called by whoever gets hold of it, so the checks at its head stay. Where every call the program shows fills a parameter of type number
+# with an int32, the check asks for an int32 and the body goes on with an integer. It proves nothing about the callers: the parameter stays expected, and whatever else arrives
+# fails the check and goes on in the generic version.
+# One call with a fraction, one call that leaves the argument out, or no call at all leaves the check as it was read. So does a type that is more than a number.
+# A function that is only called has callers that flow knows, and flow folds a check that none of them fails. So there the types of the arguments have to lie in int32:
+# a sum of two int32s looks like one and may be 2 ** 31, the check for an int32 would stay, and what rests on it would be proven no more
+# FORM: AsRead
+# RUN: pipeline NarrowFieldTypes
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Parameter
+typesite w5 module=m0 position=60 kind=Parameter
+typesite w6 module=m0 position=70 kind=Parameter
+typesite w7 module=m0 position=80 kind=Parameter
+typesite w8 module=m0 position=90 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Integer integer=7
+    v7 = Double number=1.5
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Integer integer=0
+    v11 = BitOr v9, v10
+    v12 = Call v0, -, v6, v11
+    v13 = Call v0, -, v11, v6
+    v14 = Call v1, -, v6
+    v15 = Call v1, -, v7
+    v16 = Call v2, -
+    v17 = Call v2, -, v6
+    v18 = Call v4, -, v6
+    v19 = Call v5, -, v12
+    v20 = PropGet v8 key="keep" [isFreeName]
+    v21 = Call v20, -, v0, v1, v2, v3, v4, v5
+    v22 = NewClosure function=f7
+    v23 = Call v22, -, v6
+    v24 = Call v22, -, v11
+    v25 = NewClosure function=f8
+    v26 = Call v25, -, v6
+    v27 = Add v11, v6
+    v28 = Call v25, -, v27
+    Return
+}
+
+function f1 name="onlyInt32s" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="onlyInt32s" {{*}}parameters=[{type=i32 site=w0 flags=[IsExpected]}, {type=i32 site=w1 flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ i32, v1: anything ~ i32):
+# CHECK: [[left]]: i32 = Check v0 castType=i32 site=w0
+# CHECK: [[right]]: i32 = Check v1 castType=i32 site=w1
+# CHECK: int[-4294967296, 4294967294] = Add [[left]], [[right]]
+
+function f2 name="alsoAFraction" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=number site=w2}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f2 name="alsoAFraction" {{*}}parameters=[{type=number site=w2 flags=[IsExpected]}]
+# CHECK: number = Check v0 castType=number site=w2
+
+function f3 name="sometimesLeftOut" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=number site=w3}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f3 name="sometimesLeftOut"
+# CHECK: number = Check v0 castType=number site=w3
+
+function f4 name="neverCalledHere" module=m0 position=35 flags=[IsChecked] length=1 parameters=[{type=number site=w4}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f4 name="neverCalledHere"
+# CHECK: number = Check v0 castType=number site=w4
+
+function f5 name="numberOrUndefined" module=m0 position=45 flags=[IsChecked] length=1 parameters=[{type=undefined|number site=w5}] results=[{type=anything}] {
+  b0(v0: undefined|number):
+    Return v0
+}
+# CHECK-LABEL: function f5 name="numberOrUndefined"
+# CHECK: undefined|number = Check v0 castType=undefined|number site=w5
+
+function f6 name="getsTheResultOfABitOperation" module=m0 position=55 flags=[IsChecked] length=1 parameters=[{type=number site=w6}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f6 name="getsTheResultOfABitOperation"
+# CHECK: i32 = Check v0 castType=i32 site=w6
+
+function f7 name="onlyCalledWithInt32s" module=m0 position=65 flags=[IsChecked] length=1 parameters=[{type=number site=w7}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f7 name="onlyCalledWithInt32s" {{*}}parameters=[{type=i32 site=w7 flags=[IsExpected]}]
+# CHECK: i32 = Check v0 castType=i32 site=w7
+
+function f8 name="onlyCalledAlsoWithASum" module=m0 position=75 flags=[IsChecked] length=1 parameters=[{type=number site=w8}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f8 name="onlyCalledAlsoWithASum" {{*}}parameters=[{type=number site=w8 flags=[IsExpected]}]
+# CHECK: number = Check v0 castType=number site=w8

@@ -1,0 +1,85 @@
+# A call of a built-in that only propagates errors goes away with its unused result where its operands run no code, refuse nothing and are admitted.
+# The same call stays with an operand that may run code, may be refused or may lie outside what the entry admits, and so does a call of an entry that has an error of its own
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# RUN(EFFECTS): effects f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="a" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="operandsThatRunNothing" parameters=[{type=L0}, {type=string}, {type=int[0, 8]}, {type=Map}] results=[{type=undefined}] {
+  b0(v0: L0, v1: string, v2: int[0, 8], v3: Map):
+    v4 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v5 = CallBuiltin -, v0 overload=ObjectGetOwnPropertyNames/0
+    v6 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v7 = CallBuiltin -, v0 overload=ObjectValues/0
+    v8 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
+    v9 = CallBuiltin v1 overload=StringPrototypeToUpperCase/0
+    v10 = CallBuiltin v1, v2 overload=StringPrototypeCharAt/0
+    v11 = CallBuiltin v1, v1 overload=StringPrototypeConcat/0
+    v12 = CallBuiltin -, v1 overload=Error/1
+    v13 = CallBuiltin -, v1 overload=TypeError/1
+    v14 = CallBuiltin -, v2 overload=Uint8Array/4
+    v15 = CallBuiltin -, v2 overload=Float64Array/4
+    v16 = CallBuiltin -, v2 overload=Array/2
+    v17 = CallBuiltin v3, v1 overload=MapPrototypeGet/0
+    v18 = CallBuiltin v3, v1 overload=MapPrototypeHas/0
+    Return
+}
+# CHECK-LABEL: function f0 name="operandsThatRunNothing"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return
+# EFFECTS-LABEL: function f0
+# EFFECTS-NOT: throws collects
+# EFFECTS-NOT: unknownCode
+
+function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type=object}, {type=number}, {type=int[-1, 8]}, {type=int[0, 1099511627776]}, {type=string}] results=[{type=undefined}] {
+  b0(v0: anything, v1: object, v2: number, v3: int[-1, 8], v4: int[0, 1099511627776], v5: string):
+    v6 = CallBuiltin -, v1 overload=ObjectKeys/0
+    v7 = CallBuiltin -, v1 overload=ObjectEntries/0
+    v8 = CallBuiltin -, v2 overload=Uint8Array/4
+    v9 = CallBuiltin -, v3 overload=Uint8Array/4
+    v10 = CallBuiltin -, v4 overload=Uint8Array/4
+    v11 = CallBuiltin -, v3 overload=Array/2
+    v12 = CallBuiltin -, v5, v1 overload=Error/1
+    v13 = CallBuiltin v5, v3 overload=StringPrototypeRepeat/0
+    v14 = Undefined
+    v15 = CallBuiltin -, v5, v14 overload=JSONParse/0
+    Return
+}
+# CHECK-LABEL: function f1 name="operandsThatMayMakeItThrow"
+# CHECK: = CallBuiltin -, v1 overload=ObjectKeys/0
+# CHECK-NEXT: = CallBuiltin -, v1 overload=ObjectEntries/0
+# CHECK-NEXT: = CallBuiltin -, v2 overload=Uint8Array/4
+# CHECK-NEXT: = CallBuiltin -, v3 overload=Uint8Array/4
+# CHECK-NEXT: = CallBuiltin -, v4 overload=Uint8Array/4
+# CHECK-NEXT: = CallBuiltin -, v3 overload=Array/2
+# CHECK-NEXT: = CallBuiltin -, v5, v1 overload=Error/1
+# CHECK-NEXT: = CallBuiltin v5, v3 overload=StringPrototypeRepeat/0
+# CHECK-NEXT: = Undefined
+# CHECK-NEXT: = CallBuiltin -, v5, v14 overload=JSONParse/0
+# EFFECTS-LABEL: function f1
+# EFFECTS-NEXT: v6 CallBuiltin: unknownCode
+# EFFECTS-NEXT: v7 CallBuiltin: unknownCode
+# EFFECTS-NEXT: v8 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v9 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v10 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v11 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v12 CallBuiltin: unknownCode
+# EFFECTS-NEXT: v13 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v14 Undefined: none
+# EFFECTS-NEXT: v15 CallBuiltin: {{*}} throws collects
+
+# A lookup may move the table of a collection, and so may a new iterator: that changes how the collection is stored and the result of no operation.
+function f2 name="lookupsAndIterators" parameters=[{type=Map}, {type=Set}, {type=string}] results=[{type=undefined}] {
+  b0(v0: Map, v1: Set, v2: string):
+    v3 = CallBuiltin v1, v2 overload=SetPrototypeHas/0
+    v4 = CallBuiltin v0 overload=MapPrototypeEntries/0
+    v5 = CallBuiltin v0 overload=MapPrototypeValues/0
+    v6 = CallBuiltin v0 overload=MapPrototypeKeys/0
+    v7 = CallBuiltin v1 overload=SetPrototypeValues/0
+    Return
+}
+# CHECK-LABEL: function f2 name="lookupsAndIterators"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return

@@ -1,0 +1,102 @@
+# A double constant is a case when it is an integer in the tracked range or negative zero
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchNumberGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="integral-doubles"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Switch v0 cases=[5, 0, 7] -> case b1(), case b2(), case b3(), otherwise b4()
+function f0 name="integral-doubles" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=5
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Double number=-0
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = Integer integer=7
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="negative-zero-repeats-zero"
+# CHECK: Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK-NOT: key="second-zero"
+function f1 name="negative-zero-repeats-zero" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Double number=-0
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v5 = PropGet v0 key="second-zero"
+    Return v5
+  b4():
+    v6 = Integer integer=1
+    v7 = StrictEq v0, v6
+    Branch v7 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v8 = Integer integer=2
+    v9 = StrictEq v0, v8
+    Branch v9 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+
+# NaN, then 2^62 as a double, then 2^62 as an integer
+# CHECK-LABEL: function f2 name="untracked-numbers"
+# CHECK-NOT: Switch
+function f2 name="untracked-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b7(), notTaken b1()
+  b1():
+    v3 = Double number=NaN
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b7(), notTaken b2()
+  b2():
+    v5 = Integer integer=2
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b7(), notTaken b3()
+  b3():
+    v7 = Double number=4611686018427387904
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b7(), notTaken b4()
+  b4():
+    v9 = Integer integer=3
+    v10 = StrictEq v0, v9
+    Branch v10 -> taken b7(), notTaken b5()
+  b5():
+    v11 = Integer integer=4611686018427387904
+    v12 = StrictEq v0, v11
+    Branch v12 -> taken b7(), notTaken b6()
+  b6():
+    v13 = Integer integer=4
+    v14 = StrictEq v0, v13
+    Branch v14 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}

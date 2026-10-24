@@ -1,0 +1,90 @@
+# A function that loops over a parameter is worth its size where the caller makes a generator for that argument: only in one function can the loop be merged with the body of the generator,
+# or take its first step without a suspension. For any other argument the same function costs more than the call
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# STATISTIC: InlineBenefitSunkAllocation = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumOf" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Undefined
+    v4 = StepGenerator v0, v3 check=IsUnmodifiedGenerator
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = Integer integer=0
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = PropGet v5 key="a"
+    v10 = PropGet v9 key="b"
+    v11 = PropGet v10 key="c"
+    v12 = PropGet v11 key="d"
+    v13 = PropGet v12 key="e"
+    PropSet v1, v13 key="f"
+    PropSet v1, v12 key="g"
+    PropSet v1, v11 key="h"
+    Jump -> next b1()
+  b3():
+    v17 = PropGet v1 key="f"
+    Return v17
+}
+function f1 name="overItsOwnGenerator" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = NewGenerator v1 function=f4 @100
+    v3 = CallDirect v1, v0, v2 function=f5 @100
+    v4 = Upcast v2 castType=anything
+    v5 = CallDirect v4, v0 function=f0
+    Return v5
+}
+# CHECK-LABEL: function f1 name="overItsOwnGenerator"
+# CHECK-NOT: function=f0
+# CHECK: = StepGenerator
+
+function f2 name="overAParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0, v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="overAParameter"
+# CHECK: = CallDirect v0, v0 function=f0
+
+function f3 name="generatorIsTheOtherArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = NewGenerator v1 function=f4 @101
+    v3 = CallDirect v1, v0, v2 function=f5 @101
+    v4 = CallDirect v0, v2 function=f0
+    Return v4
+}
+# CHECK-LABEL: function f3 name="generatorIsTheOtherArgument"
+# CHECK: = CallDirect v0, v2 function=f0
+
+function f4 name="yieldsOnce" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f4 body=f5 promiseParameter=2} {
+  b0(v0: function, v1: anything):
+    v2 = NewGenerator v0 function=f4 @10
+    v3 = CallDirect v0, v1, v2 function=f5 @10
+    Return v2 @10
+}
+function f5 name="yieldsOnce" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{ramp=f4 body=f5 promiseParameter=2} {
+  b0(v0: function, v1: anything, v2: Generator):
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    v7 = YieldBySavingFrame v2, v1 @12
+    v8 = ResultAt v7 index=0
+    Return v8
+}

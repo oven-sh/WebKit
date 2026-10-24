@@ -1,0 +1,69 @@
+# Each case of SwitchOnShape passes a guard for the shapes of its own set, and the last target gets none
+# FORM: Prepared
+# RUN: guards
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
+layout L2 name="Box" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="twoCases" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    SwitchOnShape v2 layoutSets=[[L0], [L1, L2]] -> case b2(| 0), case b3(| 0), otherwise b4()
+  b2(v3):
+    v4 = GetSlotOrUndefined v2, v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b3(v5):
+    v6 = GetSlotOrUndefined v2, v5 key="x" receivers=[L1, L2] level=Proven
+    Return v6
+  b4():
+    Return
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v3 facts: [Shape of v0 by b1.case0 reads -]
+# CHECK-NEXT: v5 facts: [Shape of v0 by b1.case1 reads -]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: []
+# CHECK-NEXT: b2 available at head: [v3.0]
+# CHECK-NEXT: b3 available at head: [v5.0]
+# CHECK-NEXT: b4 available at head: []
+# CHECK-NEXT: b5 available at head: []
+
+function f1 name="caseWithoutProof" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b3()
+  b1(v1):
+    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+  b2():
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1 facts: [Shape of v0 by b0.case0 reads -]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v1.0]
+# CHECK-NEXT: b2 available at head: []
+# CHECK-NEXT: b3 available at head: []
+
+function f2 name="casesOfEqualSetsMeet" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    SwitchOnShape v0 layoutSets=[[L0]] -> case b3(| 0), otherwise b4()
+  b2():
+    SwitchOnShape v0 layoutSets=[[L1], [L0]] -> case b4(), case b3(| 0), otherwise b4()
+  b3(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b4():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 facts: [Shape of v0 by b1.case0 reads -]

@@ -1,0 +1,69 @@
+# A key order test gets the word of the allocation with the same keys, and an order that only a constructor creates has a number for its test too
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,ExpandOwnKeys heat=EverythingIsHot
+# RUN: place key-orders program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Listed" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Stored" constructor=f3 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+variable g0 name="listed" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="stored" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L0 fields=[1, 0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Construct v11, -, v2
+    PutModuleVariable v12 variable=g1
+    v14 = Call v1, -, v12
+    v15 = CallDirect function=f1
+    v16 = CallDirect function=f1
+    v17 = CallDirect function=f2
+    v18 = CallDirect function=f2
+    Return
+}
+function f1 name="valuesOfListed" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=ObjectValues
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f2 name="valuesOfStored" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Builtin builtin=ObjectValues
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    Jump -> next b1()
+  b1():
+    PropDefine v3, v1 key="b"
+    PropDefine v3, v1 key="a"
+    Return v3
+}
+
+# CHECK: L0 orders=2: [0 1] [1 0]
+# CHECK-NEXT: L1 orders=2: [0 1] [1 0]
+# CHECK: allocation {{*}} L0 fields=[0 1] order=0 count=2
+# CHECK-NEXT: allocation {{*}} L0 fields=[1 0] order=1 count=2
+# CHECK-NEXT: allocation {{*}} L1 fields=[] order=0 count=0
+# CHECK-LABEL: function f1 name="valuesOfListed"
+# CHECK: = HasKeyOrder v0 layout=L0 fields=[0, 1] orderWord=65536
+# CHECK: = HasKeyOrder v0 layout=L0 fields=[1, 0] orderWord=65537
+# CHECK-LABEL: function f2 name="valuesOfStored"
+# CHECK: = HasKeyOrder v0 layout=L1 fields=[1, 0] orderWord=65537

@@ -1,0 +1,23 @@
+# function fill(record, tag) { record.tag = tag }  record = { tag: 0 }; fill(record, 3)
+# The parameter has no type in untyped code, so the type of the stored value says nothing about the number. Every caller of the function is seen, and they pass 3:
+# the field holds an int32 for good, needs no marker beside it, and no store takes it out of its slot.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Record" fields=[{key="tag" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="tag" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=3
+    v4 = Call v2, -, v1, v3
+    Return
+}
+function f1 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="tag"
+    Return
+}

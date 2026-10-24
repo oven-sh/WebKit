@@ -1,0 +1,241 @@
+# A set that is tested with a bit set and is the declared type of a field has its words in the table of shape sets, where the run time's test of the field's type reads them
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
+# RUN: place shapes
+# RUN(TABLES): tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+layout L1 name="Middle1" fields=[{key="x" declared={type=number}}]
+layout L2 name="Middle2" fields=[{key="x" declared={type=number}}]
+layout L3 name="Middle3" fields=[{key="x" declared={type=number}}]
+layout L4 name="Middle4" fields=[{key="x" declared={type=number}}]
+layout L5 name="Middle5" fields=[{key="x" declared={type=number}}]
+layout L6 name="Middle6" fields=[{key="x" declared={type=number}}]
+layout L7 name="Middle7" fields=[{key="x" declared={type=number}}]
+layout L8 name="Middle8" fields=[{key="x" declared={type=number}}]
+layout L9 name="Middle9" fields=[{key="x" declared={type=number}}]
+layout L10 name="Middle10" fields=[{key="x" declared={type=number}}]
+layout L11 name="Middle11" fields=[{key="x" declared={type=number}}]
+layout L12 name="Middle12" fields=[{key="x" declared={type=number}}]
+layout L13 name="Middle13" fields=[{key="x" declared={type=number}}]
+layout L14 name="Middle14" fields=[{key="x" declared={type=number}}]
+layout L15 name="Middle15" fields=[{key="x" declared={type=number}}]
+layout L16 name="Middle16" fields=[{key="x" declared={type=number}}]
+layout L17 name="Middle17" fields=[{key="x" declared={type=number}}]
+layout L18 name="Middle18" fields=[{key="x" declared={type=number}}]
+layout L19 name="Middle19" fields=[{key="x" declared={type=number}}]
+layout L20 name="Middle20" fields=[{key="x" declared={type=number}}]
+layout L21 name="Middle21" fields=[{key="x" declared={type=number}}]
+layout L22 name="Middle22" fields=[{key="x" declared={type=number}}]
+layout L23 name="Middle23" fields=[{key="x" declared={type=number}}]
+layout L24 name="Middle24" fields=[{key="x" declared={type=number}}]
+layout L25 name="Middle25" fields=[{key="x" declared={type=number}}]
+layout L26 name="Middle26" fields=[{key="x" declared={type=number}}]
+layout L27 name="Middle27" fields=[{key="x" declared={type=number}}]
+layout L28 name="Middle28" fields=[{key="x" declared={type=number}}]
+layout L29 name="Middle29" fields=[{key="x" declared={type=number}}]
+layout L30 name="Middle30" fields=[{key="x" declared={type=number}}]
+layout L31 name="Middle31" fields=[{key="x" declared={type=number}}]
+layout L32 name="Middle32" fields=[{key="x" declared={type=number}}]
+layout L33 name="Middle33" fields=[{key="x" declared={type=number}}]
+layout L34 name="Middle34" fields=[{key="x" declared={type=number}}]
+layout L35 name="Middle35" fields=[{key="x" declared={type=number}}]
+layout L36 name="Middle36" fields=[{key="x" declared={type=number}}]
+layout L37 name="Middle37" fields=[{key="x" declared={type=number}}]
+layout L38 name="Middle38" fields=[{key="x" declared={type=number}}]
+layout L39 name="Middle39" fields=[{key="x" declared={type=number}}]
+layout L40 name="Middle40" fields=[{key="x" declared={type=number}}]
+layout L41 name="Middle41" fields=[{key="x" declared={type=number}}]
+layout L42 name="Middle42" fields=[{key="x" declared={type=number}}]
+layout L43 name="Middle43" fields=[{key="x" declared={type=number}}]
+layout L44 name="Middle44" fields=[{key="x" declared={type=number}}]
+layout L45 name="Middle45" fields=[{key="x" declared={type=number}}]
+layout L46 name="Middle46" fields=[{key="x" declared={type=number}}]
+layout L47 name="Middle47" fields=[{key="x" declared={type=number}}]
+layout L48 name="Middle48" fields=[{key="x" declared={type=number}}]
+layout L49 name="Middle49" fields=[{key="x" declared={type=number}}]
+layout L50 name="Middle50" fields=[{key="x" declared={type=number}}]
+layout L51 name="Middle51" fields=[{key="x" declared={type=number}}]
+layout L52 name="Middle52" fields=[{key="x" declared={type=number}}]
+layout L53 name="Middle53" fields=[{key="x" declared={type=number}}]
+layout L54 name="Middle54" fields=[{key="x" declared={type=number}}]
+layout L55 name="Middle55" fields=[{key="x" declared={type=number}}]
+layout L56 name="Middle56" fields=[{key="x" declared={type=number}}]
+layout L57 name="Middle57" fields=[{key="x" declared={type=number}}]
+layout L58 name="Middle58" fields=[{key="x" declared={type=number}}]
+layout L59 name="Middle59" fields=[{key="x" declared={type=number}}]
+layout L60 name="Middle60" fields=[{key="x" declared={type=number}}]
+layout L61 name="Middle61" fields=[{key="x" declared={type=number}}]
+layout L62 name="Middle62" fields=[{key="x" declared={type=number}}]
+layout L63 name="Middle63" fields=[{key="x" declared={type=number}}]
+layout L64 name="Middle64" fields=[{key="x" declared={type=number}}]
+layout L65 name="Last" fields=[{key="x" declared={type=number}}]
+layout L66 name="Holder" fields=[{key="member" declared={type=L0|L65} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v2 layout=L3 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewObject -, v2 layout=L4 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewObject -, v2 layout=L5 fields=[0]
+    v14 = FinishObject v13
+    v15 = NewObject -, v2 layout=L6 fields=[0]
+    v16 = FinishObject v15
+    v17 = NewObject -, v2 layout=L7 fields=[0]
+    v18 = FinishObject v17
+    v19 = NewObject -, v2 layout=L8 fields=[0]
+    v20 = FinishObject v19
+    v21 = NewObject -, v2 layout=L9 fields=[0]
+    v22 = FinishObject v21
+    v23 = NewObject -, v2 layout=L10 fields=[0]
+    v24 = FinishObject v23
+    v25 = NewObject -, v2 layout=L11 fields=[0]
+    v26 = FinishObject v25
+    v27 = NewObject -, v2 layout=L12 fields=[0]
+    v28 = FinishObject v27
+    v29 = NewObject -, v2 layout=L13 fields=[0]
+    v30 = FinishObject v29
+    v31 = NewObject -, v2 layout=L14 fields=[0]
+    v32 = FinishObject v31
+    v33 = NewObject -, v2 layout=L15 fields=[0]
+    v34 = FinishObject v33
+    v35 = NewObject -, v2 layout=L16 fields=[0]
+    v36 = FinishObject v35
+    v37 = NewObject -, v2 layout=L17 fields=[0]
+    v38 = FinishObject v37
+    v39 = NewObject -, v2 layout=L18 fields=[0]
+    v40 = FinishObject v39
+    v41 = NewObject -, v2 layout=L19 fields=[0]
+    v42 = FinishObject v41
+    v43 = NewObject -, v2 layout=L20 fields=[0]
+    v44 = FinishObject v43
+    v45 = NewObject -, v2 layout=L21 fields=[0]
+    v46 = FinishObject v45
+    v47 = NewObject -, v2 layout=L22 fields=[0]
+    v48 = FinishObject v47
+    v49 = NewObject -, v2 layout=L23 fields=[0]
+    v50 = FinishObject v49
+    v51 = NewObject -, v2 layout=L24 fields=[0]
+    v52 = FinishObject v51
+    v53 = NewObject -, v2 layout=L25 fields=[0]
+    v54 = FinishObject v53
+    v55 = NewObject -, v2 layout=L26 fields=[0]
+    v56 = FinishObject v55
+    v57 = NewObject -, v2 layout=L27 fields=[0]
+    v58 = FinishObject v57
+    v59 = NewObject -, v2 layout=L28 fields=[0]
+    v60 = FinishObject v59
+    v61 = NewObject -, v2 layout=L29 fields=[0]
+    v62 = FinishObject v61
+    v63 = NewObject -, v2 layout=L30 fields=[0]
+    v64 = FinishObject v63
+    v65 = NewObject -, v2 layout=L31 fields=[0]
+    v66 = FinishObject v65
+    v67 = NewObject -, v2 layout=L32 fields=[0]
+    v68 = FinishObject v67
+    v69 = NewObject -, v2 layout=L33 fields=[0]
+    v70 = FinishObject v69
+    v71 = NewObject -, v2 layout=L34 fields=[0]
+    v72 = FinishObject v71
+    v73 = NewObject -, v2 layout=L35 fields=[0]
+    v74 = FinishObject v73
+    v75 = NewObject -, v2 layout=L36 fields=[0]
+    v76 = FinishObject v75
+    v77 = NewObject -, v2 layout=L37 fields=[0]
+    v78 = FinishObject v77
+    v79 = NewObject -, v2 layout=L38 fields=[0]
+    v80 = FinishObject v79
+    v81 = NewObject -, v2 layout=L39 fields=[0]
+    v82 = FinishObject v81
+    v83 = NewObject -, v2 layout=L40 fields=[0]
+    v84 = FinishObject v83
+    v85 = NewObject -, v2 layout=L41 fields=[0]
+    v86 = FinishObject v85
+    v87 = NewObject -, v2 layout=L42 fields=[0]
+    v88 = FinishObject v87
+    v89 = NewObject -, v2 layout=L43 fields=[0]
+    v90 = FinishObject v89
+    v91 = NewObject -, v2 layout=L44 fields=[0]
+    v92 = FinishObject v91
+    v93 = NewObject -, v2 layout=L45 fields=[0]
+    v94 = FinishObject v93
+    v95 = NewObject -, v2 layout=L46 fields=[0]
+    v96 = FinishObject v95
+    v97 = NewObject -, v2 layout=L47 fields=[0]
+    v98 = FinishObject v97
+    v99 = NewObject -, v2 layout=L48 fields=[0]
+    v100 = FinishObject v99
+    v101 = NewObject -, v2 layout=L49 fields=[0]
+    v102 = FinishObject v101
+    v103 = NewObject -, v2 layout=L50 fields=[0]
+    v104 = FinishObject v103
+    v105 = NewObject -, v2 layout=L51 fields=[0]
+    v106 = FinishObject v105
+    v107 = NewObject -, v2 layout=L52 fields=[0]
+    v108 = FinishObject v107
+    v109 = NewObject -, v2 layout=L53 fields=[0]
+    v110 = FinishObject v109
+    v111 = NewObject -, v2 layout=L54 fields=[0]
+    v112 = FinishObject v111
+    v113 = NewObject -, v2 layout=L55 fields=[0]
+    v114 = FinishObject v113
+    v115 = NewObject -, v2 layout=L56 fields=[0]
+    v116 = FinishObject v115
+    v117 = NewObject -, v2 layout=L57 fields=[0]
+    v118 = FinishObject v117
+    v119 = NewObject -, v2 layout=L58 fields=[0]
+    v120 = FinishObject v119
+    v121 = NewObject -, v2 layout=L59 fields=[0]
+    v122 = FinishObject v121
+    v123 = NewObject -, v2 layout=L60 fields=[0]
+    v124 = FinishObject v123
+    v125 = NewObject -, v2 layout=L61 fields=[0]
+    v126 = FinishObject v125
+    v127 = NewObject -, v2 layout=L62 fields=[0]
+    v128 = FinishObject v127
+    v129 = NewObject -, v2 layout=L63 fields=[0]
+    v130 = FinishObject v129
+    v131 = NewObject -, v2 layout=L64 fields=[0]
+    v132 = FinishObject v131
+    v133 = NewObject -, v2 layout=L65 fields=[0]
+    v134 = FinishObject v133
+    v135 = NewObject -, v4 layout=L66 fields=[0]
+    v136 = FinishObject v135
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v138 = PropGet v0 key="value0" [isFreeName]
+    v139 = TypeTest v138 testedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33
+    v140 = PropGet v139 key="x"
+    v141 = PropGet v0 key="value1" [isFreeName]
+    v142 = TypeTest v141 testedType=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64
+    v143 = PropGet v142 key="x"
+    v144 = PropGet v0 key="value2" [isFreeName]
+    v145 = TypeTest v144 testedType=L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65
+    v146 = PropGet v145 key="x"
+    v147 = ToBoolean v146
+    Branch v147 -> taken b1(), notTaken b2()
+  b2():
+    v148 = Convert v1 declared={type=L0|L65 flags=[IsExpected]}
+    v149 = PropGet v148 key="x"
+    v150 = NewObject -, v134 layout=L66 fields=[0]
+    v151 = FinishObject v150
+    Return
+}
+# The three sets that are tested in each iteration of the loop put First and Last at the two ends of the 64 layouts between them.
+# CHECK: L0 shapes 1..1
+# CHECK: L65 shapes 66..66
+# CHECK: set [L0, L65] bitset 1..66 @3 cost=9
+# TABLES: shapeSetBits 2 16

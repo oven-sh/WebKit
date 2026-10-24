@@ -1,0 +1,151 @@
+# function* plainNumbers() { yield 1 }  for (const x of (plain = plainNumbers())) ;
+# async function* numbers() { yield 1 }  for await (looped of (untouched = numbers())) ;  stepped = (await untouched.next()).value; untouched.return(); untouched.throw()
+# What holds for the generators of a generator function holds for those of an async one. A loop and steps by hand leave them with the program, so they keep the names they are made with:
+# the iterable of the loop is proven, and the loop needs no test and no second copy of its body. What a step hands out is what the body yields.
+# Between a generator and the prototype object of its class lies the prototype object of its function. The names are not proven where the program puts a name there or on the generator.
+# Nothing is proven where it stores another object as the prototype property of the function, gives the generator another prototype, or hands it to code that nobody has seen
+# RUN: valueflow-apply
+# CHECK-LABEL: variable g0 name="plain"
+# CHECK: declared={type=Generator<{{*}}pristine[Storage, Names]>}
+# CHECK-LABEL: variable g1 name="untouched"
+# CHECK: declared={type=AsyncGenerator<{{*}}pristine[Storage, Names]>}
+# CHECK-LABEL: variable g2 name="looped"
+# CHECK: declared={type=undefined|int}
+# CHECK-LABEL: variable g3 name="stepped"
+# CHECK: declared={type=undefined|int}
+# CHECK-LABEL: variable g4 name="extended"
+# CHECK: declared={type=AsyncGenerator
+# CHECK-NOT: Names]
+# CHECK-LABEL: variable g5 name="named"
+# CHECK: declared={type=AsyncGenerator
+# CHECK-NOT: Names]
+# CHECK-LABEL: variable g6 name="replaced"
+# CHECK: declared={type=AsyncGenerator
+# CHECK-NOT: pristine
+# CHECK-LABEL: variable g7 name="moved"
+# CHECK: declared={type=AsyncGenerator
+# CHECK-NOT: pristine
+# CHECK-LABEL: variable g8 name="handedOver"
+# CHECK: declared={type=AsyncGenerator
+# CHECK-NOT: pristine
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[plain]]: Generator<{{*}}pristine[Storage, Names]> = AssumeType
+# CHECK: = IteratorOpen [[plain]]
+# CHECK-LABEL: function f1 name="run"
+# CHECK: [[untouched]]: AsyncGenerator<{{*}}pristine[Storage, Names]> = AssumeType
+# CHECK: = IteratorOpen [[untouched]] iteratorKind=Async
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="plain" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="untouched" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="looped" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="stepped" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="extended" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="named" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="replaced" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="moved" module=m0 declared={type=anything} initialization=Undefined
+variable g8 name="handedOver" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Other"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    PutModuleVariable v1 variable=g0
+    v3 = IteratorOpen v1
+    v4 = IteratorResume v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = CallDirect function=f1
+    v8 = NewClosure function=f9
+    v9 = NewObject layout=L0 fields=[]
+    v10 = NewClosure function=f4
+    v11 = PropGet v10 key="prototype"
+    PropSet v11, v8 key="next" mode=Strict
+    v13 = Call v10
+    PutModuleVariable v13 variable=g4
+    v15 = NewClosure function=f5
+    v16 = Call v15
+    PropSet v16, v8 key="next" mode=Strict
+    PutModuleVariable v16 variable=g5
+    v19 = NewClosure function=f6
+    PropSet v19, v9 key="prototype" mode=Strict
+    v21 = Call v19
+    PutModuleVariable v21 variable=g6
+    v23 = NewClosure function=f7
+    v24 = Call v23
+    v25 = Builtin builtin=ObjectSetPrototypeOf
+    v26 = Call v25, -, v24, v9
+    PutModuleVariable v24 variable=g7
+    v28 = NewClosure function=f8
+    v29 = Call v28
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="keep" [isFreeName]
+    v32 = Call v31, -, v29
+    PutModuleVariable v29 variable=g8
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    PutModuleVariable v1 variable=g1
+    v3 = IteratorOpen v1 iteratorKind=Async
+    v4 = IteratorResume v3 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    PutModuleVariable v6 variable=g2
+    v8 = PropGet v1 key="next"
+    v9 = Call v8, v1 calleeKey="next"
+    v10 = Await v9
+    v11 = PropGet v10 key="value"
+    PutModuleVariable v11 variable=g3
+    v13 = PropGet v1 key="return"
+    v14 = Call v13, v1 calleeKey="return"
+    v15 = PropGet v1 key="throw"
+    v16 = Call v15, v1 calleeKey="throw"
+    Return
+}
+function f2 name="plainNumbers" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+function f3 name="numbers" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+function f4 name="extended" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f5 name="named" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f6 name="replaced" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f7 name="moved" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f8 name="handedOver" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}
+function f9 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

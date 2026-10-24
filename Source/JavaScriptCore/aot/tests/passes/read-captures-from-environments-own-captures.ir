@@ -1,0 +1,104 @@
+# A function that lies in a field of an environment runs with that environment among its captures. What it would read there for a call of itself, or of a function beside it, it was given itself:
+# the call takes the entry parameters, with the types that the tests at the entrance have proven, and goes past tests that they pass. The claim is proven from every call and every closure of the function.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}, {key="walk" declared={type=f1}}, {key="beside" declared={type=f4}}]
+layout L1 kind=Environment name="calledWithOtherCaptures" fields=[{key="count" declared={type=number}}, {key="walk" declared={type=f6}}]
+
+function f0 name="outer" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f1
+    PutEnvironmentField v2, v3 layout=L0 field=1
+    v5 = NewClosure v2, v0 function=f4
+    PutEnvironmentField v2, v5 layout=L0 field=2
+    v7 = GetCapture v3 function=f1
+    v8 = GetCapture v3 function=f1 index=1
+    v9 = CallDirect v7, v8, v1 function=f1
+    Return v9
+}
+# CHECK-LABEL: function f0 name="outer"
+# CHECK-NOT: NewClosure
+# CHECK: PutEnvironmentField [[scope]], v0 layout=L0 field=3
+
+function f1 name="walk" role=EntryChecks captures=[{type=env L0}, {type=string flags=[IsExpected]}] parameters=[{type=number}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: env L0, v1: anything, v2: number):
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: string):
+    v5 = CallDirect v0, v4, v2 function=f2
+    ReturnCall v5
+  b2():
+    v6 = CallDirect v0, v1, v2 function=f3
+    ReturnCall v6
+}
+
+function f2 name="walk" captures=[{type=env L0}, {type=string}] parameters=[{type=number}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: env L0, v1: string, v2: number):
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = GetCapture v3 function=f1
+    v5 = GetCapture v3 function=f1 index=1
+    v6 = CallDirect v4, v5, v2 function=f1
+    v7 = GetEnvironmentField v0 layout=L0 field=2
+    v8 = GetCapture v7 function=f4
+    v9 = GetCapture v7 function=f4 index=1
+    v10 = CallDirect v8, v9, v2 function=f4
+    v11 = Add v6, v10
+    Return v11
+}
+# The body behind the tests calls itself, not the tests.
+# CHECK-LABEL: function f2 name="walk"
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = CallDirect v0, v1, v2 function=f2
+# CHECK-NEXT: = CallDirect v0, v1, v2 function=f4
+
+function f3 name="walk" role=GenericVersion captures=[{type=env L0}, {type=string flags=[IsExpected]}] parameters=[{type=number}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: env L0, v1: anything, v2: number):
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = GetCapture v3 function=f1
+    v5 = GetCapture v3 function=f1 index=1
+    v6 = CallDirect v4, v5, v2 function=f1
+    Return v6
+}
+# Nothing is proven here: the call has the capture at hand, and goes to the tests.
+# CHECK-LABEL: function f3 name="walk"
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = CallDirect v0, v1, v2 function=f1
+
+function f4 name="beside" captures=[{type=env L0}, {type=string flags=[IsExpected]}] parameters=[{type=number}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything, v2: number):
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = GetCapture v3 function=f1
+    v5 = GetCapture v3 function=f1 index=1
+    v6 = CallDirect v4, v5, v2 function=f1
+    Return v6
+}
+# It captures the same value, which lies in the same field.
+# CHECK-LABEL: function f4 name="beside"
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = CallDirect v0, v1, v2 function=f1
+
+function f5 name="outerOfTheOther" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = NewClosure v2, v0 function=f6
+    PutEnvironmentField v2, v3 layout=L1 field=1
+    v5 = GetCapture v3 function=f6
+    v6 = CallDirect v5, v1, v1 function=f6
+    Return v6
+}
+
+function f6 name="walk" captures=[{type=env L1}, {type=anything}] parameters=[{type=number}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything, v2: number):
+    v3 = GetEnvironmentField v0 layout=L1 field=1
+    v4 = GetCapture v3 function=f6
+    v5 = GetCapture v3 function=f6 index=1
+    v6 = CallDirect v4, v5, v2 function=f6
+    Return v6
+}
+# One call hands it something else than what lies in the environment: what it was given says nothing.
+# CHECK-LABEL: function f6 name="walk"
+# CHECK: [[read]]: anything = GetEnvironmentField v0 layout=L1 field=2
+# CHECK-NEXT: = CallDirect v0, [[read]], v2 function=f6

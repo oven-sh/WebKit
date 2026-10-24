@@ -1,0 +1,163 @@
+# A copied range never ends between a value with several results and a read of one, and no stretch crosses a producer whose reads cannot be kept beside it
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v1:v6
+# RUN(F1): test-placement function=f1 site=v1:v4
+# RUN(F2): test-placement function=f2 site=v2:v4
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="resultReadsStayTogether" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f8
+    v2 = ResultAt v1
+    v3 = Add v2, v2
+    v4 = ResultAt v1 index=1
+    v5 = Add v3, v4
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
+}
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 8
+# F0-NOT: stretch
+
+function f1 name="oneResultEndsAtUse" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f9
+    v2 = Add v1, v1
+    v3 = Add v2, v1
+    v4 = ShapeTest v0 layouts=[L0]
+    Return v3
+}
+# F1: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 0
+# F1-NOT: stretch
+
+function f2 name="resultsReturned" parameters=[{type=object}, {type=number}] results=[{type=object}, {type=number}] {
+  b0(v0: object, v1: number):
+    v2 = Results v0, v1
+    v3 = Add v1, v1
+    v4 = ShapeTest v0 layouts=[L0]
+    Return v2
+}
+# F2: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2; cloned 28
+# F2-NOT: stretch
+
+function f3 name="testBetweenProducerAndRead" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect v0 function=f8
+    v3 = ResultAt v2
+    v4 = PropGet v0 key="b"
+    v5 = ResultAt v2 index=1
+    v6 = Add v3, v5
+    Return v6
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v1; test BelongsToInstance v0 before v1; uses v1; cloned 0
+# PLAN-NEXT: stretch 1: test TypeTest v0 testedType=L0 before v4; test BelongsToInstance v0 before v4; uses v4; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="testBetweenProducerAndRead"
+# IR-COUNT-2: = BelongsToInstance
+# IR-NOT: BelongsToInstance
+# IR-LABEL: function f4
+
+function f4 name="readsBeforeNextUse" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect v0 function=f8
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = PropGet v0 key="b"
+    v6 = Add v3, v4
+    Return v6
+}
+# PLAN-LABEL: function f4
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v1; test BelongsToInstance v0 before v1; uses v1 v5; cloned 12
+# PLAN-NOT: stretch
+# IR: = TypeTest v0 testedType=L0
+# IR-NOT: TypeTest
+# IR: v2:{{*}}= CallDirect {{*}} function=f8
+# IR-NEXT: v3: number = ResultAt v2
+# IR-NEXT: v4: number = ResultAt v2 index=1
+# IR: frequency=Unlikely:
+# IR-NEXT: = PropGet v0 key="a"
+# IR-NEXT: [[copiedCall4]]:{{*}}= CallDirect v0 function=f8
+# IR-NEXT: = ResultAt [[copiedCall4]]
+# IR-NEXT: = ResultAt [[copiedCall4]] index=1
+# IR-NOT: TypeTest
+# IR-LABEL: function f5
+
+function f5 name="resultsReadInOtherBlock" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect v0 function=f8
+    Jump -> next b1()
+  b1():
+    v3 = ResultAt v2
+    v4 = PropGet v0 key="b"
+    Return v3
+}
+# PLAN-LABEL: function f5
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v1; test BelongsToInstance v0 before v1; uses v1; cloned 0
+# PLAN-NEXT: stretch 1: test TypeTest v0 testedType=L0 before v4; test BelongsToInstance v0 before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-COUNT-2: = BelongsToInstance
+# IR-NOT: BelongsToInstance
+# IR-LABEL: function f6
+
+function f6 name="oneResultReadInOtherBlock" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect v0 function=f9
+    Jump -> next b1()
+  b1():
+    v3 = Add v2, v2
+    v4 = PropGet v0 key="b"
+    Return v3
+}
+# PLAN-LABEL: function f6
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v1; test BelongsToInstance v0 before v1; uses v1 v4; cloned 28
+# PLAN-NOT: stretch
+# IR: = TypeTest v0 testedType=L0
+# IR-NOT: TypeTest
+# IR-LABEL: function f7
+
+function f7 name="enumeratorReadInOtherBlock" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = PropGet v0 key="a"
+    v3 = ForInOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = ForInStep v3, v1
+    v6 = ResultAt v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = PropGet v0 key="b"
+    Jump -> next b1()
+  b3():
+    Return
+}
+# PLAN-LABEL: function f7
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; test BelongsToInstance v0 before v2; uses v2; cloned 0
+# PLAN-NEXT: stretch 1: test TypeTest v0 testedType=L0 on b0.0; test BelongsToInstance v0 on b0.0;{{*}}uses v7;
+# PLAN-NOT: stretch
+# IR: = TypeTest v0 testedType=L0
+# IR: v3:{{*}}= ForInOpen v1
+# IR-NOT: ForInOpen
+# IR-LABEL: function f8
+# PLAN-LABEL: function f8
+
+function f8 name="twoResults" parameters=[{type=object}] results=[{type=number}, {type=number}] {
+  b0(v0: object):
+    v1 = Integer integer=1
+    v2 = Results v1, v1
+    Return v2
+}
+function f9 name="oneResult" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object):
+    v1 = Integer integer=1
+    Return v1
+}

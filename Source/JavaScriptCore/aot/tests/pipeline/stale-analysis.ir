@@ -1,0 +1,46 @@
+# A pass that adds a function drops the call graph and the next user sees the added edge: RemoveUnreachableFunctions, which runs again behind the pass that outlines, keeps the outlined body
+# OPTIONS: heat=EverythingIsCold
+# RUN: pipeline ElideStackChecks
+# STATISTIC: OutlinedBodiesCreated >= 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="host" [isFreeName]
+    v2 = PropGet v0 key="payload" [isFreeName]
+    v3 = String string="bad"
+    v4 = PropGet v1 key="report"
+    v5 = Call v4, v1, v3, v2 calleeKey="report"
+    v6 = PropGet v1 key="report"
+    v7 = Call v6, v1, v3, v2 calleeKey="report"
+    v8 = PropGet v1 key="report"
+    v9 = Call v8, v1, v3, v2 calleeKey="report"
+    v10 = PropGet v1 key="report"
+    v11 = Call v10, v1, v3, v2 calleeKey="report"
+    v12 = PropGet v1 key="report"
+    v13 = Call v12, v1, v3, v2 calleeKey="report"
+    v14 = PropGet v1 key="report"
+    v15 = Call v14, v1, v3, v2 calleeKey="report"
+    v16 = PropGet v1 key="report"
+    v17 = Call v16, v1, v3, v2 calleeKey="report"
+    v18 = PropGet v1 key="report"
+    v19 = Call v18, v1, v3, v2 calleeKey="report"
+    v20 = PropGet v1 key="report"
+    v21 = Call v20, v1, v3, v2 calleeKey="report"
+    v22 = PropGet v1 key="report"
+    v23 = Call v22, v1, v3, v2 calleeKey="report"
+    v24 = PropGet v1 key="report"
+    v25 = Call v24, v1, v3, v2 calleeKey="report"
+    v26 = PropGet v1 key="report"
+    v27 = Call v26, v1, v3, v2 calleeKey="report"
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: key="report"
+# CHECK: = CallDirect {{*}}function=[[body]]
+# CHECK: function [[body]] {{*}}role=OutlinedBody
+# CHECK-NEXT: b0(
+# CHECK: key="report"

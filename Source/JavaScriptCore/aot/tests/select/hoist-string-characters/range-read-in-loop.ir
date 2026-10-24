@@ -1,0 +1,97 @@
+# A read of a range that the rule for ranges has moved to the base string takes the flat string like any other read of characters
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 7
+# STATISTIC: HoistStringCharactersGroups = 4
+
+# CHECK-LABEL: function f0 name="slice-equals-literal"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat0]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK-NOT: = Substring
+# CHECK: : boolean = StringRangeEqualsLiteral [[flat0]], [[from0]], [[to0]] literal="ab"
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-equals-literal" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=2
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Add v5, v4
+    v10 = GetStringLength v0
+    v11 = StringRange v10, v5, v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    v14 = Substring v0, v12, v13
+    v15 = String string="ab"
+    v16 = StrictEq v14, v15
+    Jump -> next b1(v9, v16)
+  b3():
+    Return v6
+}
+
+# CHECK-LABEL: function f1 name="character-equals-literal"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat1]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne [[flat1]], -, -, [[index1]]
+# CHECK: : boolean = StrictEq [[unit1]], [[codeUnit1]]
+# CHECK-NOT: FlattenString
+function f1 name="character-equals-literal" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharAt/0
+    v10 = String string="a"
+    v11 = StrictEq v9, v10
+    v12 = Add v5, v4
+    Jump -> next b1(v12, v11)
+  b3():
+    Return v6
+}
+
+# CHECK-LABEL: function f2 name="character-compared-twice"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat2]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: [[unit2]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne [[flat2]], -, -, [[index2]]
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK-NOT: FlattenString
+function f2 name="character-compared-twice" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharAt/0
+    v10 = String string="a"
+    v11 = StrictEq v9, v10
+    v12 = String string="b"
+    v13 = StrictEq v9, v12
+    v14 = BitOr v11, v13
+    v15 = Add v5, v4
+    Jump -> next b1(v15, v14)
+  b3():
+    Return v6
+}

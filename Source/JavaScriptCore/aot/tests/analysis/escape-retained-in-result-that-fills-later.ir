@@ -1,0 +1,19 @@
+# The bound function may be the function it was made from, and it retains the receiver. The receiver is held by whatever the result stands for, also by an object that reaches the result after the receiver was looked at
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="theResultHoldsTheReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+# CHECK: function f0
+# CHECK: objects: 2
+# CHECK: o0 definition: v0
+# CHECK: o0 contents: [o1]
+# CHECK: o1 definition: v1
+# CHECK: o1 state: Escapes
+# CHECK: o1 containers: [o0]
+# CHECK: v2 points to: [o0]

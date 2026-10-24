@@ -1,0 +1,50 @@
+# class Shape {}  class Circle extends Shape { constructor(draw) { super(); draw() } }  circle = new Circle(one); await circle; Promise.resolve(circle)
+# The constructor of Shape allocates the instance, so it is an ordinary object and no promise, whatever its class extends. It finds no `then`, so the await gives the instance itself and runs nothing.
+# Nobody constructs a species of it: the one construction of Circle is that of the program, and `draw` is `one`.
+# RUN: valueflow-solve calls
+# CHECK: f3 v4 -> f4
+# CHECK-NOT: unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f2
+layout L1 kind=Instance name="Circle" base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" module=m0 flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f3
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f4
+    v8 = Construct v6, -, v7
+    v9 = Await v8
+    v10 = Builtin builtin=Promise
+    v11 = Builtin builtin=PromiseResolve
+    v12 = Call v11, v10, v8
+    Return
+}
+function f2 name="Shape" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f3 name="Circle" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = Call v2
+    v5 = SuperConstruct v3, v1 layout=L1
+    Return v5
+}
+function f4 name="one" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

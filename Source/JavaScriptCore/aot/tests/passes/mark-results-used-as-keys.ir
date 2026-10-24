@@ -1,0 +1,182 @@
+# A string that a function makes and returns is made as a key where more of the direct calls that read the result look something up by it than read it in another way.
+# What decides is where the result goes, not the function: no call at all, or as many other readers as lookups, leave it as it is. A caller that returns the result stands for its own callers,
+# and for nobody where it has no known call itself, as an entrypoint for calls by value. A part of a key counts for what a builder makes, which is flat anyway, and against a concatenation
+# FORM: Prepared
+# RUN: pass MarkResultsUsedAsKeys
+# STATISTIC: ResultsMarkedAsKeys = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pairKey" parameters=[{type=number}, {type=number}] results=[{type=string}] {
+  b0(v0: number, v1: number):
+    v2 = String string=","
+    v3 = Strcat v0, v2, v1
+    Return v3
+}
+# CHECK-LABEL: name="pairKey"
+# CHECK: v3: string = Strcat v0, v2, v1 [isLikelyKey]
+
+function f1 name="looksUp" parameters=[{type=Map}, {type=number}] results=[{type=anything}] {
+  b0(v0: Map, v1: number):
+    v2 = CallDirect v1, v1 function=f0
+    v3 = CallBuiltin v0, v2 overload=MapPrototypeGet/0
+    Return v3
+}
+function f2 name="looksUpAndKeeps" parameters=[{type=Set}, {type=Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Set, v1: Array, v2: number):
+    v3 = CallDirect v2, v2 function=f0
+    v4 = CallBuiltin v0, v3 overload=SetPrototypeHas/0
+    v5 = Integer integer=0
+    ElemSet v1, v5, v3
+    Return v4
+}
+
+function f3 name="label" parameters=[{type=number}, {type=string}] results=[{type=string}] {
+  b0(v0: number, v1: string):
+    v2 = Add v1, v0
+    Return v2
+}
+# CHECK-LABEL: name="label"
+# CHECK: v2: string = Add v1, v0
+# CHECK-NOT: isLikelyKey
+
+function f4 name="looksUpLabel" parameters=[{type=Map}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: Map, v1: number, v2: string):
+    v3 = CallDirect v1, v2 function=f3
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    Return v4
+}
+function f5 name="measuresLabel" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = CallDirect v0, v1 function=f3
+    v3 = PropGet v2 key="length"
+    Return v3
+}
+
+function f6 name="eitherKey" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Add v0, v1
+    Jump -> next b3(v3)
+  b2():
+    v4 = Add v1, v0
+    v5 = Upcast v4 castType=undefined|string
+    v6 = AssumeType v5 castType=string
+    Jump -> next b3(v6)
+  b3(v7: string):
+    Return v7
+}
+# CHECK-LABEL: name="eitherKey"
+# CHECK: v3: string = Strcat v0, v1 [isLikelyKey]
+# CHECK: v4: string = Strcat v1, v0 [isLikelyKey]
+
+function f7 name="handsOn" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: string, v2: boolean):
+    v3 = CallDirect v0, v1, v2 function=f6
+    ReturnCall v3
+}
+function f8 name="handsOnOrMakes" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v0, v1, v2 function=f7
+    Return v3
+  b2():
+    v4 = Strcat v0, v0, v1
+    Return v4
+}
+# CHECK-LABEL: name="handsOnOrMakes"
+# CHECK: v4: string = Strcat v0, v0, v1 [isLikelyKey]
+
+function f9 name="readsProperty" parameters=[{type=anything}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: string, v2: boolean):
+    v3 = CallDirect v1, v1, v2 function=f8
+    Jump -> next b1(v3)
+  b1(v4: string):
+    v5 = ElemGet v0, v4
+    Return v5
+}
+
+function f10 name="neverCalled" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+  b0(v0: string, v1: string):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="neverCalled"
+# CHECK: v2: string = Add v0, v1
+# CHECK-NOT: isLikelyKey
+
+function f11 name="returnsItself" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0, v1 function=f11
+    Return v2
+  b2():
+    v3 = Add v0, v0
+    Return v3
+}
+# CHECK-LABEL: name="returnsItself"
+# CHECK: v3: string = Add v0, v0
+# CHECK-NOT: isLikelyKey
+
+function f12 name="partOfAnother" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="partOfAnother"
+# CHECK: v2: string = Add v0, v1
+# CHECK-NOT: isLikelyKey
+
+function f13 name="appendsAndLooksUp" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: number):
+    v3 = CallDirect v1, v2 function=f12
+    v4 = Add v3, v1
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+}
+
+function f14 name="handsOnToNobodyKnown" parameters=[{type=number}] results=[{type=string}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f0
+    ReturnCall v1
+}
+
+function f15 name="listKey" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = StringBuilderBegin
+    StringBuilderAppend v2, v0, v1
+    v4 = StringBuilderFinish v2
+    Return v4
+}
+# CHECK-LABEL: name="listKey"
+# CHECK: v4: string = StringBuilderFinish v2 [isLikelyKey]
+
+function f16 name="appendsToListAndLooksUp" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: Map, v1: string, v2: number):
+    v3 = CallDirect v1, v2 function=f15
+    v4 = Add v3, v1
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+}
+
+function f17 name="mostlyKey" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="mostlyKey"
+# CHECK: v2: string = Strcat v0, v1 [isLikelyKey]
+
+function f18 name="looksUpTwiceAndCompares" parameters=[{type=Map}, {type=Set}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: string, v3: number):
+    v4 = CallDirect v2, v3 function=f17
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    v6 = CallDirect v2, v3 function=f17
+    v7 = CallBuiltin v1, v6 overload=SetPrototypeHas/0
+    v8 = CallDirect v2, v3 function=f17
+    v9 = StrictEq v8, v2
+    Return v9
+}

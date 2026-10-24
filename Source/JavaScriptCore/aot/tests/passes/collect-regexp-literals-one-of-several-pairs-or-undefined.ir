@@ -1,0 +1,42 @@
+# for (const [text] of [["a+", "x"], ["b+", "y"]]) new RegExp(text + tail), once the list is never allocated: its element is a Switch over the index, with undefined in the arm past the end.
+# What is taken apart must be an object: the operation throws on undefined, so behind it stand the pairs alone. They are one of several objects, the choice among them is an enumeration,
+# and each of its texts is put together with each of the two tails.
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# CHECK: regexp requests: 4
+# CHECK-NEXT: "a+" flags=-
+# CHECK-NEXT: "b+" flags=-
+# CHECK-NEXT: "a+c" flags=-
+# CHECK-NEXT: "b+c" flags=-
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="a+"
+    v1 = String string="x"
+    v2 = NewArray v0, v1 contents=anything
+    v3 = String string="b+"
+    v4 = String string="y"
+    v5 = NewArray v3, v4 contents=anything
+    v6 = Builtin builtin=MathRandom
+    v7 = Call v6
+    v8 = ToNumber v7
+    v9 = Undefined
+    v10 = String string=""
+    v11 = String string="c"
+    v12 = Integer integer=0
+    v13 = Less v8, v12
+    Branch v13 -> taken b1(v11), notTaken b1(v10)
+  b1(v14: anything):
+    Switch v8 cases=[0, 1] -> case b2(v2), case b2(v5), otherwise b2(v9)
+  b2(v15: anything):
+    v16 = RequireObjectCoercible v15 nullishAccess=Iterate
+    v17 = Integer integer=0
+    v18 = ElemGet v16, v17
+    v19 = Strcat v18, v14
+    v20 = Builtin builtin=RegExp
+    v21 = Construct v20, -, v19
+    Return
+}

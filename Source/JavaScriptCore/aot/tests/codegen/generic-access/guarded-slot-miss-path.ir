@@ -1,0 +1,69 @@
+# The miss path of a guarded slot read is stamped with the layout of the guard: it asks for no site cache and reads by name through the lookup tables, of which the table of fields comes first
+# RUN: compile
+# RUN(SITES): pipeline PlaceSiteCaches
+# OPTIONS: heat=everything-is-hot check=validate-back-end limit=MaxSiteCaches:2 disable=pass:InlineCalls
+# STATISTIC: TypeTestsPlaced = 16
+# STATISTIC: SiteCachesPlaced = 2
+# STATISTIC: SitesWithoutSiteCache = 1
+# CHECK: image not empty
+# SITES-LABEL: name="readsPointBetweenCalls"
+# SITES: PropGet {{*}} key="report" {{*}}siteCache=
+# SITES: PropGet {{*}} key="first" {{*}}siteCache=
+# SITES-NOT: key="x" {{*}}siteCache=
+# SITES-LABEL: name="library"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Double number=1.5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    v6 = Call v1, -, v5
+    Return v6
+}
+function f1 name="readsPointBetweenCalls" parameters=[{type=anything}, {type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|L0):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="report" [isFreeName]
+    v4 = PropGet v0 key="first"
+    v5 = Call v3, -, v4
+    v6 = PropGet v1 key="x" receivers=[L0]
+    v7 = Call v3, -, v6
+    v8 = PropGet v1 key="x" receivers=[L0]
+    v9 = Call v3, -, v8
+    v10 = PropGet v1 key="x" receivers=[L0]
+    v11 = Call v3, -, v10
+    v12 = PropGet v1 key="x" receivers=[L0]
+    v13 = Call v3, -, v12
+    v14 = PropGet v1 key="x" receivers=[L0]
+    v15 = Call v3, -, v14
+    v16 = PropGet v1 key="x" receivers=[L0]
+    v17 = Call v3, -, v16
+    v18 = PropGet v1 key="x" receivers=[L0]
+    v19 = Call v3, -, v18
+    v20 = PropGet v1 key="x" receivers=[L0]
+    v21 = Call v3, -, v20
+    v22 = PropGet v1 key="x" receivers=[L0]
+    v23 = Call v3, -, v22
+    v24 = PropGet v1 key="x" receivers=[L0]
+    v25 = Call v3, -, v24
+    v26 = PropGet v1 key="x" receivers=[L0]
+    v27 = Call v3, -, v26
+    v28 = PropGet v1 key="x" receivers=[L0]
+    v29 = Call v3, -, v28
+    v30 = PropGet v1 key="x" receivers=[L0]
+    v31 = Call v3, -, v30
+    v32 = PropGet v1 key="x" receivers=[L0]
+    v33 = Call v3, -, v32
+    v34 = PropGet v1 key="x" receivers=[L0]
+    v35 = Call v3, -, v34
+    v36 = PropGet v1 key="x" receivers=[L0]
+    v37 = Call v3, -, v36
+    Return v37
+}

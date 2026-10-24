@@ -1,0 +1,123 @@
+# node?.a, then node?.b: the value is tested for undefined|null at each use, and the nullish side is marked unlikely. The side on which the test in front
+# of them all PASSES is the fast stretch, and the other side is the copy of the failed tests, which counts as unlikely and in which no test is placed. So where a repeated test is unlikely to pass,
+# the test in front asks for the rest of the type: the object goes on in the fast stretch and null into the copy. Both of the program's tests fold on either side.
+# Only a mark says so. Where the nullish side is ordinary code, the estimate of the branch is a guess: the tests of the program stay, each is one comparison, and both sides are tested code
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="a" declared={type=number}}]
+variable g0 name="sink" declared={type=anything} initialization=Undefined
+
+function f0 name="testedForNullishTwice" parameters=[{type=null|L0}] results=[{type=i32}] {
+  b0(v0: null|L0):
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1() frequency=Unlikely:
+    v2 = Integer integer=0
+    Jump -> next b3(v2)
+  b2(v3):
+    PutModuleVariable v3 variable=g0
+    v5 = Integer integer=1
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v0 testedType=undefined|null
+    Branch v7 -> taken b4(), notTaken b5(| 0)
+  b4() frequency=Unlikely:
+    Return v6
+  b5(v8):
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=2
+    Return v10
+}
+# CHECK-LABEL: function f0 name="testedForNullishTwice"
+# CHECK: v1: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v1 -> taken [[object0]](| 0), notTaken [[null0]](| 0)
+# CHECK-NEXT: [[object0]]([[narrowed0]]: L0):
+# CHECK: false = TypeTest [[narrowed0]] testedType=undefined|null
+# CHECK: false = TypeTest [[narrowed0]] testedType=undefined|null
+# CHECK: [[null0]]({{*}}: null) frequency=Unlikely:
+# CHECK: true = TypeTest {{*}} testedType=undefined|null
+# CHECK: true = TypeTest {{*}} testedType=undefined|null
+# CHECK-LABEL: function f1 name="testedForTheObjectTwice"
+
+function f1 name="testedForTheObjectTwice" parameters=[{type=null|L0}] results=[{type=i32}] {
+  b0(v0: null|L0):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = Integer integer=0
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v0 testedType=L0
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8):
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=2
+    Return v10
+  b5() frequency=Unlikely:
+    Return v6
+}
+# CHECK: v1: boolean = TypeTest v0 testedType=L0
+# CHECK: : null) frequency=Unlikely:
+# CHECK-LABEL: function f2 name="arrayWithProofsTestedForNullishTwice"
+
+function f2 name="arrayWithProofsTestedForNullishTwice" parameters=[{type=undefined|Array<number, proven, pristine[Storage, Names]>}] results=[{type=i32}] {
+  b0(v0: undefined|Array<number, proven, pristine[Storage, Names]>):
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1() frequency=Unlikely:
+    v2 = Integer integer=0
+    Jump -> next b3(v2)
+  b2(v3):
+    PutModuleVariable v3 variable=g0
+    v5 = Integer integer=1
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v0 testedType=undefined|null
+    Branch v7 -> taken b4(), notTaken b5(| 0)
+  b4() frequency=Unlikely:
+    Return v6
+  b5(v8):
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=2
+    Return v10
+}
+# No test finds what flow has proven about the class, so the test in front asks for the array alone. What has passed it keeps the proofs of the value.
+# CHECK: v1: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch v1 -> taken [[array2]](| 0), notTaken [[undefined2]](| 0)
+# CHECK-NEXT: [[array2]]([[narrowed2]]: Array<number, proven, pristine[Storage, Names]>):
+# CHECK: false = TypeTest [[narrowed2]] testedType=undefined|null
+# CHECK: [[undefined2]]({{*}}: undefined) frequency=Unlikely:
+# CHECK-LABEL: function f3 name="nullishSideIsOrdinaryCode"
+
+function f3 name="nullishSideIsOrdinaryCode" parameters=[{type=null|L0}] results=[{type=i32}] {
+  b0(v0: null|L0):
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v2 = Integer integer=0
+    Jump -> next b3(v2)
+  b2(v3):
+    PutModuleVariable v3 variable=g0
+    v5 = Integer integer=1
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v0 testedType=undefined|null
+    Branch v7 -> taken b4(), notTaken b5(| 0)
+  b4():
+    Return v6
+  b5(v8):
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=2
+    Return v10
+}
+# CHECK-NOT: frequency=Unlikely
+# CHECK: v1: boolean = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: frequency=Unlikely
+# CHECK: v7: boolean = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: frequency=Unlikely

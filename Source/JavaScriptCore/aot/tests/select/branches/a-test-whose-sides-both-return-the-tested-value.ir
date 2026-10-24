@@ -1,0 +1,55 @@
+# A result is tested where it is returned, and the value is returned whatever the test says: the test tells nobody anything, so the value is returned untested
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnedEitherWay" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: undefined|string):
+    Return v2
+  b2(v3: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+    Return v3
+}
+# CHECK-LABEL: function f0 name="returnedEitherWay"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+
+function f1 name="oneSideReturnsSomethingElse" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: undefined|string):
+    Return v2
+  b2(v3: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f1 name="oneSideReturnsSomethingElse"
+# CHECK: = TypeTest v0 testedType=undefined|string
+# CHECK-NEXT: TestAndBranch
+
+function f2 name="twoTestsShareTheSideThatFails" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=undefined|string
+    Branch v3 -> taken b3(| 0), notTaken b5(| 0)
+  b2():
+    v4 = TypeTest v1 testedType=undefined|string
+    Branch v4 -> taken b4(| 0), notTaken b5(| 0)
+  b3(v5: undefined|string):
+    Return v5
+  b4(v6: undefined|string):
+    Return v6
+  b5(v7: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+    Return v7
+}
+# CHECK-LABEL: function f2 name="twoTestsShareTheSideThatFails"
+# CHECK-NOT: TypeTest
+# CHECK: Return v0
+# CHECK-NOT: TypeTest
+# CHECK: Return v1
+# CHECK-NOT: TypeTest

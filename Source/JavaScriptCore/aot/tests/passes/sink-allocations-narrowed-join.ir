@@ -1,0 +1,242 @@
+# A join that a test or a cast narrowed while it was virtual keeps the narrowed type where a block parameter carries its cell
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 8
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b8(), notTaken b4(| 0)
+  b4(v6):
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v7 = Call v0, -, v6
+    Jump -> next b7()
+  b6():
+    v8 = Call v0, -, v6, v6
+    Jump -> next b7()
+  b7():
+    v9 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    Return v9
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="builtInTwoBranches"
+# CHECK-NOT: TypeTest
+# CHECK: b5():
+# CHECK-NEXT: [[first0]]: Array = NewArray
+# CHECK: Jump -> next b7([[first0]])
+# CHECK: b6():
+# CHECK-NEXT: [[second0]]: Array = NewArray
+# CHECK: Jump -> next b7([[second0]])
+# CHECK: b7([[cell0]]: undefined|Array):
+# CHECK-NEXT: [[narrowed0]]: Array = AssumeType [[cell0]] castType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed0]] overload=ArrayPrototypeLength/0
+
+function f1 name="everyArmHasTheNarrowedType" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray v0, v0 contents=anything
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = TypeTest v5 testedType=undefined
+    Branch v6 -> taken b9(), notTaken b4(| 0)
+  b4(v7):
+    Branch v2 -> taken b5(), notTaken b9()
+  b5():
+    Branch v1 -> taken b6(), notTaken b7()
+  b6():
+    v8 = Call v0, -, v7
+    Jump -> next b8()
+  b7():
+    v9 = Call v0, -, v7, v7
+    Jump -> next b8()
+  b8():
+    v10 = CallBuiltin v7 overload=ArrayPrototypeLength/0
+    Return v10
+  b9():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="everyArmHasTheNarrowedType"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: AssumeType
+# CHECK: b8([[cell1]]: Array):
+# CHECK-NEXT: = CallBuiltin [[cell1]] overload=ArrayPrototypeLength/0
+
+function f2 name="builtBeforeLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b7(), notTaken b4(| 0)
+  b4(v6):
+    v7 = Integer
+    Jump -> next b5(v7)
+  b5(v8):
+    LoopHint
+    v10 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    v11 = Less v8, v10
+    Branch v11 -> taken b6(| 0), notTaken b7()
+  b6(v12):
+    v13 = Call v0, -, v6
+    v14 = Increment v12
+    Jump -> next b5(v14)
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="builtBeforeLoop"
+# CHECK: b4():
+# CHECK: [[built2]]: Array = NewArray
+# CHECK-NEXT: Jump -> next b5(v7, [[built2]])
+# CHECK: b5(v8:{{*}}, [[cell2]]: undefined|Array):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[narrowed2]]: Array = AssumeType [[cell2]] castType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed2]] overload=ArrayPrototypeLength/0
+# CHECK: b6([[inBody2]]: undefined|Array, v12:
+# CHECK-NEXT: [[argument2]]: Array = AssumeType [[inBody2]] castType=Array
+# CHECK-NEXT: = Call v0, -, [[argument2]]
+
+function f3 name="usedInHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b7(), notTaken b4(| 0)
+  b4(v6):
+    Jump -> next b5()
+  b5() handler=b6():
+    v7 = Call v0, -, v6
+    Return v7
+  b6() role=CatchHandler:
+    v8 = CatchValue
+    v9 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    Return v9
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="usedInHandler"
+# CHECK: role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK: [[narrowed3]]: Array = AssumeType {{*}} castType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed3]] overload=ArrayPrototypeLength/0
+
+function f4 name="narrowedByCast" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = Undefined
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = RequireObjectCoercible v5
+    Branch v2 -> taken b4(), notTaken b8()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v7 = Call v0, -, v6
+    Jump -> next b7()
+  b6():
+    v8 = Call v0, -, v6, v6
+    Jump -> next b7()
+  b7():
+    v9 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    Return v9
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="narrowedByCast"
+# CHECK: b7([[cell4]]: undefined|Array):
+# CHECK-NEXT: [[narrowed4]]: Array = AssumeType [[cell4]] castType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed4]] overload=ArrayPrototypeLength/0
+# CHECK: [[missing4]]: undefined = Undefined
+# CHECK-NEXT: = RequireObjectCoercible [[missing4]]
+# CHECK-NEXT: Unreachable
+
+function f5 name="narrowedParameterHoldsCells" parameters=[{type=anything}, {type=boolean}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: Array):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v0 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = Undefined
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = TypeTest v5 testedType=undefined
+    Branch v6 -> taken b4(), notTaken b5(| 0)
+  b4():
+    Jump -> next b6(v2)
+  b5(v7):
+    v8 = Call v0, -, v7
+    Jump -> next b6(v7)
+  b6(v9):
+    v10 = CallBuiltin v9 overload=ArrayPrototypeLength/0
+    Return v10
+}
+# CHECK-LABEL: function f5 name="narrowedParameterHoldsCells"
+# CHECK-NOT: AssumeType
+# CHECK: b5():
+# CHECK-NEXT: [[built5]]: Array = NewArray
+# CHECK: Jump -> next b6([[built5]])
+# CHECK: b6([[either5]]: Array):
+# CHECK-NEXT: = CallBuiltin [[either5]] overload=ArrayPrototypeLength/0
+
+function f6 name="builtInOneBranch" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b8(), notTaken b4(| 0)
+  b4(v6):
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v7 = Call v0, -, v6
+    Jump -> next b7()
+  b6():
+    Jump -> next b7()
+  b7():
+    v8 = CallBuiltin v6 overload=ArrayPrototypeLength/0
+    Return v8
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f6 name="builtInOneBranch"
+# CHECK: b7([[tag6]]: i32, [[carried6]]: undefined|Array,
+# CHECK-NEXT: Switch [[tag6]]
+# CHECK: ([[cell6]]: undefined|Array):
+# CHECK-NEXT: [[narrowed6]]: Array = AssumeType [[cell6]] castType=Array
+# CHECK-NEXT: = CallBuiltin [[narrowed6]] overload=ArrayPrototypeLength/0

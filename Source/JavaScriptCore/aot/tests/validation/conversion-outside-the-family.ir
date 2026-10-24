@@ -1,0 +1,28 @@
+# interface Range { pos: number; end: number }  const range: Range = { pos: 1 }, where the literal has the layout Node, which has no `end`, and nothing puts Node below Range
+# The family of a type lists every layout that the program converts to it and every layout that has the names the type requires, and typed code relies on the list: a conversion without a cause says "the families cover me".
+# The lie: the last conversion says so, and the family of Range does not list the layout of the new object. The reader counts it, and under the checks of a test it fails the build.
+# (A product is built all the same: the conversion becomes a check that fails, which is slow and sound.)
+# In front of it, neither counted nor reported: a layout below Range is converted, a conversion names its cause and so gets a test, and a conversion to an expected type promises nothing
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: FamilyNotClosed 1
+# STATISTIC: ConversionsOutsideFamily = 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=6 kind=Variable
+typesite w1 module=m0 position=40 kind=Assertion
+layout L0 name="Range" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Node" fields=[{key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Literal" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v2 = Convert v1 declared={type=L0 site=w0}
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = Convert v3 declared={type=L0 site=w1} illTypedCause=Assertion
+    v5 = Convert v3 declared={type=L0 flags=[IsExpected]}
+    v6 = Convert v3 declared={type=L0 site=w0}
+    Return
+}

@@ -1,0 +1,56 @@
+# The variable of a function declaration has storage only if its closure can be asked for: one that is only called or never read has none, and one that is only called but exported from a module whose namespace is read by a computed key has
+# RUN: plan-slots variables
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="library.js" displayPath="library.js" body=f1 exports=[{name="exported" variable=g3}]
+entry module=m0
+variable g0 name="readAsValue" module=m0 declared={type=function} initialization=Function function=f2
+variable g1 name="onlyCalled" module=m0 declared={type=function} initialization=Function function=f3
+variable g2 name="neverRead" module=m0 declared={type=function} initialization=Function function=f4
+variable g3 name="exported" module=m1 declared={type=function} initialization=Function function=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, -, v2
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4
+    v6 = GetModuleVariable variable=g3
+    v7 = Call v6
+    v8 = ModuleNamespace module=m1
+    v9 = PropGet v0 key="name" [isFreeName]
+    v10 = ElemGet v8, v9
+    Return
+}
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="readAsValue" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="onlyCalled" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f4 name="neverRead" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="exported" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+
+# CHECK: g0 ClosureTable FunctionAsZero DeferredClosure
+# CHECK-NEXT: g1 None
+# CHECK-NEXT: g2 None
+# CHECK-NEXT: g3 ClosureTable FunctionAsZero DeferredClosure

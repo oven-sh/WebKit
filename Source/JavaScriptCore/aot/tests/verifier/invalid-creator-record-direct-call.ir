@@ -1,0 +1,38 @@
+# a direct call names a function with a body that is no entrypoint
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="target" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="targetWithoutBody" results=[{type=anything}]
+function f2 name="genericEntrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    Return
+}
+function f3 name="outlinedBodyWithoutBody" role=OutlinedBody results=[{type=anything}]
+function f4 name="badCallOfGenericEntrypoint" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = CallDirect v0 function=f2
+    Return
+}
+function f5 name="badReturnedCallOfGenericEntrypoint" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = CallDirect v0 function=f2
+    ReturnCall v1
+}
+function f6 name="badCallOfDerivedFunctionWithoutBody" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return
+}
+function f7 name="good" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = CallDirect function=f0
+    v2 = CallDirect function=f1
+    v3 = CallDirect function=f0
+    ReturnCall v3
+}

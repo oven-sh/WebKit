@@ -1,0 +1,101 @@
+# A string constant ends a chain of numbers, and a number constant ends a chain of strings
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchNumberGroups = 1
+# STATISTIC: SwitchStringGroups = 0
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="string-between-numbers"
+# CHECK-NOT: Switch
+function f0 name="string-between-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="5"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v7 = Integer integer=3
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="number-between-strings"
+# CHECK-NOT: Switch
+function f1 name="number-between-strings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = Integer integer=5
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v7 = String string="c"
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+
+# CHECK-LABEL: function f2 name="string-after-three-numbers"
+# CHECK: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK: b4():
+# CHECK-NEXT: = ValueEqualsLiteral v0 literal="5"
+function f2 name="string-after-three-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = Integer integer=3
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v7 = String string="5"
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}

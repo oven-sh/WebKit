@@ -1,0 +1,38 @@
+# join() on a receiver that nothing is known about is one call of an operation that looks at the receiver itself: an array of long strings becomes a rope there as in the inline form.
+# Another built-in with any receiver, and join() with more arguments than it reads, call the function.
+# FORM: Selected
+# RUN: generate-code calls
+# CHECK: f0: size=
+# CHECK-NEXT: operation operationAOTArrayJoinOfAnyReceiver x1
+# CHECK-NEXT: stub BuiltinCell{{*}} x1
+# CHECK-NEXT: f1: size=
+# CHECK-NEXT: operation operationAOTArrayJoinOfAnyReceiver x1
+# CHECK-NEXT: stub BuiltinCell{{*}} x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub BuiltinCell{{*}} x1
+# CHECK-NEXT: stub CallHostFunction{{*}} x1
+# CHECK-NEXT: f3: size=
+# CHECK-NEXT: stub BuiltinCell{{*}} x1
+# CHECK-NEXT: stub CallHostFunction{{*}} x1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withSeparator" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+function f1 name="withoutSeparator" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin v0 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f2 name="withTwoArguments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+function f3 name="anotherBuiltin" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+    Return v2
+}

@@ -1,0 +1,73 @@
+# new Map().size    /a/.source    [].push    "x".length, where "x" is also a key    ({}).hasOwnProperty    "x".slice
+# relinked = []; Object.setPrototypeOf(relinked, null); relinked.push    belowSetter = []; a setter alone is defined as belowSetter.push    Object.create(null).toString    [].nothingHere
+# A lookup that comes, whatever the program does, to a built-in holder whose location under the name is locked finds the member there, so it does not answer undefined.
+# It may come to the end of a chain where null may have been put above an object, it may meet an accessor without a getter on an object on which an accessor is defined, and a name that no holder has is not found
+# RUN: valueflow-apply
+# CHECK: variable g0 name="sizeOfMap" module=m0 declared={type=number}
+# CHECK: variable g1 name="sourceOfRegExp" module=m0 declared={type=string}
+# CHECK: variable g2 name="pushOfArray" module=m0 declared={type=builtin(ArrayPrototypePush)}
+# CHECK: variable g3 name="lengthOfKeyText" module=m0 declared={type=number}
+# CHECK: variable g4 name="hasOwnPropertyOfObject" module=m0 declared={type=builtin(ObjectPrototypeHasOwnProperty)}
+# CHECK: variable g5 name="sliceOfString" module=m0 declared={type=builtin(StringPrototypeSlice)}
+# CHECK: variable g6 name="pushOfRelinked" module=m0 declared={type=undefined|builtin(ArrayPrototypePush)}
+# CHECK: variable g7 name="pushBelowSetter" module=m0 declared={type=undefined|builtin(ArrayPrototypePush)}
+# CHECK: variable g8 name="toStringOfNullObject" module=m0 declared={type=undefined}
+# CHECK: variable g9 name="nothingOfArray" module=m0 declared={type=undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+variable g0 name="sizeOfMap" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="sourceOfRegExp" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="pushOfArray" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="lengthOfKeyText" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="hasOwnPropertyOfObject" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="sliceOfString" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="pushOfRelinked" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="pushBelowSetter" module=m0 declared={type=anything} initialization=Undefined
+variable g8 name="toStringOfNullObject" module=m0 declared={type=anything} initialization=Undefined
+variable g9 name="nothingOfArray" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0, -
+    v2 = PropGet v1 key="size"
+    PutModuleVariable v2 variable=g0
+    v4 = NewRegExp pattern="a"
+    v5 = PropGet v4 key="source"
+    PutModuleVariable v5 variable=g1
+    v7 = NewArray contents=anything
+    v8 = PropGet v7 key="push"
+    PutModuleVariable v8 variable=g2
+    v10 = String string="x"
+    v11 = PropGet v10 key="length"
+    PutModuleVariable v11 variable=g3
+    v13 = NewObject layout=L0 fields=[]
+    v14 = PropGet v13 key="hasOwnProperty"
+    PutModuleVariable v14 variable=g4
+    v16 = PropGet v10 key="slice"
+    PutModuleVariable v16 variable=g5
+    v18 = NewArray contents=anything
+    v19 = Null
+    v20 = Builtin builtin=ObjectSetPrototypeOf
+    v21 = Builtin builtin=Object
+    v22 = Call v20, v21, v18, v19
+    v23 = PropGet v18 key="push"
+    PutModuleVariable v23 variable=g6
+    v25 = NewArray contents=anything
+    v26 = NewClosure function=f1
+    DefineSetter v25, v26, - key="push"
+    v28 = PropGet v25 key="push"
+    PutModuleVariable v28 variable=g7
+    v30 = Builtin builtin=ObjectCreate
+    v31 = Call v30, v21, v19
+    v32 = PropGet v31 key="toString"
+    PutModuleVariable v32 variable=g8
+    v34 = PropGet v7 key="nothingHere"
+    PutModuleVariable v34 variable=g9
+    Return
+}
+function f1 name="setter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

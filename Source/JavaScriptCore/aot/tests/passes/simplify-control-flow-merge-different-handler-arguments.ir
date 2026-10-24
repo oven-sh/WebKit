@@ -1,0 +1,78 @@
+# Two blocks that name the same handler block with other arguments stay apart: each passes what the handler reads at its own point
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="otherArgument" parameters=[{type=function}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: number) handler=b2(v1):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v4 = Call v0, -, v3
+    Return v4
+  b2(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f0 name="otherArgument"
+# CHECK: b0(v0: function, v1: number, v2: number) handler=b2(v1):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2(v2):
+# CHECK-NEXT: = Call v0, -, v3
+
+function f1 name="argumentsInOtherOrder" parameters=[{type=function}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: number) handler=b2(v1, v2):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v2, v1):
+    v4 = Call v0, -, v3
+    Return v4
+  b2(v5, v6) role=CatchHandler:
+    v7 = CatchValue
+    v8 = Sub v5, v6
+    Return v8
+}
+# CHECK-LABEL: function f1 name="argumentsInOtherOrder"
+# CHECK: handler=b2(v1, v2):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2(v2, v1):
+
+function f2 name="variableStoredBetweenBlocks" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything) handler=b2(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = Call v0, -, v2
+    Return v3
+  b2(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f2 name="variableStoredBetweenBlocks"
+# CHECK: b0(v0: function, v1: anything) handler=b2(v1):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2(v2):
+
+function f3 name="oneOfTwoArgumentsDiffers" parameters=[{type=function}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: number) handler=b2(v1, v1):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v1, v2):
+    v4 = Call v0, -, v3
+    Return v4
+  b2(v5, v6) role=CatchHandler:
+    v7 = CatchValue
+    v8 = Sub v5, v6
+    Return v8
+}
+# CHECK-LABEL: function f3 name="oneOfTwoArgumentsDiffers"
+# CHECK: handler=b2(v1, v1):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2(v1, v2):

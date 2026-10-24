@@ -1,0 +1,90 @@
+# The guard of a passed test names its proof, the identity of the tested object and the locations the test read
+# FORM: Prepared
+# RUN: guards
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="shapeOfCastAndNarrowedCopy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Upcast v0 castType=anything
+    v2 = TypeTest v1 testedType=object
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = ShapeTest v3 layouts=[L0]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetSlotOrUndefined v3, v5 key="x" receivers=[L0] level=Proven
+    Return v6
+  b3():
+    Return
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v5 facts: [Shape of v0 by v4 reads -]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: []
+# CHECK-NEXT: b2 available at head: [v5.0]
+# CHECK-NEXT: b3 available at head: []
+# CHECK-NEXT: b4 available at head: []
+
+function f1 name="filledSlot" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v2 facts: [SlotFilled of v0 by v1 reads ObjectFields["x"]]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b2 available at head: []
+
+function f2 name="pristineArray" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetArrayLength v0, v2
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 facts: [Pristine of v0 by v1 reads PrototypeLinks NamedProperties]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b2 available at head: []
+
+function f3 name="arrayStorage" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = Upcast v0 castType=Array<anything>
+    v2 = HasArrayStorage v1 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v0
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v3 facts: [ArrayStorage of v0 by v2 reads ArrayStorage]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: []
+
+function f4 name="testThatHoldsForeverPassesNoGuard" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: facts:

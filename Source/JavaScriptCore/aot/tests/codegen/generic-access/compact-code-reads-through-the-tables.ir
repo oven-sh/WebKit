@@ -1,0 +1,26 @@
+# A read by name in compact code asks the lookup tables, also where the site has a cache: such code runs seldom, and the site has one operand less. Balanced and fast code go through the cache of the site
+# FORM: AsRead
+# OPTIONS: heat=everything-is-cold check=validate-back-end
+# RUN: generate-code
+# CHECK: f1: size=
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# X64: f1: size=32 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="readsThreeNames" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="first"
+    v2 = PropGet v1 key="second"
+    v3 = PropGet v2 key="third"
+    Return v3
+}

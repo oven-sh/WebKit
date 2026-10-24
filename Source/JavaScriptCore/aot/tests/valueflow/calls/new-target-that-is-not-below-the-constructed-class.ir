@@ -1,0 +1,58 @@
+# class Shape {}  class Other {}  function Plain() {}  a = Reflect.construct(Shape, [], Other); b = Reflect.construct(Shape, [], Plain); c = new Shape()
+# The constructor of Shape allocates under the prototype that new.target hands over. What stands for the instances of a class is made by the constructor at the top of that class alone:
+# under the prototype object of a class that is not below Shape, and under the prototype of a function that is no class, the object of the operation stands for what is allocated.
+# For the class that is not below Shape the run time makes an ordinary object, so nothing is proven of that object, and no construction leaves it out.
+# RUN: valueflow-why values=f0:v13 values=f0:v14 values=f0:v15
+# CHECK: values=f0:v13
+# CHECK: operand 0 {{*}} 1 members: [[site]]@f1
+# CHECK: values=f0:v14
+# CHECK: operand 0 {{*}} 2 members: [[shape]] [[site]]@f1
+# CHECK: values=f0:v15
+# CHECK: operand 0 {{*}} 2 members: [[shape]] [[site]]@f1
+# RUN(APPLY): valueflow-apply
+# APPLY-LABEL: function f0
+# APPLY: v10: anything ~ object = Construct
+# APPLY: v12: anything ~ object = Construct
+# APPLY-NOT: castType=L
+# APPLY-LABEL: function f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f1
+layout L1 kind=Instance name="Other" constructor=f2
+layout L2 kind=Instance name="Plain" constructor=f3 flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = NewClosure function=f3
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Construct v2, v5
+    v11 = Construct v2, v6
+    v12 = Construct v2
+    v13 = PropGet v10 key="x"
+    v14 = PropGet v11 key="x"
+    v15 = PropGet v12 key="x"
+    Return
+}
+function f1 name="Shape" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Other" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="Plain" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

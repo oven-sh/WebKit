@@ -1,0 +1,34 @@
+# What no operation does to any object of a layout can never happen to one. Anything may happen to an object that has escaped once a callee is unknown, and a layout that only an unreached function allocates is never allocated
+# RUN: valueflow-results
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation{{*}}]
+# CHECK-NEXT: class C1 layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation{{*}}]
+# CHECK-NEXT: class C2 layout=L2
+# CHECK-NOT: layout=L3
+# RUN(APPLIED): valueflow-apply
+# APPLIED: layout L3 {{*}}allocation=NeverAllocated
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Untouched" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Deleted" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Escaped" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="NeverAllocated" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="x"
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = PropDelete v3 key="x"
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v2
+}
+function f1 name="unreached" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    Return v1
+}

@@ -1,0 +1,67 @@
+# An initial value outside the field's type is stored behind the allocation, by a store that leaves the slot. A method has no such store.
+# Two literals share L0, and the type of its method lists the function of the first alone: the program builds, and the type is only expected for every object of the layout.
+# Nothing stands in for a symbol, so its field would be defined behind the allocation with every field listed behind it; the method of L1 cannot go, and the symbol is only expected too.
+# In L2 the method's own function is listed, and the field keeps its type. In L3 an ordinary field takes a filler and a store behind the allocation, and keeps its type.
+# L4 is the layout of a class, and goes by the same rule as L0.
+# The empty string stands in for a string: add-generic-version-a-string-stands-in-for-a-string-field.ir
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# STATISTIC: InitialValuesStoredBehindAllocations = 1
+# CHECK: layout L0 name="SharedByTwoLiterals" fields=[{key="run" declared={type=undefined|null|f1 flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+# CHECK: layout L1 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol flags=[IsExpected]} flags=[IsRequired]}, {key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod, IsEnforced]}]
+# CHECK: layout L2 name="ListedFunction" fields=[{key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod, IsEnforced]}]
+# CHECK: layout L3 name="OrdinaryField" fields=[{key="label" declared={type=undefined|null|string} flags=[IsRequired, IsEnforced]}]
+# CHECK: layout L4 kind=Instance name="OfClass" fields=[{key="run" declared={type=undefined|null|f1 flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+# CHECK: function f0
+# CHECK: NewObject {{*}}layout=L0 fields=[0]
+# CHECK: NewObject {{*}}layout=L0 fields=[0]
+# CHECK: NewObject {{*}}layout=L1 fields=[0, 1]
+# CHECK: undefined = Undefined
+# CHECK-NEXT: NewObject {{*}}layout=L3 fields=[0]
+# CHECK-NEXT: PropSet {{*}}key="label"
+# CHECK: NewObject {{*}}layout=L4 fields=[0]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="SharedByTwoLiterals" fields=[{key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod]}]
+layout L1 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol} flags=[IsRequired]}, {key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod]}]
+layout L2 name="ListedFunction" fields=[{key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod]}]
+layout L3 name="OrdinaryField" fields=[{key="label" declared={type=undefined|null|string} flags=[IsRequired]}]
+layout L4 kind=Instance name="OfClass" fields=[{key="run" declared={type=undefined|null|f1} flags=[IsRequired, IsMethod]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v0, v3 key="first" mode=Strict
+    v5 = NewClosure function=f2
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    PropSet v0, v7 key="second" mode=Strict
+    v9 = PropGet v0 key="given" [isFreeName]
+    v10 = NewObject -, v9, v1 layout=L1 fields=[0, 1]
+    v11 = FinishObject v10
+    PropSet v0, v11 key="third" mode=Strict
+    v13 = NewObject -, v1 layout=L2 fields=[0]
+    v14 = FinishObject v13
+    PropSet v0, v14 key="fourth" mode=Strict
+    v16 = NewObject -, v9 layout=L3 fields=[0]
+    v17 = FinishObject v16
+    PropSet v0, v17 key="fifth" mode=Strict
+    v19 = NewObject -, v5 layout=L4 fields=[0]
+    v20 = FinishObject v19
+    PropSet v0, v20 key="sixth" mode=Strict
+    Return
+}
+
+function f1 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f2 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}

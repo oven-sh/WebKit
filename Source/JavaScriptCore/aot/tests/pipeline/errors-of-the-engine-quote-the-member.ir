@@ -1,0 +1,81 @@
+# "is not an object" and "is not a function" are the engine's errors, worded by the engine. Where it quotes the source of the expression that failed, a compiled frame
+# has no source: the engine quotes the name of the member, which the place that fails holds anyway: the null check of a typed read and of a typed store, a read and a store by name,
+# and a call of what is never an object, in the middle of a function and as its last act.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.report = (box, ...all) => { for (const f of all) { for (const v of [null, undefined, box]) { try { print(f.name, f(v)); } catch (error) { print(f.name, String(error)); } } } };
+# CHECK: readTyped TypeError: null is not an object (evaluating 'null.width')
+# CHECK-NEXT: readTyped TypeError: undefined is not an object (evaluating 'undefined.width')
+# CHECK-NEXT: readTyped 7
+# CHECK-NEXT: storeTyped TypeError: null is not an object (evaluating 'null.width')
+# CHECK-NEXT: storeTyped TypeError: undefined is not an object (evaluating 'undefined.width')
+# CHECK-NEXT: storeTyped undefined
+# CHECK-NEXT: readByName TypeError: null is not an object (evaluating 'null.height')
+# CHECK-NEXT: readByName TypeError: undefined is not an object (evaluating 'undefined.height')
+# CHECK-NEXT: readByName undefined
+# CHECK-NEXT: storeByName TypeError: null is not an object (evaluating 'null.height')
+# CHECK-NEXT: storeByName TypeError: undefined is not an object (evaluating 'undefined.height')
+# CHECK-NEXT: storeByName undefined
+# CHECK-NEXT: callInTheMiddle TypeError: absent is not a function. (In 'absent()', 'absent' is undefined)
+# CHECK-NEXT: callInTheMiddle TypeError: absent is not a function. (In 'absent()', 'absent' is undefined)
+# CHECK-NEXT: callInTheMiddle TypeError: absent is not a function. (In 'absent()', 'absent' is undefined)
+# CHECK-NEXT: callLast TypeError: five is not a function. (In 'five()', 'five' is 5)
+# CHECK-NEXT: callLast TypeError: five is not a function. (In 'five()', 'five' is 5)
+# CHECK-NEXT: callLast TypeError: five is not a function. (In 'five()', 'five' is 5)
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=Parameter
+typesite w1 module=m0 position=80 kind=Parameter
+layout L0 name="Box" fields=[{key="width" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    v6 = NewClosure function=f4
+    v7 = NewClosure function=f5
+    v8 = NewClosure function=f6
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="report" [isFreeName]
+    v11 = Call v10, -, v2, v3, v4, v5, v6, v7, v8
+    Return
+}
+function f1 name="readTyped" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="width"
+    Return v1
+}
+function f2 name="storeTyped" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w1}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = Integer integer=8
+    PropSet v0, v1 key="width" mode=Strict
+    Return
+}
+function f3 name="readByName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="height"
+    Return v1
+}
+function f4 name="storeByName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=9
+    PropSet v0, v1 key="height" mode=Strict
+    Return
+}
+function f5 name="callInTheMiddle" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Call v1, v0 calleeKey="absent" calleeName="absent"
+    v3 = PropGet v2 key="height"
+    Return v3
+}
+function f6 name="callLast" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    v2 = Call v1, -, v0 calleeName="five"
+    ReturnCall v2
+}

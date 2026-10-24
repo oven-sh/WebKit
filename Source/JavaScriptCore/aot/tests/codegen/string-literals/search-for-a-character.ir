@@ -1,0 +1,52 @@
+# The search for one character from the start of an 8-bit string is the call of a stub, which walks a short string itself: compiled code does not call the leaf. A 16-bit string is searched by its leaf. A character above 0xFF is in no 8-bit string, so only a 16-bit string is searched for it
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inFlatString" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+  b0(v0: string, v1: i32):
+    v2 = FlattenString v0
+    v3 = StringIndexOfCharacter v2, v1 codeUnit=47
+    Return v3
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operationAOTStringFindCharacter8
+# CHECK: operationAOTStringFindCharacter16 x1
+# CHECK-NOT: operationAOTStringFindCharacter8
+# CHECK: stub FindCharacter8 x1
+
+function f1 name="inStringThatMayBeARope" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+  b0(v0: string, v1: i32):
+    v2 = StringIndexOfCharacter v0, v1 codeUnit=47
+    Return v2
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operationAOTStringFindCharacter8
+# CHECK: operationAOTStringFindCharacter16 x1
+# CHECK-NOT: operationAOTStringFindCharacter8
+# CHECK: operationAOTStringIndexOfCharacter x1
+# CHECK: stub FindCharacter8 x1
+
+function f2 name="characterAbove0xFF" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+  b0(v0: string, v1: i32):
+    v2 = FlattenString v0
+    v3 = StringIndexOfCharacter v2, v1 codeUnit=8232
+    Return v3
+}
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: FindCharacter8
+# CHECK: operationAOTStringFindCharacter16 x1
+# CHECK-NOT: FindCharacter8
+
+# From the end the leaves search both widths
+function f3 name="fromTheEnd" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+  b0(v0: string, v1: i32):
+    v2 = FlattenString v0
+    v3 = StringLastIndexOfLiteral v2, v1 literal="/"
+    Return v3
+}
+# CHECK-LABEL: f3: size=
+# CHECK: operationAOTStringReverseFindCharacter16 x1
+# CHECK-NEXT: operationAOTStringReverseFindCharacter8 x1
+# CHECK-NOT: stub FindCharacter8

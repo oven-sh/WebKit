@@ -1,0 +1,70 @@
+# A store through an unknown receiver under the name of a method may give an instance that reached native code an own property of that name, which hides the method.
+# The store pays: it clears one bit of the class. The call tests that bit and calls the method directly.
+# Behind a cleared bit each receiver is asked whether it still has the prototype of its layout and no property of its own, so one object that hides the method costs the others two tests, not the call by name.
+# FORM: AsRead
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,PlaceTypeTests heat=EverythingIsHot
+# RUN: pipeline ResolveCalls
+# CHECK-LABEL: function f3 name="use"
+# CHECK: [[point]]: L0 = GetModuleVariable variable=g0
+# CHECK: [[isNotHidden]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="norm"}]
+# CHECK-NEXT: Branch [[isNotHidden]] -> taken [[direct]](), notTaken [[byName]]()
+# CHECK: [[direct]]():
+# CHECK-NEXT: = CallDirect [[point]] function=f2
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: [[callee]]: anything = PropGet [[point]] key="norm"
+# CHECK-NEXT: = Call [[callee]], [[point]] calleeKey="norm"
+# RUN(PLACED): pipeline PlaceTypeTests
+# PLACED-LABEL: function f3 name="use"
+# PLACED: [[point]]: L0 = GetModuleVariable variable=g0
+# PLACED: [[isNotHidden]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="norm"}]
+# PLACED-NEXT: Branch [[isNotHidden]] -> taken {{*}}, notTaken [[cleared]]()
+# PLACED: [[cleared]]() frequency=Unlikely:
+# PLACED-NEXT: = HasLayoutPrototype [[point]]
+# PLACED: frequency=Unlikely:
+# PLACED: = CallDirect [[point]] function=f2
+# PLACED: frequency=Rare:
+# PLACED-NEXT: = PropGet [[point]] key="norm"
+# PLACED: = HasNoExtraProperties [[point]],
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="point" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="norm"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    PutModuleVariable v5 variable=g0
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = PropGet v7 key="input" [isFreeName]
+    v11 = Integer integer=1
+    PropSet v10, v11 key="norm" mode=Strict
+    v13 = CallDirect function=f3
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="use" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="norm"
+    v2 = Call v1, v0 calleeKey="norm"
+    Return v2
+}

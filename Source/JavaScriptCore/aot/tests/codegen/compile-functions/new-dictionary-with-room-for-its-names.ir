@@ -1,0 +1,52 @@
+# The cell of a dictionary has room for the names that the runs of definitions behind it give it: two slots more for each step of the stub's number
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: compile
+# CHECK: image not empty
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+
+function f1 name="sixSevenAndNine" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    PropDefine v1, v0 key="a"
+    PropDefine v1, v0 key="b"
+    PropDefine v1, v0 key="c"
+    PropDefine v1, v0 key="d"
+    PropDefine v1, v0 key="e"
+    PropDefine v1, v0 key="f"
+    v8 = NewDictionary
+    PropDefine v8, v0 key="a"
+    PropDefine v8, v0 key="b"
+    PropDefine v8, v0 key="c"
+    PropDefine v8, v0 key="d"
+    PropDefine v8, v0 key="e"
+    PropDefine v8, v0 key="f"
+    PropDefine v8, v0 key="g"
+    v16 = NewDictionary
+    PropDefine v16, v0 key="a"
+    PropDefine v16, v0 key="b"
+    PropDefine v16, v0 key="c"
+    PropDefine v16, v0 key="d"
+    PropDefine v16, v0 key="e"
+    PropDefine v16, v0 key="f"
+    PropDefine v16, v0 key="g"
+    PropDefine v16, v0 key="h"
+    PropDefine v16, v0 key="i"
+    v26 = NewArray v1, v8, v16 contents=anything
+    Return v26
+}
+# CALLS: stub NewDictionary.n0 x1
+# CALLS: stub NewDictionary.n1 x1
+# CALLS: stub NewDictionary.n2 x1

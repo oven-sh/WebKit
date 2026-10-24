@@ -1,0 +1,56 @@
+# interface Coin { value: number }  interface Box { content: Coin }  function valueIn(box: Box) { return box.content.value }  register(valueIn, { content: { value: 1.5 } }, { weight: 2.5 })
+# The type of a field says what its slot holds. Every writer tests a value against the field of the object it stores into, so a read of the slot has the type of the field as a proven type and tests nothing.
+# The lie: a writer that nobody listed. `storeInSlotWithoutTest` of the shell hands the value to the slot as one that was proven at build time, and the slot of `content` holds a Stone.
+# A validating build finds it twice over. The read tests its result against the type of the field and ends the process.
+# And every collection looks at the slots of every compiled object that is alive, so the Stone is found where no compiled code ever reads the field again: the failure names the field, the kind of its slot and the allocations that make such an object, and no function and no value.
+# Beside them, in the same build: an ordinary store of the Stone is tested, so the property leaves its slot, the read finds it by name and the program prints what plain JavaScript prints. And with the Coin left alone both checks pass
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (valueIn, box, stone) => { storeInSlotWithoutTest(box, "content", stone); print("stored"); print(valueIn(box)); };
+# RUN(COLLECTION): run-in-shell globalThis.register = (valueIn, box, stone) => { storeInSlotWithoutTest(box, "content", stone); print("stored"); gc(); print("collected"); };
+# RUN(TESTED): run-in-shell globalThis.register = (valueIn, box, stone) => { box.content = stone; gc(); print(valueIn(box)); };
+# RUN(SAME): run-in-shell globalThis.register = (valueIn, box, stone) => { gc(); print(valueIn(box)); };
+# OPTIONS: validate
+# CHECK: stored
+# CHECK: AOT validation: ValueType f
+# CHECK: crashed with
+# COLLECTION: stored
+# COLLECTION-NOT: collected
+# COLLECTION: (content) of layout {{*}}, a slot of the kind JSValue at {{*}}, holds a value outside its type
+# COLLECTION-NEXT: AOT: the object has shape {{*}} and order word {{*}}; the allocations of that shape: {{*}}
+# COLLECTION: AOT validation: HeapSlotType f- v-
+# COLLECTION: crashed with
+# TESTED-NOT: AOT validation
+# TESTED: undefined
+# TESTED-NEXT: exited with 0
+# SAME-NOT: AOT validation
+# SAME: 1.5
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=90 kind=Parameter
+layout L0 name="Box" fields=[{key="content" declared={type=L1} flags=[IsRequired]}]
+layout L1 name="Coin" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Stone" fields=[{key="weight" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Double number=2.5
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewClosure function=f1
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v8, v4, v7
+    Return
+}
+function f1 name="valueIn" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="content"
+    v2 = PropGet v1 key="value"
+    Return v2
+}

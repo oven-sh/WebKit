@@ -1,0 +1,107 @@
+# A range that escapes and is taken of another range is created as one substring of the base string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 10
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=string}] {
+  b0(v0: string, v1: int, v2: int, v3: int):
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = GetStringLength v8
+    v10 = StringRange v9, v3
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    v13 = Substring v8, v11, v12
+    Return v13
+}
+# CHECK-LABEL: function f0 name="slice-of-view-escapes"
+# CHECK-NOT: = Substring
+# CHECK: [[differenceInner0]]: int[-2147483647, 2147483647] = Sub v7, v6
+# CHECK-NEXT: [[maskInner0]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[innerLength0]]: int[0, 2147483647] = BitAnd [[differenceInner0]], [[maskInner0]]
+# CHECK-NEXT: [[innerRange0]]: {{*}} = StringRange [[innerLength0]], v3
+# CHECK-NEXT: [[relativeFrom0]]: {{*}} = ResultAt [[innerRange0]]
+# CHECK-NEXT: [[relativeTo0]]: {{*}} = ResultAt [[innerRange0]] index=1
+# CHECK-NEXT: [[innerFrom0]]: {{*}} = Add v6, [[relativeFrom0]]
+# CHECK-NEXT: [[innerTo0]]: {{*}} = Add v6, [[relativeTo0]]
+# CHECK-NEXT: [[result0]]: string = Substring v0, [[innerFrom0]], [[innerTo0]]
+# CHECK-NEXT: Return [[result0]]
+
+function f1 name="character-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=undefined|string}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = CallBuiltin v7, v2 overload=StringPrototypeAt/0
+    Return v8
+}
+# CHECK-LABEL: function f1 name="character-of-view-escapes"
+# CHECK-NOT: = Substring
+# CHECK-NOT: StringPrototypeAt
+# CHECK: [[innerLength1]]: {{*}} = Sub v6, v5
+# CHECK-NEXT: [[innerRange1]]: {{*}} = StringRange [[innerLength1]], v2 method=SingleRelativeIndex
+# CHECK-NEXT: [[relativeFrom1]]: {{*}} = ResultAt [[innerRange1]]
+# CHECK-NEXT: [[relativeTo1]]: {{*}} = ResultAt [[innerRange1]] index=1
+# CHECK-NEXT: [[innerFrom1]]: {{*}} = Add v5, [[relativeFrom1]]
+# CHECK-NEXT: [[innerTo1]]: {{*}} = Add v5, [[relativeTo1]]
+# CHECK-NEXT: [[result1]]: undefined|string = StringRangeSubstringOrUndefined v0, [[innerFrom1]], [[innerTo1]]
+# CHECK-NEXT: Return [[result1]]
+
+function f2 name="char-at-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = CallBuiltin v7, v2 overload=StringPrototypeCharAt/0
+    Return v8
+}
+# CHECK-LABEL: function f2 name="char-at-of-view-escapes"
+# CHECK-NOT: = Substring
+# CHECK-NOT: StringPrototypeCharAt
+# CHECK: = StringRange [[innerLength2]], v2 method=SingleIndex
+# CHECK: [[innerFrom2]]: {{*}} = Add v5,
+# CHECK-NEXT: [[innerTo2]]: {{*}} = Add v5,
+# CHECK-NEXT: [[result2]]: string = Substring v0, [[innerFrom2]], [[innerTo2]]
+# CHECK-NEXT: Return [[result2]]
+
+function f3 name="slice-of-escaping-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=string}] {
+  b0(v0: string, v1: int, v2: int, v3: int):
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = GetStringLength v8
+    v10 = StringRange v9, v3
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    v13 = Substring v8, v11, v12
+    v14 = String string="ab"
+    v15 = StrictEq v13, v14
+    PutModuleVariable v15 variable=g0
+    Return v8
+}
+variable g0 name="equal" declared={type=anything} initialization=Undefined
+# CHECK-LABEL: function f3 name="slice-of-escaping-slice"
+# CHECK-NOT: FlattenString
+# CHECK: [[outer3]]: string = Substring v0, v6, v7
+# CHECK-NEXT: [[differenceInner3]]: int[-2147483647, 2147483647] = Sub v7, v6
+# CHECK-NEXT: [[maskInner3]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[innerLength3]]: int[0, 2147483647] = BitAnd [[differenceInner3]], [[maskInner3]]
+# CHECK-NEXT: [[innerRange3]]: {{*}} = StringRange [[innerLength3]], v3
+# CHECK-NEXT: [[relativeFrom3]]: {{*}} = ResultAt [[innerRange3]]
+# CHECK-NEXT: [[relativeTo3]]: {{*}} = ResultAt [[innerRange3]] index=1
+# CHECK-NOT: = Substring
+# CHECK: [[innerFrom3]]: {{*}} = Add v6, [[relativeFrom3]]
+# CHECK-NEXT: [[innerTo3]]: {{*}} = Add v6, [[relativeTo3]]
+# CHECK-NEXT: [[equal3]]: boolean = StringRangeEqualsLiteral v0, [[innerFrom3]], [[innerTo3]] literal="ab"
+# CHECK-NEXT: PutModuleVariable [[equal3]] variable=g0
+# CHECK-NEXT: Return [[outer3]]

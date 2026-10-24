@@ -1,0 +1,81 @@
+# A loop that stays on the failed edge of a comparison has a test only when neither operand can be NaN
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="boundMayBeNaN" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v0
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v5 = Increment v2
+    v6 = Check v5 castType=i32
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v5] tests []
+# CHECK-NEXT: loop b1 counter: none
+
+function f1 name="boundIsInt32" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v0
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v5 = Increment v2
+    v6 = Check v5 castType=i32
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v5] tests [b1 v2 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f2 name="counterMayBeNaN" parameters=[{type=i32}, {type=number}] results=[{type=undefined}] {
+  b0(v0: i32, v1: number):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GreaterEq v2, v0
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v5] tests []
+# CHECK-NEXT: loop b1 counter: none
+
+function f3 name="staysOnPassedEdge" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Increment v2
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v5] tests [b1 v2 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2

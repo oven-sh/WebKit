@@ -1,0 +1,123 @@
+# An instance that the caller allocates for a version of its constructor is in the caller's frame, unless the constructor lets it leave or its layout defers a closure over it
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,AllocateInFrames
+# STATISTIC: ObjectsInFrames = 1
+# CHECK: L0 may be in a frame
+# CHECK-NOT: L1 may be in a frame
+# CHECK-NOT: L2 may be in a frame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Vector" module=m0 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Registered" module=m0 constructor=f5 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Widget" module=m0 constructor=f6 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f4
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = NewClosure function=f5
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = NewClosure function=f6
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = CallDirect v5, v2 function=f1
+    v13 = CallDirect v8, v2 function=f2
+    v14 = CallDirect v11, v2 function=f3
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+
+function f1 name="constructorStoresIntoThis" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Construct v0, -, v1
+    v3 = Convert v2 declared={type=L0}
+    v4 = CallDirect v3 function=f7
+    Return v4
+}
+# CHECK-LABEL: function f1 name="constructorStoresIntoThis"
+# CHECK: [[instance]]:{{*}}= NewObject layout=L0 {{*}}storage=Frame
+# CHECK: = CallDirect [[instance]], {{*}}[isConstruction]
+
+function f2 name="constructorRegistersThis" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Construct v0, -, v1
+    v3 = Convert v2 declared={type=L1}
+    v4 = CallDirect v3 function=f8
+    Return v4
+}
+# CHECK-LABEL: function f2 name="constructorRegistersThis"
+# CHECK-NOT: storage=
+
+function f3 name="layoutDefersClosure" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Construct v0, -, v1
+    v3 = Convert v2 declared={type=L2}
+    v4 = CallDirect v3 function=f9
+    Return v4
+}
+# CHECK-LABEL: function f3 name="layoutDefersClosure"
+# CHECK: [[widget]]:{{*}}= NewObject layout=L2
+# CHECK-NOT: storage=
+# CHECK: = CallDirect [[widget]], {{*}}[isConstruction]
+
+function f4 name="Vector" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="Vector"
+# CHECK-NOT: storage=
+
+function f5 name="Registered" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="x"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="registry" [isFreeName]
+    PropSet v6, v3 key="last"
+    Return v3
+}
+function f6 name="Widget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropDefine v3, v1 key="x"
+    v5 = Convert v3 declared={type=L2}
+    v6 = NewClosure v5 function=f10
+    PropDefine v3, v6 key="read"
+    Return v3
+}
+function f7 name="testsVector" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}
+function f8 name="testsRegistered" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}
+function f9 name="testsWidget" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}
+function f10 name="read" kind=Arrow captures=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}

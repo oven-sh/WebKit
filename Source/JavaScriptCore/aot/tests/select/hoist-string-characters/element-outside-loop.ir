@@ -1,0 +1,68 @@
+# A read of one character of a string becomes a row with typed operands outside of loops too, and nothing is flattened there
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 4
+
+# CHECK-LABEL: function f0 name="string-receiver"
+# CHECK-NOT: FlattenString
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="string-receiver" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+
+# CHECK-LABEL: function f1 name="nullish-receiver"
+# CHECK-NOT: StringRange
+# CHECK: v2: {{*}} = ElemGet v0, v1
+# CHECK-NOT: StringRange
+function f1 name="nullish-receiver" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|string, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+
+# CHECK-LABEL: function f2 name="read-under-handler"
+# CHECK: b0(v0: string, v1: number) {{*}}handler=b2():
+# CHECK-NEXT: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+function f2 name="read-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number) handler=b2():
+    v2 = ElemGet v0, v1
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+
+# CHECK-LABEL: function f3 name="char-code-at"
+# CHECK-NOT: FlattenString
+# CHECK: v2: number = StringRangeCodeUnitOrNaN v0, -, -, v1
+# CHECK-NOT: FlattenString
+function f3 name="char-code-at" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Return v2
+}
+
+# CHECK-LABEL: function f4 name="char-code-at-without-position"
+# CHECK: [[zero]]: 0 = Integer
+# CHECK-NEXT: v1: number = StringRangeCodeUnitOrNaN v0, -, -, [[zero]]
+function f4 name="char-code-at-without-position" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Return v1
+}
+
+# CHECK-LABEL: function f5 name="position-may-be-a-string"
+# CHECK-NOT: StringRange
+# CHECK: v2: anything = ElemGet v0, v1
+# CHECK-NOT: StringRange
+function f5 name="position-may-be-a-string" parameters=[{type=string}, {type=number|string}] results=[{type=anything}] {
+  b0(v0: string, v1: number|string):
+    v2 = ElemGet v0, v1
+    Return v2
+}

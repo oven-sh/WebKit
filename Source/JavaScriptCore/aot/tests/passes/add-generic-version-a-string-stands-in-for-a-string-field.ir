@@ -1,0 +1,40 @@
+# In the generic version the sum of two values that failed the test for a string may be a number, so it is stored into the string field behind the allocation, by a store that tests it.
+# Until then the empty string stands in for it. So the allocation still lists every field, in its order, and `count`, which only the allocation fills and flow calls stored at most once, stays in it.
+# Without something to stand in, every field listed from `name` on would have to be defined behind the allocation, which `count` may not be.
+# FORM: AsRead
+# Hot, because a cold function stays one function: it is not split into tests, a typed body and a fallback.
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline AddGenericVersion
+# CHECK: layout L0 name="Named" {{*}}{key="count" {{*}}stores=AtMostOnce
+# CHECK: function {{*}} name="make" {{*}}role=GenericVersion
+# CHECK: [[sum]]: number|string|bigint ~ string = Add
+# CHECK: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[filler]]: "" = String string=""
+# CHECK-NEXT: [[object]]: L0 = NewObject -, [[filler]], [[one]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet [[object]], [[sum]] key="name"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Named" fields=[{key="name" declared={type=string} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = PropGet v2 key="name"
+    v4 = PropGet v2 key="count"
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=string} illTypedCause=Assertion
+    v2 = Add v1, v1
+    v3 = Convert v2 declared={type=string}
+    v4 = Integer integer=1
+    v5 = Convert v4 declared={type=number}
+    v6 = NewObject -, v3, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    Return v7
+}

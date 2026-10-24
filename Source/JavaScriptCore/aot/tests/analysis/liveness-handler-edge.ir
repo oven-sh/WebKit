@@ -1,0 +1,55 @@
+# What a handler needs is live at every point of the block it covers, and a value of the covered block is not live into the handler
+# FORM: Prepared
+# RUN: analyses liveness live-points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    v6 = Add v4, v1
+    Return v6
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0 v1 v2]
+# CHECK-NEXT: b2 live at head: [v3]
+# CHECK-NEXT: b3 live at head: [v1]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0 v1]
+# CHECK-NEXT: b0:1 live: [v0 v1 v2]
+# CHECK-NEXT: b1:0 live: [v0 v1 v2]
+# CHECK-NEXT: b1:1 live: [v1 v2 v3]
+# CHECK-NEXT: b2:0 live: [v3]
+# CHECK-NEXT: b3:0 live: [v1 v4]
+# CHECK-NEXT: b3:1 live: [v1 v4]
+# CHECK-NEXT: b3:2 live: [v6]
+function f1 name="uncovered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Add v1, v1
+    Jump -> next b1()
+  b1():
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+# CHECK-NEXT: function f1
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0]
+# CHECK-NEXT: b2 live at head: [v3]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0 v1]
+# CHECK-NEXT: b0:1 live: [v0]
+# CHECK-NEXT: b1:0 live: [v0]
+# CHECK-NEXT: b1:1 live: [v3]
+# CHECK-NEXT: b2:0 live: [v3]

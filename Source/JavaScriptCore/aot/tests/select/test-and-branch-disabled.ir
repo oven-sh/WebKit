@@ -1,0 +1,19 @@
+# With TestAndBranch disabled a branch tests the boolean that its condition left
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot disable=rule:TestAndBranch
+# STATISTIC: TestAndBranchGroups = 0
+# RUN: pass Select
+# CHECK: v2: boolean = Less v0, v1
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NOT: TestAndBranch
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="less" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}

@@ -1,0 +1,22 @@
+# With the rule switched off a range is created and its uses read it
+# FORM: Prepared
+# OPTIONS: disable=rule:SubstringView
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 0
+# CHECK-NOT: StringRangeEqualsLiteral
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-equals-literal" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = String string="ab"
+    v9 = StrictEq v7, v8
+    Return v9
+}
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NEXT: v8: boolean = StringEqualsLiteral v7 literal="ab"
+# CHECK-NOT: StringRangeEqualsLiteral

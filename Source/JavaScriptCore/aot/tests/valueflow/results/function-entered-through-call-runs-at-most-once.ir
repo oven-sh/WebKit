@@ -1,0 +1,107 @@
+# (function () {}).call(t)  (function () {}).apply(t, list)  Reflect.apply(function () {}, t, list): the built-in calls that operand once, then and there, so the function runs as often as the call does.
+# What the call hands on to another function proves nothing: Array.prototype.forEach.call(list, callback) runs the callback for each element. Nor does a bound function, call through call,
+# a receiver that may be a built-in, a second place, or a loop
+# RUN: valueflow-results
+# CHECK: function f0 executions=AtMostOnce
+# CHECK-NEXT: function f1 callers=AllKnown executions=AtMostOnce
+# CHECK-NEXT: function f2 callers=AllKnown executions=AtMostOnce
+# CHECK-NEXT: function f3 callers=AllKnown executions=AtMostOnce
+# CHECK-NOT: executions=AtMostOnce
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=FunctionPrototypeCall
+    v1 = Builtin builtin=FunctionPrototypeApply
+    v2 = Builtin builtin=ReflectApply
+    v3 = Builtin builtin=ArrayPrototypeForEach
+    v4 = Builtin builtin=ArrayPrototypeMap
+    v5 = Builtin builtin=ArrayPrototypeFilter
+    v6 = Builtin builtin=ArrayPrototypeSome
+    v7 = Builtin builtin=FunctionPrototypeBind
+    v8 = Undefined
+    v9 = Integer integer=1
+    v10 = NewArray v9 contents=anything
+    v11 = NewClosure function=f1
+    v12 = Call v0, v11, v8
+    v13 = NewClosure function=f2
+    v14 = Call v1, v13, v8, v10
+    v15 = NewClosure function=f3
+    v16 = Call v2, v8, v15, v8, v10
+    v17 = NewClosure function=f4
+    v18 = Call v0, v3, v10, v17
+    v19 = NewClosure function=f5
+    v20 = NewArray v19 contents=anything
+    v21 = Call v1, v4, v10, v20
+    v22 = NewClosure function=f6
+    v23 = NewArray v22 contents=anything
+    v24 = Call v2, v8, v5, v10, v23
+    v25 = NewClosure function=f7
+    v26 = Call v7, v25, v8
+    v27 = Call v0, v26, v8
+    v28 = NewClosure function=f8
+    v29 = Call v0, v0, v28, v8
+    v30 = NewClosure function=f9
+    v31 = Call v0, v30, v8
+    v32 = Call v1, v30, v8, v10
+    v33 = NewClosure function=f10
+    v34 = Boolean boolean=true
+    Branch v34 -> taken b1(), notTaken b2(v33)
+  b1():
+    Jump -> next b2(v6)
+  b2(v35: anything):
+    v36 = Call v0, v35, v10, v33
+    Jump -> next b3()
+  b3():
+    v37 = NewClosure function=f11
+    v38 = Call v0, v37, v8
+    LoopHint
+    Branch v34 -> taken b3(), notTaken b4()
+  b4():
+    Return
+}
+function f1 name="receiverOfCall" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="receiverOfApply" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="targetOfReflectApply" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="handedOnByCall" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="handedOnByApply" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="handedOnByReflectApply" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="bound" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="calledThroughCallOfCall" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="enteredFromTwoPlaces" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f10 name="receiverOrArgument" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="enteredInLoop" results=[{type=anything}] {
+  b0():
+    Return
+}

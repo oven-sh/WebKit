@@ -1,0 +1,46 @@
+# Constants have the type of their literal
+# FORM: Prepared
+# RUN: result-types
+# CHECK: function f0
+# CHECK-NEXT: v0: undefined
+# CHECK-NEXT: v1: null
+# CHECK-NEXT: v2: true
+# CHECK-NEXT: v3: 5
+# CHECK-NEXT: v4: whole
+# CHECK-NEXT: v5: fractional
+# CHECK-NEXT: v6: 2
+# CHECK-NEXT: v7: whole
+# CHECK-NEXT: v8: "a"
+# CHECK-NEXT: v9: bigint
+# CHECK-NEXT: v10: symbol
+# CHECK-NEXT: v11: builtin(ArrayPrototypePush)
+# CHECK-NEXT: v12: f0
+# CHECK-NEXT: v13: builtin(StringPrototypeTrimStart)
+# CHECK-NEXT: v14: builtin(StringPrototypeTrimStart)
+# CHECK-NEXT: v15: absent
+# CHECK-NEXT: v16: "k"
+# CHECK-NEXT: v17: @@iterator
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="c" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    v1 = Null
+    v2 = Boolean boolean=true
+    v3 = Integer integer=5
+    v4 = Integer integer=4611686018427387904
+    v5 = Double number=1.5
+    v6 = Double number=2
+    v7 = Double number=-0
+    v8 = String string="a"
+    v9 = BigInt digits="1"
+    v10 = Builtin builtin=SymbolIterator
+    v11 = Builtin builtin=ArrayPrototypePush
+    v12 = NewClosure function=f0
+    v13 = Builtin builtin=StringPrototypeTrimLeft
+    v14 = Builtin builtin=StringPrototypeTrimStart
+    v15 = Absent
+    v16 = KeyConstant key="k"
+    v17 = KeyConstant key=@@iterator
+    Return
+}

@@ -1,0 +1,47 @@
+# Made = create(); Made.prototype = { run() {} }; new Made().run()      (the Class.create idiom)
+# The function expression arrives by a call, so nothing says what it constructs and it has no layout: the unknown object stands for what it makes. A lookup through the unknown object finds what has
+# escaped and nothing else, and the new object inherits from whatever the function holds as its prototype property. So that has escaped, and the methods on it are reached.
+# A literal that is nobody's prototype stays where it is, and its method is not reached.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Methods" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Others" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PropSet v1, v3 key="prototype" mode=Sloppy
+    v5 = NewClosure function=f4
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = Construct v1
+    v8 = PropGet v7 key="run"
+    v9 = Call v8, v7 calleeKey="run"
+    Return v9
+}
+function f1 name="create" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="run" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f4 name="other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}

@@ -1,0 +1,339 @@
+# A store of a new closure into a field, anywhere in the program, leaves the closure unmade where the closure captures nothing or the very object that it is stored into and nothing else uses it.
+# An allocation need not list the field: until the store the field is absent. Whatever else the program gives the field is an object, undefined or null, which the slot holds as a narrow reference does
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 15
+# STATISTIC: ClosuresDeferredInFields = 17
+# STATISTIC: StoresListedByAllocations = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="StoredByAnotherFunction" fields=[{key="id" declared={type=anything}}, {key="run" declared={type=function}}, {key="plain" declared={type=function}}]
+layout L1 name="StoredBehindGuard" fields=[{key="run" declared={type=function}}]
+layout L2 name="StoredAgain" fields=[{key="run" declared={type=function}}]
+layout L3 name="AlsoOverAnotherObject" fields=[{key="run" declared={type=f9} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+layout L4 name="GivenNumber" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+layout L5 name="ThreePlacesTwoFunctions" fields=[{key="run" declared={type=function}}]
+layout L6 name="OneClosureUsedTwice" fields=[{key="run" declared={type=function}}]
+layout L7 name="OverEnvironment" fields=[{key="run" declared={type=function}}]
+layout L8 kind=Environment name="scope" fields=[{key="count" declared={type=anything}}]
+layout L9 name="EveryClosureIsOverItsHolder" fields=[{key="run" declared={type=f9} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+layout L10 name="WritersUnknown" fields=[{key="run" declared={type=f9}}]
+layout L11 kind=Instance name="UnderPrototype" constructor=f6 fields=[{key="run" declared={type=function}}]
+layout L12 name="GivenAnotherFunctionValue" fields=[{key="run" declared={type=function}}]
+layout L13 name="ClosureOfAnotherBlock" fields=[{key="run" declared={type=function}}, {key="inLoop" declared={type=function}}, {key="plain" declared={type=function}}]
+layout L14 name="TwoReceivers" fields=[{key="run" declared={type=function}}]
+layout L15 name="OtherReceiver" fields=[{key="run" declared={type=function}}]
+layout L16 name="GivenUndefined" fields=[{key="run" declared={type=undefined|function}}]
+layout L17 name="MayGetNumberFromWriterNobodySees" fields=[{key="run" declared={type=number|function} flow={stability=[IsNeverStoredWithOtherType]}}]
+layout L18 name="NoWriterGivesNumber" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} stability=[IsNeverStoredWithOtherType]}}]
+layout L19 name="GivenNumberByName" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} stability=[IsNeverStoredWithOtherType]}}]
+layout L20 name="MayLeaveItsSlot" fields=[{key="run" declared={type=number|function}}]
+
+# CHECK: layout L0 {{*}}{key="id" declared={type=anything}}, {key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f9}}}, {key="plain" declared={type=function} flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
+# CHECK-NEXT: layout L1 name="StoredBehindGuard" fields=[{key="run" declared={type=function}}]
+# CHECK-NEXT: layout L2 {{*}}flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f9}}}]
+# CHECK-NEXT: layout L3 {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation deferral=CapturesObject deferredFunction=f9}}}]
+# CHECK-NEXT: layout L4 name="GivenNumber" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+# CHECK-NEXT: layout L5 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f12}}}]
+# CHECK-NEXT: layout L6 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
+# CHECK-NEXT: layout L7 name="OverEnvironment" fields=[{key="run" declared={type=function}}]
+# CHECK: layout L9 {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation deferral=CapturesObject deferredFunction=f9}}}]
+# CHECK-NEXT: layout L10 {{*}}flow={location={deferral=CapturesObject deferredFunction=f9}}}]
+# CHECK-NEXT: layout L11 {{*}}flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f9}}}]
+# CHECK-NEXT: layout L12 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
+# CHECK-NEXT: layout L13 {{*}}{key="run" declared={type=function} flow={location={deferral=CapturesNothing deferredFunction=f10}}}, {key="inLoop" declared={type=function}}, {key="plain" declared={type=function} flow={location={deferral=CapturesNothing deferredFunction=f14}}}]
+# CHECK-NEXT: layout L14 name="TwoReceivers" fields=[{key="run" declared={type=function}}]
+# CHECK-NEXT: layout L15 name="OtherReceiver" fields=[{key="run" declared={type=function}}]
+# CHECK-NEXT: layout L16 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
+# CHECK-NEXT: layout L17 name="MayGetNumberFromWriterNobodySees" fields=[{key="run" declared={type=number|function} flow={stability=[IsNeverStoredWithOtherType]}}]
+# CHECK-NEXT: layout L18 {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation deferral=CapturesNothing deferredFunction=f10} stability=[IsNeverStoredWithOtherType]}}]
+# CHECK-NEXT: layout L19 name="GivenNumberByName" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} stability=[IsNeverStoredWithOtherType]}}]
+# CHECK-NEXT: layout L20 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1 fields=[]
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject layout=L2 fields=[]
+    v6 = NewClosure v5 function=f9
+    PutSlotOrAdd v5, v5, v6 key="run" receivers=[L2] level=Proven
+    PutModuleVariable v5 variable=g0
+    v9 = NewObject layout=L9 fields=[]
+    PutModuleVariable v9 variable=g0
+    v11 = NewObject layout=L10 fields=[]
+    PutModuleVariable v11 variable=g0
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: = NewObject layout=L1
+# CHECK: [[listed]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject -, [[listed]] layout=L2 fields=[0]
+# CHECK: = NewObject layout=L9
+# CHECK: = NewObject layout=L10
+
+function f1 name="storesIntoWhatItIsGiven" module=m0 parameters=[{type=L0}, {type=L1}, {type=L2}] results=[{type=anything}] {
+  b0(v0: L0, v1: L1, v2: L2):
+    v3 = NewClosure function=f10
+    v4 = NewClosure v0 function=f9
+    v5 = Call v0
+    PutSlotOrAdd v0, -, v4 key="run" receivers=[L0] level=Proven
+    v7 = Upcast v3 castType=function
+    PutSlotOrAdd v0, -, v7 key="plain" receivers=[L0] level=Proven
+    v9 = HasNoFieldOutsideSlot v1
+    Branch v9 -> taken b1(| 0), notTaken b2()
+  b1(v10: guard):
+    v11 = Upcast v1 castType=object
+    v12 = NewClosure v11 function=f9
+    PutSlotOrAdd v1, v10, v12 key="run" receivers=[L1] level=Expected
+    Jump -> next b3()
+  b2():
+    v14 = NewClosure v1 function=f9
+    PropDefine v1, v14 key="run"
+    Jump -> next b3()
+  b3():
+    v16 = NewClosure v2 function=f9
+    PutSlot v2, -, v16 key="run" receivers=[L2] level=Proven
+    Return
+}
+# The closure stands right in front of its store. A store that only expects the layout of its object makes its closure: such code reads members by name as well, which makes a closure in the run time.
+# CHECK-LABEL: function f1 name="storesIntoWhatItIsGiven"
+# CHECK: = Call v0
+# CHECK-NEXT: v4: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="run" receivers=[L0] level=Proven
+# CHECK-NEXT: v3: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: v7: f10 = Upcast v3 castType=function
+# CHECK-NEXT: PutSlotOrAdd v0, -, v7 key="plain" receivers=[L0] level=Proven
+# CHECK: v12: f9 = NewClosure v11 function=f9
+# CHECK-NEXT: PutSlotOrAdd v1, v10, v12 key="run" receivers=[L1] level=Expected
+# CHECK: v14: f9 = NewClosure v1 function=f9
+# CHECK-NEXT: PropDefine v1, v14 key="run"
+# CHECK: v16: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: PutSlot v2, -, v16 key="run" receivers=[L2] level=Proven
+
+function f2 name="storesThatMakeTheirClosures" module=m0 parameters=[{type=L3}, {type=L3}, {type=L4}, {type=L6}, {type=L7}, {type=L12}, {type=function}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L3, v1: L3, v2: L4, v3: L6, v4: L7, v5: L12, v6: function, v7: boolean):
+    v8 = NewClosure v0 function=f9
+    PutSlotOrAdd v0, -, v8 key="run" receivers=[L3] level=Proven
+    v10 = NewClosure v0 function=f9
+    PutSlotOrAdd v1, -, v10 key="run" receivers=[L3] level=Proven
+    v12 = NewClosure function=f10
+    PutSlotOrAdd v2, -, v12 key="run" receivers=[L4] level=Proven
+    v14 = Integer integer=7
+    PutSlot v2, -, v14 key="run" receivers=[L4] level=Proven
+    v16 = NewClosure function=f10
+    PutSlotOrAdd v3, -, v16 key="run" receivers=[L6] level=Proven
+    v18 = NewClosure function=f10
+    PutSlot v3, -, v18 key="run" receivers=[L6] level=Proven
+    PutModuleVariable v18 variable=g0
+    v21 = NewObject -, v7 layout=L8 fields=[0]
+    v22 = NewClosure v21 function=f11
+    PutSlotOrAdd v4, -, v22 key="run" receivers=[L7] level=Proven
+    v24 = NewClosure function=f10
+    PutSlotOrAdd v5, -, v24 key="run" receivers=[L12] level=Proven
+    PutSlot v5, -, v6 key="run" receivers=[L12] level=Proven
+    v27 = NewObject -, v6 layout=L12 fields=[0]
+    PutModuleVariable v27 variable=g0
+    Return
+}
+# CHECK-LABEL: function f2 name="storesThatMakeTheirClosures"
+# CHECK: v8: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="run"
+# CHECK-NEXT: v10: f9 = NewClosure v0 function=f9
+# CHECK-NEXT: PutSlotOrAdd v1, -, v10 key="run"
+# CHECK-NEXT: v12: f10 = NewClosure function=f10
+# CHECK-NEXT: PutSlotOrAdd v2, -, v12 key="run"
+# CHECK: v16: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v3, -, v16 key="run"
+# CHECK-NEXT: v18: f10 = NewClosure function=f10
+# CHECK-NEXT: PutSlot v3, -, v18 key="run"
+# CHECK: v22: f11 = NewClosure v21 function=f11
+# CHECK-NEXT: PutSlotOrAdd v4, -, v22 key="run"
+# CHECK-NEXT: v24: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v5, -, v24 key="run"
+# CHECK-NEXT: PutSlot v5, -, v6 key="run"
+# CHECK-NEXT: = NewObject -, v6 layout=L12 fields=[0]
+
+function f3 name="twoFunctions" module=m0 parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = NewClosure function=f10
+    PutSlotOrAdd v0, -, v1 key="run" receivers=[L5] level=Proven
+    v3 = NewClosure function=f12
+    PutSlot v0, -, v3 key="run" receivers=[L5] level=Proven
+    v5 = NewClosure function=f12
+    PutSlot v0, -, v5 key="run" receivers=[L5] level=Proven
+    Return
+}
+# CHECK-LABEL: function f3 name="twoFunctions"
+# CHECK: v1: f10 = NewClosure function=f10
+# CHECK-NEXT: PutSlotOrAdd
+# CHECK-NEXT: v3: f12 = NewClosure function=f12 [isMadeOnDemand]
+# CHECK-NEXT: PutSlot
+# CHECK-NEXT: v5: f12 = NewClosure function=f12 [isMadeOnDemand]
+# CHECK-NEXT: PutSlot
+
+function f4 name="fillsHolders" module=m0 parameters=[{type=L9}, {type=L10}] results=[{type=anything}] {
+  b0(v0: L9, v1: L10):
+    v2 = NewClosure v0 function=f9
+    PutSlotOrAdd v0, -, v2 key="run" receivers=[L9] level=Proven
+    v4 = NewClosure v1 function=f9
+    PutSlotOrAdd v1, -, v4 key="run" receivers=[L10] level=Proven
+    Return
+}
+
+function f5 name="reads" module=m0 parameters=[{type=L9}, {type=L10}, {type=L9}, {type=L3}] results=[{type=anything}] {
+  b0(v0: L9, v1: L10, v2: L9, v3: L3):
+    v4 = IsSlotFilled v0 key="run" receivers=[L9] level=Proven
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5: guard):
+    v6 = GetSlot v0, v5 key="run" receivers=[L9] level=Proven
+    v7 = GetCapture v6 function=f9
+    PutModuleVariable v7 variable=g0
+    v9 = IsSlotFilled v1 key="run" receivers=[L10] level=Proven
+    Branch v9 -> taken b2(| 0), notTaken b5()
+  b2(v10: guard):
+    v11 = GetSlot v1, v10 key="run" receivers=[L10] level=Proven
+    v12 = GetCapture v11 function=f9
+    PutModuleVariable v12 variable=g0
+    v14 = IsSlotFilled v2 key="run" receivers=[L9] level=Proven
+    Branch v14 -> taken b3(| 0), notTaken b5()
+  b3(v15: guard):
+    v16 = GetSlot v2, v15 key="run" receivers=[L9] level=Proven
+    v17 = GetCapture v16 function=f9
+    PutModuleVariable v17 variable=g0
+    PutModuleVariable v16 variable=g0
+    v20 = IsSlotFilled v3 key="run" receivers=[L3] level=Proven
+    Branch v20 -> taken b4(| 0), notTaken b5()
+  b4(v21: guard):
+    v22 = GetSlot v3, v21 key="run" receivers=[L3] level=Proven
+    v23 = GetCapture v22 function=f9
+    Return v23
+  b5():
+    Return
+}
+# Where every closure that comes into the field is over the object that holds it, and every writer is known, what the closure captures is the object. A read for nothing else goes.
+# CHECK-LABEL: function f5 name="reads"
+# CHECK: b1([[first]]: guard):
+# The object at hand is known better than what the function says it captures.
+# CHECK-NEXT: [[captured]]: L9 = Upcast v0 castType=object
+# CHECK-NEXT: PutModuleVariable [[captured]] variable=g0
+# CHECK: [[unknown]]: f9 = GetDeferredClosureSlot v1, {{*}} key="run" receivers=[L10] level=Proven
+# CHECK-NEXT: = GetCapture [[unknown]] function=f9
+# CHECK: [[kept]]: f9 = GetDeferredClosureSlot v2, {{*}} key="run" receivers=[L9] level=Proven
+# CHECK-NEXT: L9 = Upcast v2 castType=object
+# CHECK: PutModuleVariable [[kept]] variable=g0
+# CHECK: [[other]]: f9 = GetDeferredClosureSlot {{*}} key="run" receivers=[L3] level=Proven
+# CHECK-NEXT: = GetCapture [[other]] function=f9
+
+function f6 name="UnderPrototype" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L11
+    v2 = NewObject v1 layout=L11
+    v3 = AssumeType v2 castType=L11
+    v4 = NewClosure v3 function=f9
+    PutSlotOrAdd v3, -, v4 key="run" receivers=[L11] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f6 name="UnderPrototype"
+# CHECK: [[run]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject v1, [[run]] layout=L11 fields=[0]
+
+function f7 name="closureOfAnotherBlock" module=m0 parameters=[{type=L13}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L13, v1: boolean):
+    v2 = NewClosure function=f10
+    v3 = NewClosure function=f10
+    v4 = NewClosure function=f14
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutSlotOrAdd v0, -, v2 key="run" receivers=[L13] level=Proven
+    PutSlotOrAdd v0, -, v4 key="plain" receivers=[L13] level=Proven
+    Jump -> next b2()
+  b2():
+    LoopHint
+    PutSlotOrAdd v0, -, v3 key="inLoop" receivers=[L13] level=Proven
+    Branch v1 -> taken b2(), notTaken b3()
+  b3():
+    Return
+}
+# The closure of a function declaration is made where the function begins. Its store runs at most once for each closure where the closure's block dominates the store's
+# and the store's lies in no cycle: there the closure goes to its store. A store in a loop gives every object the one function object.
+# A plain function is left unmade like an arrow function.
+# CHECK-LABEL: function f7 name="closureOfAnotherBlock"
+# CHECK: b0(v0: L13, v1: boolean):
+# CHECK-NEXT: v3: f10 = NewClosure function=f10
+# CHECK-NEXT: Branch
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v2 key="run"
+# CHECK-NEXT: v4: f14 = NewClosure function=f14 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="plain"
+# CHECK: PutSlotOrAdd v0, -, v3 key="inLoop"
+
+function f8 name="twoReceivers" module=m0 parameters=[{type=L14|L15}] results=[{type=anything}] {
+  b0(v0: L14|L15):
+    v1 = NewClosure function=f10
+    PutSlotOrAdd v0, -, v1 key="run" receivers=[L14, L15] level=Proven
+    Return
+}
+# CHECK-LABEL: function f8 name="twoReceivers"
+# CHECK-NOT: isMadeOnDemand
+
+function f9 name="overObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    Return
+}
+function f10 name="overNothing" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="overEnvironment" module=m0 kind=Arrow captures=[{type=env L8}] results=[{type=anything}] {
+  b0(v0: env L8):
+    Return
+}
+function f12 name="alsoOverNothing" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="otherValues" module=m0 parameters=[{type=L16}, {type=L17}, {type=L18}, {type=L19}, {type=L20}] results=[{type=anything}] {
+  b0(v0: L16, v1: L17, v2: L18, v3: L19, v4: L20):
+    v5 = NewClosure function=f10
+    PutSlotOrAdd v0, -, v5 key="run" receivers=[L16] level=Proven
+    v7 = Undefined
+    PutSlot v0, -, v7 key="run" receivers=[L16] level=Proven
+    v9 = NewClosure function=f10
+    PutSlotOrAdd v1, -, v9 key="run" receivers=[L17] level=Proven
+    v11 = NewClosure function=f10
+    PutSlotOrAdd v2, -, v11 key="run" receivers=[L18] level=Proven
+    v13 = NewClosure function=f10
+    PutSlotOrAdd v3, -, v13 key="run" receivers=[L19] level=Proven
+    v15 = Integer integer=7
+    PropSet v3, v15 key="run"
+    v17 = NewClosure function=f10
+    PutSlotOrAdd v4, -, v17 key="run" receivers=[L20] level=Proven
+    PropSet v4, v15 key="run"
+    Return
+}
+# What the slot cannot hold takes the property out of its slot. Where the accesses count on it that no store does that, the field defers nothing unless every writer is found and none gives such a value.
+# CHECK-LABEL: function f13 name="otherValues"
+# CHECK: v5: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="run"
+# CHECK: PutSlot v0, -, v7 key="run"
+# CHECK: v9: f10 = NewClosure function=f10
+# CHECK-NEXT: PutSlotOrAdd v1, -, v9 key="run"
+# CHECK-NEXT: v11: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v2, -, v11 key="run"
+# CHECK-NEXT: v13: f10 = NewClosure function=f10
+# CHECK-NEXT: PutSlotOrAdd v3, -, v13 key="run"
+# CHECK: v17: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v4, -, v17 key="run"
+function f14 name="plainFunction" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

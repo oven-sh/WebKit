@@ -1,0 +1,73 @@
+# Adjacent words with equal initial bits are one run, and adjacent words that the collector visits are one range of roots. A number that is stored before every read adds no run and no root, and one that may be read first adds a run for its absent state
+# RUN: tables
+# RUN(STATICS): tables statics
+# RUN(PLACED): place statics
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="values.js" displayPath="values.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}, {name="c" variable=g2}, {name="d" variable=g3}, {name="e" variable=g4}]
+entry module=m0
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="c" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="d" module=m1 declared={type=anything} initialization=Undefined
+variable g4 name="e" module=m1 declared={type=anything} initialization=Undefined
+variable g5 name="storedFirst" module=m0 declared={type=number}
+variable g6 name="readFirst" module=m0 declared={type=number}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    PutModuleVariable v2 variable=g5
+    v4 = NewClosure function=f2
+    v5 = PropGet v0 key="publish" [isFreeName]
+    v6 = Call v5, -, v4
+    PutModuleVariable v2 variable=g6
+    v8 = ModuleNamespace module=m1
+    v9 = ElemGet v8, v1
+    Return
+}
+function f1 name="values" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = PropGet v0 key="publish" [isFreeName]
+    v4 = Call v3, -, v2
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    Return
+}
+function f2 name="later" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g5
+    v1 = GetModuleVariable variable=g6
+    v2 = CheckInitialized v1 name="readFirst"
+    v3 = Add v0, v2
+    Return v3
+}
+function f3 name="early" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = NewArray v0, v1, v2, v3, v4 contents=anything holes=[]
+    Return v5
+}
+
+# CHECK: staticsRuns 2 32
+# CHECK-NEXT: staticsRoots 2 16
+# STATICS: layout filledAtProgramEntry=48
+# STATICS-NEXT: run firstWord=0 words=5 bits=0xa
+# STATICS-NEXT: run firstWord=5 words=1 bits=
+# STATICS-NEXT: roots offset=0 size=40
+# STATICS-NEXT: roots offset=56 size=8
+# PLACED: g4 offset=32 representation=JSValue {{*}}region=FilledAtProgramEntry
+# PLACED-NEXT: g5 offset=48 representation=Double {{*}}region=FilledAtInstanceCreation initial=0x0000000000000000
+# PLACED-NEXT: g6 offset=40 representation=OptionalDouble {{*}}region=FilledAtProgramEntry
+# PLACED-NEXT: module-value m1 @56

@@ -1,0 +1,57 @@
+# x % c of a number by a whole constant divides a whole number of up to 63 bits as an integer and calls fmod for the rest.
+# Where one test in the same block is all that asks for the remainder, the test divides for itself and no number is made of the remainder. An edge with a proof hands on what was tested: there the remainder is made.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isEven" parameters=[{type=number}] results=[{type=i32}] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = Mod v0, v1 form=Numbers
+    v3 = Integer integer=0
+    v4 = StrictEq v2, v3 form=Numbers
+    TestAndBranch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = Integer integer=2
+    Return v6
+}
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTFmod x1
+
+function f1 name="isNoMultipleOfSeven" parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = Integer integer=7
+    v2 = Mod v0, v1 form=Numbers
+    v3 = ToBoolean v2 form=Numbers
+    Return v3
+}
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTFmod x1
+
+function f2 name="remainderOrSeven" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=2
+    v2 = Mod v0, v1 form=Numbers
+    v3 = ToBoolean v2 form=Numbers
+    TestAndBranch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v4 = Integer integer=7
+    Return v4
+  b2(v5: number):
+    Return v5
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTFmod x1
+
+function f3 name="byTwoToTheThirtyTwo" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=4294967296
+    v2 = Mod v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTFmod x1

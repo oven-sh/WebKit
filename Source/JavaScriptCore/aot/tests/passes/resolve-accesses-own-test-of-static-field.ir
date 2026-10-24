@@ -1,0 +1,139 @@
+# A static field is an own property of its class from its own definition on. The calls of Object.hasOwn and hasOwnProperty test the key, so flow counts them among the accesses to the field:
+# "b" is asked for in front of its definition and has no proof of its initialization, and none of the tests of it is answered. "z" is asked for behind its definition only, and the test is true.
+#   class S2 { static a = Object.hasOwn(S2, "b"); static c = S2.hasOwnProperty("b"); static b = 1; static e = Object.hasOwn(S2, "b"); static z = 2; static y = Object.hasOwn(S2, "z") }
+#   print(S2.a, S2.c, S2.e, Object.hasOwn(S2, "b"), Object.hasOwn(S2, "missing"), S2.y)
+# RUN: pipeline CheckPlacement
+# CHECK: variable g4 {{*}}flow={writers=AllKnown stores=AtMostOnce}
+# CHECK: variable g6 {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f6 module=m0 position=6 kind=Initializer
+# CHECK: [[first]]: boolean = PropHasOwn {{*}}key="b"
+# CHECK: PutModuleVariable [[first]] variable=g2
+# CHECK: [[second]]: boolean = PropHasOwn {{*}}key="b"
+# CHECK: PutModuleVariable [[second]] variable=g3
+# CHECK: [[third]]: boolean = PropHasOwn {{*}}key="b"
+# CHECK: PutModuleVariable [[third]] variable=g5
+# CHECK-NOT: PropHasOwn {{*}}key="z"
+# CHECK: [[known]]: true = Boolean boolean=true
+# CHECK: PutModuleVariable [[known]] variable=g7
+
+layout L0 kind=Instance name="S2" module=m0 position=6 constructor=f1 staticFields=[{key="a" variable=g2}, {key="c" variable=g3}, {key="b" variable=g4}, {key="e" variable=g5}, {key="z" variable=g6}, {key="y" variable=g7}]
+variable g0 name="S2" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+variable g2 module=m0 declared={type=boolean flags=[IsExpected]} owner=L0
+variable g3 module=m0 declared={type=boolean flags=[IsExpected]} owner=L0
+variable g4 module=m0 declared={type=number flags=[IsExpected]} owner=L0
+variable g5 module=m0 declared={type=boolean flags=[IsExpected]} owner=L0
+variable g6 module=m0 declared={type=number flags=[IsExpected]} owner=L0
+variable g7 module=m0 declared={type=boolean flags=[IsExpected]} owner=L0
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g1 @0
+    v3 = FinishClass v1 layout=L0 @0
+    v4 = Convert v3 declared={type=function flags=[IsExpected]} @0
+    PutModuleVariable v4 variable=g0 @0
+    v6 = Convert v3 declared={type=function flags=[IsExpected]} @0
+    v7 = CallDirect v6 function=f2 @0
+    v8 = Convert v3 declared={type=function flags=[IsExpected]} @0
+    v9 = Builtin builtin=GlobalThis @132
+    v10 = PropGet v9 key="print" [isFreeName] @132
+    v11 = PropGet v8 key="a" @138
+    v12 = Convert v11 declared={type=boolean flags=[IsExpected]} @138
+    v13 = PropGet v8 key="c" @144
+    v14 = Convert v13 declared={type=boolean flags=[IsExpected]} @144
+    v15 = PropGet v8 key="e" @150
+    v16 = Convert v15 declared={type=boolean flags=[IsExpected]} @150
+    v17 = Builtin builtin=GlobalThis @156
+    v18 = PropGet v17 key="Object" [isFreeName] @156
+    v19 = Convert v18 declared={type=builtin(Object) flags=[IsExpected]} @156
+    v20 = PropGet v19 key="hasOwn" @156
+    v21 = Convert v20 declared={type=function flags=[IsExpected]} @156
+    v22 = Convert v21 declared={type=builtin(ObjectHasOwn) flags=[IsExpected]} @156
+    v23 = String string="b" @174
+    v24 = Call v22, v19, v8, v23 calleeKey="hasOwn" calleeName="hasOwn" @163
+    v25 = Convert v24 declared={type=boolean flags=[IsExpected]} @156
+    v26 = Builtin builtin=GlobalThis @180
+    v27 = PropGet v26 key="Object" [isFreeName] @180
+    v28 = Convert v27 declared={type=builtin(Object) flags=[IsExpected]} @180
+    v29 = PropGet v28 key="hasOwn" @180
+    v30 = Convert v29 declared={type=function flags=[IsExpected]} @180
+    v31 = Convert v30 declared={type=builtin(ObjectHasOwn) flags=[IsExpected]} @180
+    v32 = String string="missing" @198
+    v33 = Call v31, v28, v8, v32 calleeKey="hasOwn" calleeName="hasOwn" @187
+    v34 = Convert v33 declared={type=boolean flags=[IsExpected]} @180
+    v35 = PropGet v8 key="y" @150
+    v36 = Convert v35 declared={type=boolean flags=[IsExpected]} @150
+    v37 = Call v10, -, v12, v14, v16, v25, v34, v36 calleeName="print" @132
+    v38 = Undefined @132
+    Return v38 @132
+}
+function f1 name="S2" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @6
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @0
+    v2 = NewObject v1 layout=L0 @0
+    Return v2 @0
+}
+function f2 module=m0 position=6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    Jump -> next b1() @6
+  b1():
+    v1 = Builtin builtin=GlobalThis @22
+    v2 = PropGet v1 key="Object" [isFreeName] @22
+    v3 = Convert v2 declared={type=builtin(Object) flags=[IsExpected]} @22
+    v4 = PropGet v3 key="hasOwn" @22
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @22
+    v6 = Convert v5 declared={type=builtin(ObjectHasOwn) flags=[IsExpected]} @22
+    v7 = GetModuleVariable variable=g0 @36
+    v8 = CheckInitialized v7 name="S2" @36
+    v9 = String string="b" @40
+    v10 = Call v6, v3, v8, v9 calleeKey="hasOwn" calleeName="hasOwn" @29
+    v11 = Convert v10 declared={type=boolean flags=[IsExpected]} @22
+    PropDefine v0, v11 key="a" @18
+    v13 = GetModuleVariable variable=g0 @57
+    v14 = CheckInitialized v13 name="S2" @57
+    v15 = PropGet v14 key="hasOwnProperty" @57
+    v16 = Convert v15 declared={type=function flags=[IsExpected]} @57
+    v17 = String string="b" @75
+    v18 = Call v16, v14, v17 calleeKey="hasOwnProperty" calleeName="hasOwnProperty" @60
+    v19 = Convert v18 declared={type=boolean flags=[IsExpected]} @57
+    PropDefine v0, v19 key="c" @53
+    v21 = Integer integer=1 @92
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @92
+    PropDefine v0, v22 key="b" @88
+    v24 = Builtin builtin=GlobalThis @106
+    v25 = PropGet v24 key="Object" [isFreeName] @106
+    v26 = Convert v25 declared={type=builtin(Object) flags=[IsExpected]} @106
+    v27 = PropGet v26 key="hasOwn" @106
+    v28 = Convert v27 declared={type=function flags=[IsExpected]} @106
+    v29 = Convert v28 declared={type=builtin(ObjectHasOwn) flags=[IsExpected]} @106
+    v30 = GetModuleVariable variable=g0 @120
+    v31 = CheckInitialized v30 name="S2" @120
+    v32 = String string="b" @124
+    v33 = Call v29, v26, v31, v32 calleeKey="hasOwn" calleeName="hasOwn" @113
+    v34 = Convert v33 declared={type=boolean flags=[IsExpected]} @106
+    PropDefine v0, v34 key="e" @102
+    v36 = Integer integer=2 @130
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @130
+    PropDefine v0, v37 key="z" @130
+    v39 = Builtin builtin=GlobalThis @131
+    v40 = PropGet v39 key="Object" [isFreeName] @131
+    v41 = Convert v40 declared={type=builtin(Object) flags=[IsExpected]} @131
+    v42 = PropGet v41 key="hasOwn" @131
+    v43 = Convert v42 declared={type=function flags=[IsExpected]} @131
+    v44 = Convert v43 declared={type=builtin(ObjectHasOwn) flags=[IsExpected]} @131
+    v45 = GetModuleVariable variable=g0 @131
+    v46 = CheckInitialized v45 name="S2" @131
+    v47 = String string="z" @131
+    v48 = Call v44, v41, v46, v47 calleeKey="hasOwn" calleeName="hasOwn" @131
+    v49 = Convert v48 declared={type=boolean flags=[IsExpected]} @131
+    PropDefine v0, v49 key="y" @131
+    v51 = Undefined @6
+    Return v51 @6
+}
+entry module=m0

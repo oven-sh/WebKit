@@ -1,0 +1,25 @@
+# A switch over one-character strings on a character that is only inspected becomes a switch on its code unit
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="element-switch-string" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+  b0(v0: string, v1: int):
+    v2 = ElemGet v0, v1
+    SwitchString v2 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+  b3():
+    v5 = Integer integer=3
+    Return v5
+}
+# CHECK-NOT: = ElemGet
+# CHECK-NOT: = GetStringLength
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NEXT: Switch v2 cases=[97, 98] -> case b1(), case b2(), otherwise b3()
+# CHECK-NOT: SwitchString

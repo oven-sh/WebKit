@@ -1,0 +1,84 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node; right: Node }
+# class NodeObject implements Node { constructor(kind: number, pos: number) { this.kind = kind; this.pos = pos } }
+# The constructor of a base class allocates its own `this`, and it stores a parameter where the types below Node declare one literal each: the switch on the parameter stands where the allocation stood.
+# class Heir extends Base implements Token { constructor(tag: number, at: number) { super(); this.tag = tag; this.at = at } }
+# The constructor of a derived class gets its object from super(): it stays as it is
+# FORM: AsRead
+# RUN(READ): print
+# RUN: pass AllocateTaggedLayouts
+# RUN(DERIVED): pass AllocateTaggedLayouts
+# RUN(TYPED): pass AllocateTaggedLayouts TypeValues VerifyProgram
+# TYPED-COUNT-3: outcome:
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=L1} flags=[IsRequired]}, {key="right" declared={type=L1} flags=[IsRequired]}] supertypes=[L1]
+layout L4 kind=Instance name="Base" constructor=f2
+layout L5 kind=Instance name="Heir" base=L4 constructor=f3 fields=[{key="tag" declared={type=number}}, {key="at" declared={type=number}}] supertypes=[L6] flags=[HasHeritage]
+layout L6 name="Token" fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}]
+layout L7 name="Word" fields=[{key="tag" declared={type=1} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}] supertypes=[L6]
+layout L8 name="Mark" fields=[{key="tag" declared={type=2} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}] supertypes=[L6]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: number, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v1 key="kind" mode=Strict
+    PropSet v4, v2 key="pos" mode=Strict
+    Return v4
+}
+function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}
+function f3 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: number, v3: number):
+    v4 = GetSuperBase v0 homeKind=Object
+    v5 = SuperConstruct v4, v1 layout=L5
+    PropSet v5, v2 key="tag" mode=Strict
+    PropSet v5, v3 key="at" mode=Strict
+    Return v5
+}
+function f4 name="valueOf" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+
+# READ: layout L8 name="Mark"
+# READ-NEXT: layout L9 kind=Instance name="NodeObject" fields=[{key="kind" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}, {key="pos" {{*}}, {key="value" declared={type=number}
+# READ-NEXT: layout L10 kind=Instance name="NodeObject" fields=[{key="kind" {{*}}, {key="pos" {{*}}, {key="left" {{*}}, {key="right"
+# READ-LABEL: function f1 name="NodeObject"
+# READ-NOT: Switch
+# READ-LABEL: function f4 name="valueOf"
+# READ: parameters=[{type=L2|L9}]
+
+# CHECK: [[prototype]] = GetConstructPrototype [[newTarget]] layout=L0
+# CHECK: Switch [[kind]] cases=[1, 2] -> case [[num]](), case [[add]](), otherwise [[other]]()
+# CHECK: [[num]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L9
+# CHECK: [[add]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L10
+# CHECK: [[other]]():
+# CHECK-NEXT: = NewObject [[prototype]] layout=L0
+# CHECK: PropSet [[object]], [[kind]] key="kind"
+# CHECK-NEXT: PropSet [[object]], [[pos]] key="pos"
+# CHECK-NEXT: Return [[object]]
+
+# DERIVED-LABEL: function f2 name="Base"
+# DERIVED-NOT: Switch
+# DERIVED-LABEL: function f3 name="Heir"
+# DERIVED: b0(v0: function, v1: anything, v2: number, v3: number):
+# DERIVED-NEXT: v4 = GetSuperBase v0
+# DERIVED-NEXT: v5 = SuperConstruct v4, v1 layout=L5
+# DERIVED-NEXT: PropSet v5, v2 key="tag"
+# DERIVED-NEXT: PropSet v5, v3 key="at"
+# DERIVED-NEXT: Return v5

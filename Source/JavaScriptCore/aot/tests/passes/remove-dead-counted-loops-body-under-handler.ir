@@ -1,0 +1,87 @@
+# A loop whose blocks name a handler stays until the handler that nothing can reach is taken off them. The handler of the block with the loop hint stays: a program that has run out of memory is told so there
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveDeadCountedLoops
+# RUN(AFTER): pass RemoveRedundantHandlers RemoveDeadCountedLoops
+# CHECK: outcome: Unchanged
+# AFTER: outcome: Changed
+# AFTER-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="wholeLoopCovered" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+}
+# CHECK-LABEL: function f0 name="wholeLoopCovered"
+# CHECK: Jump -> next b1(v1)
+# CHECK: b1(v2: {{*}}) handler=b4():
+# CHECK: b2(v5: {{*}}) handler=b4():
+# AFTER-LABEL: function f0 name="wholeLoopCovered"
+# AFTER: Jump -> next b1(v1)
+# AFTER: b1(v2: {{*}}) handler=b4():
+# AFTER-NEXT: LoopHint
+
+function f1 name="oneBlockCovered" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) handler=b4():
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+}
+# CHECK-LABEL: function f1 name="oneBlockCovered"
+# CHECK: Jump -> next b1(v1)
+# CHECK: b2(v5: {{*}}) handler=b4():
+# AFTER-LABEL: function f1 name="oneBlockCovered"
+# AFTER: Jump -> next b3()
+# AFTER-NOT: LoopHint
+
+function f2 name="coveredBlockMayThrow" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 100], v1: anything):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6) handler=b4():
+    v7 = RequireObjectCoercible v1
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b3():
+    Return
+  b4() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+}
+# CHECK-LABEL: function f2 name="coveredBlockMayThrow"
+# CHECK: Jump -> next b1(v2)
+# AFTER-LABEL: function f2 name="coveredBlockMayThrow"
+# AFTER: Jump -> next b1(v2)
+# AFTER: b2(v6: {{*}}) handler=b4():
+# AFTER: = CatchValue

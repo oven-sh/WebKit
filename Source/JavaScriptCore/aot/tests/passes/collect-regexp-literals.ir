@@ -1,0 +1,36 @@
+# Every pair of a pattern and significant flags that a literal names is one request with all its sites
+# FORM: Selected
+# RUN: pass CollectRegExpLiterals
+# STATISTIC: CollectRegExpLiteralsChanges = 4
+# CHECK: regexp requests: 4
+# CHECK-NEXT: 0 literal "a+" flags=- sites=f0:v0, f0:v1, f0:v2
+# CHECK-NEXT: 1 literal "a+" flags=i sites=f0:v3
+# CHECK-NEXT: 2 literal "b" flags=- sites=f0:v4, f2:v1, f2:v2
+# CHECK-NEXT: 3 literal "dead" flags=- sites=f1:v0
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="literals" results=[{type=undefined}] {
+  b0():
+    v0 = NewRegExp pattern="a+" regExpFlags=[Global] @7
+    v1 = NewRegExp pattern="a+" regExpFlags=[Global] @8
+    v2 = NewRegExp pattern="a+" @9
+    v3 = NewRegExp pattern="a+" regExpFlags=[IgnoreCase] @10
+    v4 = SharedRegExpLiteral pattern="b" @11
+    Return
+}
+
+function f1 name="unreachableLiteral" results=[{type=undefined}] {
+  b0():
+    Return
+  b1():
+    v0 = NewRegExp pattern="dead"
+    Return
+}
+
+function f2 name="matchedLiteral" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = SharedRegExpLiteral pattern="b" @12
+    v2 = RegExpMatchLiteral v0, v1 overload=RegExpPrototypeTest/0 pattern="b"
+    Return v2
+}

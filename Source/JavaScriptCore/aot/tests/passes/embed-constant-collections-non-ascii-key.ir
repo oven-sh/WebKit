@@ -1,0 +1,105 @@
+# A key or a value outside ASCII does not keep a constant Set or Map from being created from a data record
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 6
+# CHECK: table 0 keys: [String("a") String("b")]
+# CHECK-NEXT: table 1 keys: [String("a") String("b") String("\u{e9}")]
+# CHECK-NEXT: table 2 keys: [String("\u{3b1}") String("\u{4e2d}\u{6587}")]
+# CHECK-NEXT: table 3 keys: [String("\u{1f600}") String("x\u{1f600}y")]
+# CHECK-NEXT: table 4 keys: [String("\u{d800}") String("\u{dc00}")]
+# CHECK-NEXT: table 5 keys: [String("lt") String("\u{b5}")]
+# CHECK-NEXT: table 5 values: [String("<") String("\u{3bc}")]
+# CHECK-NEXT: outcome: Changed
+# RUN(AGAIN): pass EmbedConstantCollections EmbedConstantCollections
+# AGAIN: outcome: Changed
+# AGAIN: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onlyASCII" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f0 name="onlyASCII"
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d0
+
+function f1 name="oneLatin1Key" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string="\u{e9}"
+    v3 = NewArray v0, v1, v2 contents=string
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f1 name="oneLatin1Key"
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d1
+
+function f2 name="keysOfSixteenBits" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="\u{3b1}"
+    v1 = String string="\u{4e2d}\u{6587}"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f2 name="keysOfSixteenBits"
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d2
+
+function f3 name="keysWithSurrogatePairs" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="\u{1f600}"
+    v1 = String string="x\u{1f600}y"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f3 name="keysWithSurrogatePairs"
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d3
+
+function f4 name="loneSurrogates" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="\u{d800}"
+    v1 = String string="\u{dc00}"
+    v2 = NewArray v0, v1 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f4 name="loneSurrogates"
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d4
+
+function f5 name="mapKeyAndValue" results=[{type=Map<string, string>}] {
+  b0():
+    v0 = String string="lt"
+    v1 = String string="<"
+    v2 = NewArray v0, v1 contents=string
+    v3 = String string="\u{b5}"
+    v4 = String string="\u{3bc}"
+    v5 = NewArray v3, v4 contents=string
+    v6 = NewArray v2, v5 contents=Array<string>
+    v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
+    Return v7
+}
+# CHECK-LABEL: function f5 name="mapKeyAndValue"
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d5
+
+function f6 name="besideKeyNotConstant" parameters=[{type=string}] results=[{type=Set<string>}] {
+  b0(v0: string):
+    v1 = String string="\u{e9}"
+    v2 = NewArray v1, v0 contents=string
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f6 name="besideKeyNotConstant"
+# CHECK-NOT: FromData
+# CHECK: [[list]]:{{*}}= NewArray v1, v0 contents=string
+# CHECK-NEXT: = CallBuiltin -, [[list]] overload=Set/2

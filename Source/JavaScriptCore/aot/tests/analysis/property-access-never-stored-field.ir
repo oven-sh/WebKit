@@ -1,0 +1,60 @@
+# A layout whose field flow proves never stored is no receiver of a store of that field: an expected type that lists it is narrowed, a type that lists it is split. A read keeps it, and so does a store where some writer is unknown
+# FORM: Prepared
+# RUN: property-access
+# RUN(STORE): member-lookup layout=L1 key="late" access=Store
+# STORE: Unknown level=Unknown cause=Unknown
+# RUN(DEFINE): member-lookup layout=L1 key="late" access=Define
+# DEFINE: Unknown level=Unknown cause=Unknown
+# RUN(READ): member-lookup layout=L1 key="late"
+# READ: Field level=Proven holder=L1 field=0
+# RUN(HAS): member-lookup layout=L1 key="late" access=Has
+# HAS: Field level=Proven holder=L1 field=0
+# RUN(INHERITED): member-lookup layout=L3 key="late" access=Store
+# INHERITED: Unknown level=Unknown cause=Unknown
+# RUN(UNKNOWNWRITER): member-lookup layout=L2 key="late" access=Store
+# UNKNOWNWRITER: Field level=Proven holder=L2 field=0
+# RUN(STORED): member-lookup layout=L0 key="late" access=Store
+# STORED: Field level=Proven holder=L0 field=0
+# RUN(ARMS): partition-members layouts=[L0,L1,L2] key="late" access=Store
+# ARMS: arm [L0, L2]: Field level=Proven
+# ARMS-NEXT: rest [L1]
+# RUN(READARMS): partition-members layouts=[L0,L1,L2] key="late"
+# READARMS: arm [L0, L1, L2]: Field level=Proven
+# READARMS-NOT: rest
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stored" fields=[{key="late" declared={type=undefined|string} flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="NeverStored" fields=[{key="late" declared={type=undefined} flow={location={writers=AllKnown stores=Never} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="UnknownWriter" fields=[{key="late" declared={type=undefined|string} flow={location={stores=Never} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="BelowNeverStored" fields=[{key="added" declared={type=number}}, {key="late" declared={type=undefined} flags=[IsInherited] originLayout=L1 originField=0}] flags=[IsDerived] ownFieldCount=1 flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="store-through-expected-type" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1, v1: string):
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK: F0 v2 PropSet [[late]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] receiverTest=Type proofs=[OwnInstance] storedValueFits missPath member=(Field level=Proven holder=L0 field=0)
+function f1 name="read-through-expected-type" parameters=[{type=L0|L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L3):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-NEXT: F1 v1 PropGet [[late]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0, L1, L3] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven)
+function f2 name="store-through-type" parameters=[{type=L0|L1}, {type=string}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: string):
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK-NEXT: F2 v2 PropSet [[late]]: form=Split level=Proven receivers=[L0, L1]
+function f3 name="store-where-every-member-is-never-stored" parameters=[{type=L1 flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: string):
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK-NEXT: F3 v2 PropSet [[late]]: form=ByName level=Unknown
+function f4 name="store-with-unknown-writer" parameters=[{type=L0|L2 flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L2, v1: string):
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK-NEXT: F4 v2 PropSet [[late]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0, L2] receiverTest=Type proofs=[OwnInstance] storedValueFits missPath member=(Field level=Proven)

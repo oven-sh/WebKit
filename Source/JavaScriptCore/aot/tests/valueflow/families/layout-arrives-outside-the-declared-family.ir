@@ -1,0 +1,42 @@
+# function take(range: Range) {}  take(new Node()); take({ pos, end }); take(unknown())  function keep(node: Node) {}  keep(new Node())
+# A position that names layouts is compared with the layouts of the objects that arrive there. A layout below a named one is inside, and so is one that has the names the named one requires: a Node has no `end`, so it is no Range, and a Range is a Node. The unknown object is counted apart.
+# RUN: valueflow-families
+# CHECK: parameter positions 2 layout-outside 1 unknown-object 1 object-without-layout 0 no-object 0
+# CHECK: all positions 2 layout-outside 1 unknown-object 1 object-without-layout 0 no-object 0 pairs 1
+# CHECK: pair positions 1 named L0 "Range"{{*}} arriving L1 "Node"{{*}} first parameter f1:0
+# CHECK-NOT: pair
+# RUN(RECEIVERS): valueflow-families receivers
+# RECEIVERS: application accesses 3 unknown-object 1 object-without-layout 1 several-layouts 0 one-layout 1 no-object 0
+# RECEIVERS: application unknown-object where the receiver is expected to be: layouts-alone 1 layouts-never-allocated 0 layouts-and-more 0 no-layout 0 any-object 0 anything 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Range" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Node" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Literal" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="aFunctionThatNoTableLists" [isFreeName]
+    v8 = Call v7, -
+    v9 = Call v3, -, v8
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v1
+    Return
+}
+function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="pos"
+    Return
+}
+function f2 name="keep" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="pos"
+    Return
+}

@@ -1,0 +1,193 @@
+# x instanceof C is a test of the layouts that descend from C while the class object, its prototype property and their chains are as defined.
+# Whatever of that may change is asked for by one test in front of it, and the operation stays behind that test. A value that misses the layouts walks its chain.
+# The class of a constructor function is defined at the first construction that is carried out, so the layout of what it makes answers nothing here: every value walks its chain
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 10
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L0, L1, L7] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Custom" constructor=f2 flow={baseState=None members=[L2] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f9 mutability=Fixed}]}
+layout L3 kind=Instance name="Open" constructor=f3 flow={baseState=None members=[L3] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
+layout L4 kind=Instance name="Repeated" constructor=f4 flow={baseState=None members=[L4] impossibleMutations=[ChangePrototype]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Other" constructor=f5 flow={baseState=None members=[L5] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Reassigned" constructor=f6 flags=[IsConstructorFunction] flow={baseState=None members=[L6] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L7 kind=Instance name="Relinked" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L7] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="Reparented" constructor=f8 flow={baseState=None members=[L8]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Custom" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="Reassigned" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="Relinked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+function f10 name="closed-union" parameters=[{type=L0|L1|L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L1|L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="closed-union"
+# CHECK-NEXT: b0(v0: L0|L1|L5, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f11 name="subclass-is-tested-for" parameters=[{type=L0|L1|L5}, {type=f1}] results=[{type=anything}] {
+  b0(v0: L0|L1|L5, v1: f1):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="subclass-is-tested-for"
+# CHECK-NEXT: b0(v0: L0|L1|L5, v1: f1):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f12 name="union-with-primitives" parameters=[{type=undefined|number|L1|L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: undefined|number|L1|L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="union-with-primitives"
+# CHECK-NEXT: b0(v0: undefined|number|L1|L5, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f13 name="unrelated-subject" parameters=[{type=L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f13 name="unrelated-subject"
+# CHECK-NEXT: b0(v0: L5, v1: f0):
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f14 name="unknown-subject" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f14 name="unknown-subject"
+# CHECK-NEXT: b0(v0: anything, v1: f0):
+# CHECK-NEXT: [[linksHold]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L7}]
+# CHECK-NEXT: Branch [[linksHold]] -> taken [[asDefined]](), notTaken [[changedSince]]()
+# CHECK: [[asDefined]]():
+# CHECK-NEXT: [[isShape]]: boolean = TypeTest v0 testedType=L0|L1|L7
+# CHECK-NEXT: Branch [[isShape]] -> taken [[known]](| 0), notTaken [[missed]](| 0)
+# CHECK: [[changedSince]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+# CHECK: [[known]]([[shape]]: L0|L1|L7):
+# CHECK-NEXT: [[isOwnShape]]: boolean = BelongsToInstance [[shape]]
+# CHECK-NEXT: Branch [[isOwnShape]] -> taken [[ownShape]](), notTaken [[foreignShape]]()
+# CHECK: [[missed]]([[otherValue]]: anything):
+# CHECK-NEXT: [[prototype]]: object = GetClassPrototype v1 layout=L0
+# CHECK-NEXT: : boolean = HasInPrototypeChain [[otherValue]], [[prototype]]
+# CHECK: [[ownShape]]():
+# CHECK-NEXT: : true = Boolean boolean=true
+# CHECK: [[foreignShape]]() frequency=Unlikely:
+# CHECK-NEXT: [[prototypeAgain]]: object = GetClassPrototype v1 layout=L0
+# CHECK-NEXT: : boolean = HasInPrototypeChain v0, [[prototypeAgain]]
+function f15 name="member-may-change-its-prototype" parameters=[{type=L0|L8}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L8, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f15 name="member-may-change-its-prototype"
+# CHECK-NEXT: b0(v0: L0|L8, v1: f0):
+# CHECK-NEXT: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L8}]
+# CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[kept]](), notTaken [[reparented]]()
+# CHECK: [[kept]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[reparented]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f16 name="descendant-with-a-changeable-link" parameters=[{type=L0|L5|L7}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L5|L7, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f16 name="descendant-with-a-changeable-link"
+# CHECK-NEXT: b0(v0: L0|L5|L7, v1: f0):
+# CHECK-NEXT: [[linkHolds]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L7}]
+# CHECK-NEXT: Branch [[linkHolds]] -> taken [[linked]](), notTaken [[relinked]]()
+# CHECK: [[linked]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L7
+# CHECK: [[relinked]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f17 name="static-has-instance-method" parameters=[{type=anything}, {type=f2}] results=[{type=anything}] {
+  b0(v0: anything, v1: f2):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f17 name="static-has-instance-method"
+# CHECK-NEXT: b0(v0: anything, v1: f2):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f18 name="class-object-may-gain-names" parameters=[{type=anything}, {type=f3}] results=[{type=anything}] {
+  b0(v0: anything, v1: f3):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f18 name="class-object-may-gain-names"
+# CHECK-NEXT: b0(v0: anything, v1: f3):
+# CHECK-NEXT: [[hasNoOwnTest]]: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key=@@hasInstance}]
+# CHECK-NEXT: Branch [[hasNoOwnTest]] -> taken [[ordinaryTest]](), notTaken [[ownTest]]()
+# CHECK: [[ordinaryTest]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L3
+# CHECK: [[ownTest]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f19 name="class-evaluated-more-than-once" parameters=[{type=anything}, {type=f4}] results=[{type=anything}] {
+  b0(v0: anything, v1: f4):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f19 name="class-evaluated-more-than-once"
+# CHECK-NEXT: b0(v0: anything, v1: f4):
+# CHECK-NEXT: [[isOnlyClass]]: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L4}]
+# CHECK-NEXT: Branch [[isOnlyClass]] -> taken [[onlyClass]](), notTaken [[oneOfSeveral]]()
+# CHECK: [[onlyClass]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L4
+# CHECK: [[oneOfSeveral]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f20 name="prototype-property-may-change" parameters=[{type=anything}, {type=f6}] results=[{type=anything}] {
+  b0(v0: anything, v1: f6):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f20 name="prototype-property-may-change"
+# CHECK-NEXT: b0(v0: anything, v1: f6):
+# CHECK-NEXT: [[hasOwnPrototype]]: boolean = AreMembersUnchanged conditions=[{layout=L6 side=Static key="prototype"}]
+# CHECK-NEXT: Branch [[hasOwnPrototype]] -> taken [[ownPrototype]](), notTaken [[otherPrototype]]()
+# CHECK: [[ownPrototype]]():
+# CHECK-NEXT: [[prototypeOfFunction]]: object = GetClassPrototype v1 layout=L6
+# CHECK-NEXT: : boolean = HasInPrototypeChain v0, [[prototypeOfFunction]]
+# CHECK: [[otherPrototype]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f21 name="built-in-class" parameters=[{type=anything}, {type=builtin(Array)}] results=[{type=anything}] {
+  b0(v0: anything, v1: builtin(Array)):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f21 name="built-in-class"
+# CHECK-NEXT: b0(v0: anything, v1: builtin(Array)):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f22 name="nullable-class-object" parameters=[{type=anything}, {type=undefined|f0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f22 name="nullable-class-object"
+# CHECK-NEXT: b0(v0: anything, v1: undefined|f0):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

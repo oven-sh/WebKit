@@ -1,0 +1,81 @@
+# for (const name in record) out[name] = record[name]  under Record<string, number>: the value that is read is tested, and the arm of the failing test is unlikely. SeparateUnlikelyLoopPaths has given the loop
+# a second header in front of the first, for the turns that end in that arm: it holds nothing and hands its parameter on. The loop is expanded all the same, turn by turn, as the loop without a type is:
+# the turns that end in the unlikely arm go back to the header with the step, and the way from the open to the loop leads through the empty block.
+# Beside it: a second header that does something stays where it is, and its loop as written
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Record" fields=[{key="alpha" declared={type=number}}, {key="bravo" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="copiesNumbers" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    Jump -> next b2(v4)
+  b2(v5: int[0, 8589934591]):
+    LoopHint
+    v7 = ForInStep v2, v0 position=v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=2
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    Branch v8 -> taken b6(), notTaken b3()
+  b3():
+    v13 = ElemGet v0, v9
+    v14 = TypeTest v13 testedType=number
+    Branch v14 -> taken b4(), notTaken b5()
+  b4():
+    ElemSet v1, v9, v13
+    Jump -> next b2(v12)
+  b5() frequency=Unlikely:
+    v16 = Undefined
+    ElemSet v1, v9, v16
+    Jump -> next b1(v12)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f0 name="copiesNumbers"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: = String string="bravo"
+# CHECK: = String string="alpha"
+
+function f1 name="theSecondHeaderWorks" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    PropSet v1, v4 key="turns" mode=Strict
+    Jump -> next b2(v4)
+  b2(v6: int[0, 8589934591]):
+    LoopHint
+    v8 = ForInStep v2, v0 position=v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=2
+    v12 = Integer integer=1
+    v13 = Add v11, v12
+    Branch v9 -> taken b6(), notTaken b3()
+  b3():
+    v14 = ElemGet v0, v10
+    v15 = TypeTest v14 testedType=number
+    Branch v15 -> taken b4(), notTaken b5()
+  b4():
+    ElemSet v1, v10, v14
+    Jump -> next b2(v13)
+  b5() frequency=Unlikely:
+    v17 = Undefined
+    ElemSet v1, v10, v17
+    Jump -> next b1(v13)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f1 name="theSecondHeaderWorks"
+# CHECK-NOT: = ShapeTest
+# CHECK: Jump -> next b1(

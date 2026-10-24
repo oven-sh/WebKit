@@ -1,0 +1,44 @@
+# interface Node { kind: number; pos: number }  interface Identifier extends Node { kind: 80 }  interface IfStatement extends Node { kind: 245; condition?: Node }  interface Token extends Node { kind: 70 | .. | 90 }
+# interface Positioned { pos: number }  function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }
+# The reader derives a layout of NodeObject for each literal that a type below Node writes for `kind`: L6 for 80 and L7 for 245. A layout by tag is below NodeObject, which has the names of every type here.
+# It still joins no family of a type that writes other literals for the tag: the objects of L7 hold 245, so none of them is an Identifier or a Token.
+# Beside them: a type that lists the tag among others takes the layout (Token holds 80), and so does a type that says nothing about the tag (Node writes `number`, Positioned has no `kind`)
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Identifier" fields=[{key="kind" declared={type=80} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="IfStatement" fields=[{key="kind" declared={type=245} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="condition" declared={type=anything}}] supertypes=[L1]
+layout L4 name="Token" fields=[{key="kind" declared={type=int[70, 90]} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L5 name="Positioned" fields=[{key="pos" declared={type=number} flags=[IsRequired]}]
+# CHECK: L0: members [L0, L6, L7]
+# CHECK-NEXT: L1: members [L0, L1, L2, L3, L4, L6, L7]
+# CHECK-NEXT: L2: members [L1, L2, L4, L6]
+# CHECK-NEXT: L3: members [L1, L3, L7]
+# CHECK-NEXT: L4: members [L0, L1, L2, L4, L6]
+# CHECK-NEXT: L5: members [L0, L1, L2, L3, L4, L5, L6, L7]
+# READ: layout L5 name="Positioned"
+# READ-NEXT: layout L6 kind=Instance name="NodeObject" {{*}}flags=[IsDerived] flow={baseState=Layout base=L0}
+# READ-NEXT: layout L7 kind=Instance name="NodeObject" {{*}}flags=[IsDerived] flow={baseState=Layout base=L0}
+# READ-NEXT: module m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number, v2: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="take" parameters=[{type=L2}, {type=L3}, {type=L4}, {type=L5}] results=[{type=anything}] {
+  b0(v0: L2, v1: L3, v2: L4, v3: L5):
+    Return
+}
+# READ-LABEL: function f2 name="take"
+# READ: parameters=[{type=L1|L2|L4|L6}, {type=L1|L3|L7}, {type=L0|L1|L2|L4|L6}, {type=L0|L1|L2|L3|L4|L5|L6|L7}]

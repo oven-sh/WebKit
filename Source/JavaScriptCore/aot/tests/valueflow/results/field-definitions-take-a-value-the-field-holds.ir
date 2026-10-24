@@ -1,0 +1,56 @@
+# What the definition of a field that nobody observes stores instead of undefined: a value that the field holds anyway, by the type that the analysis proves for it.
+# An empty string, the one boolean, a number with a fraction where only such numbers are stored, one of the literal strings
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Filled" {{*}}{key="label" declared={type=string}{{*}}occupancy=AlwaysFilled{{*}}{key="flag" declared={type=true}{{*}}occupancy=AlwaysFilled{{*}}{key="ratio" declared={type=fractional}{{*}}occupancy=AlwaysFilled{{*}}{key="kind" declared={type="b"}{{*}}occupancy=AlwaysFilled
+# CHECK: variable g0 name="seen" {{*}}declared={type=string}
+# CHECK-LABEL: function f2
+# CHECK: [[label]]: "" = String string=""
+# CHECK-NEXT: PropDefine v0, [[label]] key="label"
+# CHECK-NEXT: [[flag]]: true = Boolean boolean=true
+# CHECK-NEXT: PropDefine v0, [[flag]] key="flag"
+# CHECK-NEXT: [[ratio]]: fractional = Double number=0.5
+# CHECK-NEXT: PropDefine v0, [[ratio]] key="ratio"
+# CHECK-NEXT: [[kind]]: "b" = String string="b"
+# CHECK-NEXT: PropDefine v0, [[kind]] key="kind"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="label" declared={type=undefined|null|string} flags=[IsRequired]}, {key="flag" declared={type=boolean} flags=[IsRequired]}, {key="ratio" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|"a"|"b"} flags=[IsRequired]}]
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = Construct v3, -, v0
+    v5 = PropGet v4 key="label"
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = ToString v1
+    PropSet v4, v6 key="label" mode=Strict
+    v8 = Boolean boolean=true
+    PropSet v4, v8 key="flag" mode=Strict
+    v10 = Double number=1.5
+    PropSet v4, v10 key="ratio" mode=Strict
+    v12 = String string="b"
+    PropSet v4, v12 key="kind" mode=Strict
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropDefine v0, v1 key="label"
+    PropDefine v0, v1 key="flag"
+    PropDefine v0, v1 key="ratio"
+    PropDefine v0, v1 key="kind"
+    Return v1
+}

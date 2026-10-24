@@ -1,0 +1,30 @@
+# Stores that may add their fields to one owner, with nothing that collects between them, leave the barrier to the last of them.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}] flow={members=[L0]}
+function f0 name="constructor-stores" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="z" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f0 name="constructor-stores"
+# CHECK: PutSlotOrAdd v0, -, v1 key="x"{{*}}[laterBarrierCovers]
+# CHECK: PutSlotOrAdd v0, -, v1 key="y"{{*}}[laterBarrierCovers]
+# CHECK: PutSlotOrAdd v0, -, v1 key="z"
+# CHECK-NOT: laterBarrierCovers
+function f1 name="allocation-between" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L0] level=Proven
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    PutSlotOrAdd v0, -, v3 key="y" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1 name="allocation-between"
+# CHECK: PutSlotOrAdd v0, -, v1 key="x"
+# CHECK-NOT: laterBarrierCovers

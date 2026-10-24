@@ -1,0 +1,52 @@
+# A program that has run out of memory is told so at the poll of a loop, so a poll in a block with a handler has the handler at its site
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 faulting-loop-polls
+# X64: f1: size={{*}} handlers=1{{*}} polls=2
+# X64: f2: size={{*}} handlers=0{{*}} polls=2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = BitOr v1, v1
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f2
+    Return v4
+}
+function f1 name="covered" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+}
+function f2 name="notCovered" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+}

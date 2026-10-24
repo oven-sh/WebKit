@@ -1,0 +1,167 @@
+# Slot reads and stores keep a fresh object local; an access by name, a delete, a Return and a Throw do not
+# FORM: Prepared
+# RUN: analyses escape object-uses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Empty"
+function f0 name="environmentFields" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L0 field=0
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    Return v2
+}
+function f1 name="slotsGuardedByTheAllocation" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L1] level=Proven
+    PutSlot v1, v1, v0 key="x" receivers=[L1] level=Proven
+    Return v2
+}
+function f2 name="fieldsByName" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = PropGet v1 key="x" receivers=[L1]
+    PropSet v1, v0 key="x" mode=Strict receivers=[L1]
+    Return v2
+}
+function f3 name="fieldDeleted" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L1] level=Proven
+    v3 = PropDelete v1 key="x" mode=Strict receivers=[L1]
+    Return v2
+}
+function f4 name="returned" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L2 fields=[]
+    v1 = Upcast v0 castType=anything
+    Return v1
+}
+function f5 name="thrown" results=[{type=undefined}] {
+  b0():
+    v0 = NewObject layout=L2 fields=[]
+    Throw v0
+}
+function f6 name="plainObjectStoredByName" results=[{type=undefined}] {
+  b0():
+    v0 = NewObject layout=L2 fields=[]
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v1
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: DoesNotEscape
+# CHECK-NEXT: o0 reasons: []
+# CHECK-NEXT: o0 first escape: none
+# CHECK-NEXT: o0 uses: [Inspects]
+# CHECK-NEXT: o0 live instances: AtMostOne
+# CHECK-NEXT: o0 aliases: [v1]
+# CHECK-NEXT: o0 object uses: [v2(0) v3(0)]
+# CHECK-NEXT: o0 escaping uses: []
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: []
+# CHECK-NEXT: v1 points to: [o0]
+# CHECK-NEXT: v1 may be untracked: no
+# CHECK-NEXT: object-uses:
+# CHECK: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v1
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: DoesNotEscape
+# CHECK-NEXT: o0 reasons: []
+# CHECK-NEXT: o0 first escape: none
+# CHECK-NEXT: o0 uses: [Inspects]
+# CHECK: o0 object uses: [v2(0) v2(1) v3(0) v3(1)]
+# CHECK-NEXT: o0 escaping uses: []
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v2(0) uses: [Inspects]
+# CHECK-NEXT: o0 v2(0) is escape: no
+# CHECK-NEXT: o0 v2(0) is contents store: no
+# CHECK-NEXT: o0 v2(1) uses: [Inspects]
+# CHECK-NEXT: o0 v2(1) is escape: no
+# CHECK-NEXT: o0 v2(1) is contents store: no
+# CHECK-NEXT: o0 v3(0) uses: [Inspects]
+# CHECK-NEXT: o0 v3(0) is escape: no
+# CHECK-NEXT: o0 v3(0) is contents store: no
+# CHECK-NEXT: o0 v3(1) uses: [Inspects]
+# CHECK-NEXT: o0 v3(1) is escape: no
+# CHECK-NEXT: o0 v3(1) is contents store: no
+# CHECK: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v1
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [PassedToUnknownCode]
+# CHECK-NEXT: o0 first escape: v2(0)
+# CHECK-NEXT: o0 uses: [Inspects PassesToUserCode]
+# CHECK: o0 object uses: [v2(0) v3(0)]
+# CHECK-NEXT: o0 escaping uses: [v2(0) v3(0)]
+# CHECK: function f3
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v1
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [PassedToUnknownCode]
+# CHECK-NEXT: o0 first escape: v3(0)
+# CHECK: o0 object uses: [v2(0) v2(1) v3(0)]
+# CHECK-NEXT: o0 escaping uses: [v3(0)]
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v2(0) uses: [Inspects]
+# CHECK-NEXT: o0 v2(0) is escape: no
+# CHECK-NEXT: o0 v2(0) is contents store: no
+# CHECK-NEXT: o0 v2(1) uses: [Inspects]
+# CHECK-NEXT: o0 v2(1) is escape: no
+# CHECK-NEXT: o0 v2(1) is contents store: no
+# CHECK-NEXT: o0 v3(0) uses: [Inspects DeletesByKey PassesToUserCode]
+# CHECK-NEXT: o0 v3(0) is escape: yes
+# CHECK-NEXT: o0 v3(0) is contents store: no
+# CHECK: function f4
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [Returned]
+# CHECK-NEXT: o0 first escape: b0.terminator(0)
+# CHECK-NEXT: o0 uses: [Returns]
+# CHECK-NEXT: o0 live instances: AtMostOne
+# CHECK-NEXT: o0 aliases: [v0 v1]
+# CHECK-NEXT: o0 object uses: [b0.terminator(0)]
+# CHECK-NEXT: o0 escaping uses: [b0.terminator(0)]
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: []
+# CHECK-NEXT: v0 points to: [o0]
+# CHECK-NEXT: v0 may be untracked: no
+# CHECK-NEXT: v1 points to: [o0]
+# CHECK-NEXT: v1 may be untracked: no
+# CHECK: function f5
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [Thrown]
+# CHECK-NEXT: o0 first escape: b0.terminator(0)
+# CHECK-NEXT: o0 uses: [Retains]
+# CHECK: function f6
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [PassedToUnknownCode]
+# CHECK-NEXT: o0 first escape: v2(0)

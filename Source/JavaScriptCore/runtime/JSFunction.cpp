@@ -26,7 +26,12 @@
 #include "config.h"
 #include "JSFunction.h"
 
+#if ENABLE(AOT)
+#include "AOTCompiledCallee.h"
+#include "AOTBuiltinModules.h"
+#endif
 #include "AsyncGeneratorPrototype.h"
+#include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
 #include "CallFrame.h"
 #include "CommonIdentifiers.h"
@@ -96,6 +101,38 @@ JSFunction* JSFunction::create(VM& vm, JSGlobalObject*, FunctionExecutable* exec
     JSFunction* result = createImpl(vm, executable, scope, structure);
     executable->notifyCreation(vm, result, "Allocating a function");
     return result;
+}
+
+FunctionExecutable* JSFunction::linkBuiltinCodeFromText(VM& vm, BuiltinCode code)
+{
+    if (code.linkFromText)
+        return code.linkFromText(vm);
+    RELEASE_ASSERT(code.id < numberOfBuiltinCodes);
+    return vm.builtinExecutables()->linkFromText(static_cast<BuiltinCodeIndex>(code.id), NoIntrinsic);
+}
+
+JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, BuiltinCode code, JSScope* scope)
+{
+    if (!code.executable) {
+#if ENABLE(AOT)
+        if (JSFunction* function = AOT::builtinFunction(globalObject, code.id))
+            return function;
+#endif
+        code.executable = linkBuiltinCodeFromText(vm, code);
+    }
+    return create(vm, globalObject, code.executable, scope);
+}
+
+JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, BuiltinCode code, JSScope* scope, Structure* structure)
+{
+    if (!code.executable) {
+#if ENABLE(AOT)
+        if (JSFunction* function = AOT::builtinFunction(globalObject, code.id, structure->storedPrototypeObject()))
+            return function;
+#endif
+        code.executable = linkBuiltinCodeFromText(vm, code);
+    }
+    return create(vm, globalObject, code.executable, scope, structure);
 }
 
 JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction nativeConstructor, const DOMJIT::Signature* signature)
@@ -194,6 +231,10 @@ String JSFunction::name(VM& vm)
     if (isHostFunction()) {
         if (this->inherits<JSBoundFunction>())
             return uncheckedDowncast<JSBoundFunction>(this)->nameString(vm);
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return AOT::CompiledCallee::name(this);
+#endif
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
@@ -209,6 +250,10 @@ String JSFunction::nameWithoutGC(VM& vm)
     if (isHostFunction()) {
         if (this->inherits<JSBoundFunction>())
             return uncheckedDowncast<JSBoundFunction>(this)->nameStringWithoutGC(vm);
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return AOT::CompiledCallee::name(this);
+#endif
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
         return executable->name();
     }
@@ -259,8 +304,17 @@ JSString* JSFunction::toString(JSGlobalObject* globalObject)
         return asString(string);
     }
 
-    if (isHostFunction())
+    if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure()) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSValue string = AOT::CompiledCallee::sourceText(globalObject, this);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            return asString(string);
+        }
+#endif
         return static_cast<NativeExecutable*>(executable())->toString(globalObject);
+    }
     return jsExecutable()->toString(globalObject);
 }
 
@@ -278,7 +332,7 @@ void JSFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.appendUnbarriered(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(thisObject->m_executableOrRareData) & ~rareDataTag));
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSFunction);
@@ -380,7 +434,7 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
 
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    if (cell->structure()->hasImmutableProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+    if (cell->structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
         return JSObject::put(cell, globalObject, propertyName, value, slot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -426,7 +480,7 @@ bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Prop
 
 bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
-    if (object->structure()->hasImmutableProperties()) [[unlikely]]
+    if (object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
         return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -465,7 +519,7 @@ CallData JSFunction::getConstructData(JSCell* cell)
 
 String getCalculatedDisplayName(VM& vm, JSObject* object)
 {
-    if (!is<JSFunction>(object) && !is<InternalFunction>(object))
+    if (!is<JSFunction>(object) && !is<InternalFunction>(object) && !isSlimClosureType(object->type()))
         return emptyString();
 
     Structure* structure = object->structure();
@@ -479,6 +533,12 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     }
 
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
+#if ENABLE(AOT)
+        if (function->isCompiledClosure()) {
+            if (String displayName = AOT::CompiledCallee::displayName(function); !displayName.isNull())
+                return displayName;
+        }
+#endif
         String actualName = function->nameWithoutGC(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
             return actualName;
@@ -488,6 +548,10 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     if (auto* function = dynamicDowncast<InternalFunction>(object))
         return function->name();
 
+#if ENABLE(AOT)
+    if (String displayName = AOT::CompiledCallee::displayName(object); !displayName.isNull())
+        return displayName;
+#endif
     return emptyString();
 }
 
@@ -686,7 +750,13 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
-        JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
+        JSString* name = nullptr;
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            name = jsString(vm, AOT::CompiledCallee::name(this));
+        else
+#endif
+            name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         rareData->setHasReifiedName();
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);

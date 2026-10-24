@@ -1,0 +1,181 @@
+# An access by key is told when the type of its key has no fraction: one that stays by key, and with flow, which proves the receiver an array, the read of the element that it becomes
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pass ResolveAccesses
+# RUN(FLOW): pipeline ResolveAccesses
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="total" module=m0 declared={type=number} initialization=Undefined
+variable g1 name="ratio" module=m0 declared={type=number} initialization=Undefined
+layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=0
+    v3 = BitOr v1, v2
+    PutModuleVariable v3 variable=g0
+    v5 = Div v3, v3
+    PutModuleVariable v5 variable=g1
+    v7 = NewArray v1 contents=anything
+    v8 = ToBoolean v1
+    v9 = CallDirect v7, v3, v3 function=f1
+    v10 = CallDirect v7, v3, v3 function=f2
+    v11 = CallDirect v7, v3, v3 function=f3
+    v12 = CallDirect v7, v3, v3 function=f4
+    v13 = CallDirect v7, v5 function=f5
+    v14 = CallDirect v1, v3 function=f6
+    v15 = CallDirect v7, v1 function=f7
+    v16 = CallDirect v7, v3, v8 function=f8
+    v17 = CallDirect v7, v3 function=f9
+    v18 = CallDirect v7, v3 function=f10
+    v19 = CallDirect v7, v3 function=f12
+    v20 = CallDirect v7 function=f14
+    Return
+}
+function f1 name="sum" parameters=[{type=Array}, {type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: i32):
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="sum"
+# CHECK: = ElemGet v0, v3 [keyIsIntegral]
+function f2 name="store-and-test" parameters=[{type=Array}, {type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: i32):
+    v3 = Sub v1, v2
+    ElemSet v0, v3, v1
+    v5 = ElemHas v0, v3
+    Return v5
+}
+# CHECK-LABEL: function f2 name="store-and-test"
+# CHECK: ElemSet v0, v3, v1 [keyIsIntegral]
+# CHECK-NEXT: = ElemHas v0, v3 [keyIsIntegral]
+function f3 name="product" parameters=[{type=Array}, {type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: i32):
+    v3 = Mul v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="product"
+# CHECK: = ElemGet v0, v3 [keyIsIntegral]
+function f4 name="quotient" parameters=[{type=Array}, {type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: i32):
+    v3 = Div v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: function f4 name="quotient"
+# CHECK: = ElemGet v0, v3
+# CHECK-NOT: keyIsIntegral
+function f5 name="any-number" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="any-number"
+# CHECK: = ElemGet v0, v1
+# CHECK-NOT: keyIsIntegral
+function f6 name="unknown-receiver" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="unknown-receiver"
+# CHECK: = ElemGet v0, v1 [keyIsIntegral]
+function f7 name="unknown-key" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="unknown-key"
+# CHECK: = ElemGet v0, v1
+# CHECK-NOT: keyIsIntegral
+function f8 name="loop-carried" parameters=[{type=Array}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: boolean):
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = ElemGet v0, v3
+    v6 = Sub v3, v1
+    Branch v2 -> taken b1(v6), notTaken b2()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f8 name="loop-carried"
+# CHECK: = ElemGet v0, v3 [keyIsIntegral]
+# FLOW-LABEL: function f8 name="loop-carried"
+# FLOW: = GetArrayElement v0, v3{{*}}[keyIsIntegral]
+
+function f9 name="variable-without-fraction" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = GetModuleVariable variable=g0
+    v3 = Add v2, v1
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = ElemGet v0, v5
+    Return v6
+}
+# CHECK-LABEL: function f9 name="variable-without-fraction"
+# CHECK-NOT: keyIsIntegral
+# FLOW-LABEL: function f9 name="variable-without-fraction"
+# FLOW: = GetArrayElement v0, {{*}}[keyIsIntegral]
+function f10 name="result-without-fraction" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = CallDirect v1, v1 function=f11
+    v3 = ElemGet v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f10 name="result-without-fraction"
+# CHECK-NOT: keyIsIntegral
+# FLOW-LABEL: function f10 name="result-without-fraction"
+# FLOW: = GetArrayElement v0, {{*}}[keyIsIntegral]
+function f11 name="accumulate" parameters=[{type=number}, {type=i32}] results=[{type=number}] {
+  b0(v0: number, v1: i32):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Add v0, v1
+    v4 = CallDirect v3, v1 function=f11
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f11 name="accumulate"
+# FLOW-LABEL: function f11 name="accumulate"
+function f12 name="environment-field-without-fraction" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f13
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="keep" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = GetEnvironmentField v2 layout=L0
+    v8 = ElemGet v0, v7
+    Return v8
+}
+# CHECK-LABEL: function f12 name="environment-field-without-fraction"
+# CHECK-NOT: keyIsIntegral
+# FLOW-LABEL: function f12 name="environment-field-without-fraction"
+# FLOW: = GetArrayElement v0, {{*}}[keyIsIntegral]
+function f13 name="grow" kind=Arrow captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Add v1, v1
+    PutEnvironmentField v0, v2 layout=L0
+    Return
+}
+# CHECK-LABEL: function f13 name="grow"
+# FLOW-LABEL: function f13 name="grow"
+function f14 name="variable-with-fraction" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = GetModuleVariable variable=g1
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f14 name="variable-with-fraction"
+# CHECK-NOT: keyIsIntegral
+# FLOW-LABEL: function f14 name="variable-with-fraction"
+# FLOW: = GetArrayElement v0,
+# FLOW-NOT: keyIsIntegral

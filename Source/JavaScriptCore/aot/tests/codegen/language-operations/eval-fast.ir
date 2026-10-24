@@ -1,0 +1,31 @@
+# A direct eval passes the back-end checks in fast code, with and without an environment it can name
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}]
+evalscope e0
+evalscope e1 bindings=[{name="x" layout=L0 field=0 operand=0}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="withoutBindings" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = DirectEval v1, v0 evalScope=e0
+    Return v2
+}
+function f2 name="withEnvironment" flags=[HasThis, HasNewTarget] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = DirectEval v2, v0, v1, v3 evalScope=e1
+    Return v4
+}

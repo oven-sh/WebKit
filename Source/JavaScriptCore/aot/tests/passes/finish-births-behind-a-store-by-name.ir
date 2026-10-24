@@ -1,0 +1,52 @@
+# Code that runs seldom stores by name. A field of birth that is stored so counts as stored, and behind the store that may have filled the last one the run time looks at the slots:
+# without that the object keeps the mark for life, and every reader that tests the cell goes by name.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FinishBirths
+# STATISTIC: BirthsFinished = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Circle" fields=[{key="kind" declared={type=anything} flow={occupancy=FilledAtBirth}}, {key="r" declared={type=anything} flow={occupancy=FilledAtBirth}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="theFirstFieldByName" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject layout=L0
+    PropSet v2, v0 key="kind"
+    PutSlot v2, -, v0 key="r" receivers=[L0] level=Proven
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK-LABEL: name="theFirstFieldByName"
+# CHECK: PutSlot v2, -, v0 key="r"
+# CHECK-NEXT: TryFinishBirth v2
+# CHECK-NEXT: PutModuleVariable v2
+
+function f1 name="theLastFieldByName" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject layout=L0
+    PutSlot v2, -, v0 key="r" receivers=[L0] level=Proven
+    PropDefine v2, v0 key="kind"
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK-LABEL: name="theLastFieldByName"
+# CHECK: PropDefine v2, v0 key="kind"
+# CHECK-NEXT: TryFinishBirth v2
+# CHECK-NEXT: PutModuleVariable v2
+
+function f2 name="anotherNameFillsNothing" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject layout=L0
+    PutSlot v2, -, v0 key="r" receivers=[L0] level=Proven
+    PropSet v2, v0 key="other"
+    PutModuleVariable v2 variable=g0
+    Return v1
+}
+# CHECK-LABEL: name="anotherNameFillsNothing"
+# CHECK: PropSet v2, v0 key="other"
+# CHECK-NEXT: PutModuleVariable v2

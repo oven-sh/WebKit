@@ -1,0 +1,23 @@
+# Function words select what print prints: those functions, in the order of the words, and no other line
+# RUN: print f1 f0
+# CHECK-NOT: module m0
+# CHECK: function f1 name="second" module=m0
+# CHECK-NOT: function f2
+# CHECK: function f0 name="first" module=m0
+# CHECK-NOT: function f
+# CHECK-NOT: entry
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f1 name="second" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f2 name="third" results=[{type=undefined}] {
+  b0():
+    Return
+}
+entry module=m0

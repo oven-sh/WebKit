@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
+#include "AirFrameLayout.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
@@ -42,34 +43,52 @@ void lowerStackArgs(Code& code)
     // Now we need to deduce how much argument area we need. We always reserve the conservative
     // register bytes for Bank::FP because CallArgs do not record which bank they are.
     unsigned conservativeCallArgBytes = code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
+    struct Site {
+        unsigned blockIndex;
+        unsigned instIndex;
+    };
+    Vector<Site> sites;
+    const bool hasFrameRecord = code.frameLayout().hasFrameRecord;
+    const Tmp framePointer(GPRInfo::callFrameRegister);
     for (BasicBlock* block : code) {
-        for (Inst& inst : *block) {
+        unsigned blockSize = block->size();
+        for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            bool isSite = isARM64() && (inst.kind.opcode == Lea32 || inst.kind.opcode == Lea64);
             for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
-                }
+                    isSite = true;
+                } else if (arg.isStack() || (!hasFrameRecord && arg.usesTmp(framePointer)))
+                    isSite = true;
             }
+            if (isSite)
+                sites.append(Site { block->index(), instIndex });
         }
     }
 
-    code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
+    if (!code.frameLayout().isPlanned)
+        code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
+    const unsigned bytesBelowFrameRecord = code.bytesBelowFrameRecord();
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless
     // transformation since we can search the StackSlots array to figure out which StackSlot any
     // offset-from-FP refers to.
 
     InsertionSet insertionSet(code);
-    for (BasicBlock* block : code) {
+    for (size_t site = 0; site < sites.size();) {
+        BasicBlock* block = code[sites[site].blockIndex];
         // FIXME We can keep track of the last large offset which was materialized in this block, and reuse the register
         // if it hasn't been clobbered instead of renetating imm+add+addr every time. https://bugs.webkit.org/show_bug.cgi?id=171387
 
-        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+        for (; site < sites.size() && sites[site].blockIndex == block->index(); ++site) {
+            unsigned instIndex = sites[site].instIndex;
             Inst& inst = block->at(instIndex);
             bool extendedOffsetAddrRegInUse = false;
 
             auto stackAddr = [&] (unsigned insertionIndex, Arg arg, Width width, Value::OffsetType offsetFromFP) -> Arg {
-                int32_t offsetFromSP = offsetFromFP + code.frameSize();
+                int32_t offsetFromSP = offsetFromFP + bytesBelowFrameRecord;
 
                 if (inst.admitsExtendedOffsetAddr(arg)) {
                     // Stackmaps and patchpoints expect addr inputs relative to SP or FP only. We might as well
@@ -78,10 +97,29 @@ void lowerStackArgs(Code& code)
                     return Arg::extendedOffsetAddr(offsetFromFP);
                 }
 
+#if CPU(X86_64)
+                if (!hasFrameRecord)
+                    return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+                if (code.policy().frame.prefersStackPointerAddresses && offsetFromFP < std::numeric_limits<int8_t>::min() && offsetFromSP >= 0 && offsetFromSP <= std::numeric_limits<int8_t>::max())
+                    return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+#endif
                 Arg result = Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), offsetFromFP);
                 if (result.isValidForm(Move, width))
                     return result;
 
+#if CPU(ARM64)
+                if (code.frameLayout().slotArea == SlotArea::AboveFrameRecord) {
+                    if (inst.kind.opcode == Patch)
+                        return Arg::extendedOffsetAddr(offsetFromFP);
+                    RELEASE_ASSERT(!extendedOffsetAddrRegInUse && Arg::isValidImmForm(offsetFromFP));
+                    Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
+                    extendedOffsetAddrRegInUse = true;
+                    insertionSet.insert(insertionIndex, Add64, inst.origin, Arg::imm(offsetFromFP), Air::Tmp(GPRInfo::callFrameRegister), tmp);
+                    return Arg::addr(tmp, 0);
+                }
+#else
+                RELEASE_ASSERT(code.frameLayout().slotArea != SlotArea::AboveFrameRecord);
+#endif
                 result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
                 if (result.isValidForm(Move, width))
                     return result;
@@ -148,7 +186,7 @@ void lowerStackArgs(Code& code)
                     break;
                 }
                 case Arg::CallArg:
-                    lowerArmLea(inst.args()[0].offset() - code.frameSize(), Tmp(GPRInfo::callFrameRegister));
+                    lowerArmLea(inst.args()[0].offset() - bytesBelowFrameRecord, Tmp(GPRInfo::callFrameRegister));
                     break;
                 case Arg::Addr:
                     lowerArmLea(inst.args()[0].offset(), inst.args()[0].base());
@@ -161,6 +199,24 @@ void lowerStackArgs(Code& code)
                 }
 
                 continue;
+            }
+
+            // planFrame() gives a frame no record only where these are the ways the frame pointer is named. A Patch hands its generator offsets from the frame pointer.
+            if (!hasFrameRecord && inst.kind.opcode != Patch) {
+                if (inst.kind.opcode == Move && inst.args()[0] == Arg(framePointer)) {
+                    inst = Inst(Lea64, inst.origin, Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), static_cast<Value::OffsetType>(bytesBelowFrameRecord)), inst.args()[1]);
+                    continue;
+                }
+                if (inst.kind.opcode == Add64 && inst.args().size() == 3 && inst.args()[1] == Arg(framePointer)) {
+                    inst = Inst(Lea64, inst.origin, Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), static_cast<Value::OffsetType>(inst.args()[0].value() + bytesBelowFrameRecord)), inst.args()[2]);
+                    continue;
+                }
+                for (Arg& arg : inst.args()) {
+                    if (arg.isAddr() && arg.base() == framePointer)
+                        arg = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), arg.offset() + static_cast<Value::OffsetType>(bytesBelowFrameRecord));
+                    else if (arg.isIndex() && arg.base() == framePointer)
+                        arg = Arg::index(Air::Tmp(MacroAssembler::stackPointerRegister), arg.index(), arg.scale(), arg.offset() + static_cast<Value::OffsetType>(bytesBelowFrameRecord));
+                }
             }
 
             // Moves between stack spills may require using the extendedOffsetReg for both the src and dst addresses.
@@ -181,19 +237,6 @@ void lowerStackArgs(Code& code)
                 }
                 // Fall through to handle remainder of the original or modified inst, including potential ZDef handling.
             }
-
-            // The scan below only ever acts on Stack and CallArg operands, and after register
-            // allocation most instructions have neither. Checking that does not need the Arg roles,
-            // and iterating args() directly can only over-approximate what forEachArg reports.
-            bool mayHaveStackArg = false;
-            for (Arg& arg : inst.args()) {
-                if (arg.isStack() || arg.isCallArg()) {
-                    mayHaveStackArg = true;
-                    break;
-                }
-            }
-            if (!mayHaveStackArg)
-                continue;
 
             inst.forEachArg(
                 [&] (Arg& arg, Arg::Role role, Bank, Width width) {
@@ -223,7 +266,7 @@ void lowerStackArgs(Code& code)
 #else
 #error Unhandled architecture.
 #endif
-                            RELEASE_ASSERT(isValidForm(storeOpcode, operandKind, Arg::Stack));
+                            RELEASE_ASSERT(isValidForm(code.targetFeatures(), storeOpcode, operandKind, Arg::Stack));
                             insertionSet.insert(
                                 instIndex + 1, storeOpcode, inst.origin, operand,
                                 stackAddr(instIndex + 1, arg, width, arg.offset() + 4 + slot->offsetFromFP()));
@@ -233,7 +276,7 @@ void lowerStackArgs(Code& code)
                         break;
                     }
                     case Arg::CallArg:
-                        arg = stackAddr(instIndex, arg, width, arg.offset() - code.frameSize());
+                        arg = stackAddr(instIndex, arg, width, arg.offset() - bytesBelowFrameRecord);
                         break;
                     default:
                         break;

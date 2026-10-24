@@ -1,0 +1,46 @@
+# `settings.model ?? "default"`: one option, read by a function that handles no others. The test of the slot is all that a filled slot costs. Where the slot is empty the object mostly has left
+# the option out: behind the tests under which that reads as undefined the function goes on in its typed code, and only an object that fails one of them leaves for the copy
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 name="Settings" module=m0 fields=[{key="name" declared={type=anything}}, {key="model" declared={type=undefined|string}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = String string="a"
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = Call v1, -, v3, v4, v5, v6
+    Return v7
+}
+
+function f1 name="modelOf" module=m0 flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="model"
+    Return v1
+}
+# CHECK-LABEL: name="modelOf"
+# CHECK: [[value]]: undefined|string = GetSlot {{*}} key="model"
+# CHECK-NEXT: Jump -> next [[behind]]([[value]])
+# CHECK: [[filled]]: boolean = IsSlotFilled [[object]] key="model"
+# CHECK-NEXT: Branch [[filled]] -> taken [[read]](| 0), notTaken [[empty]]()
+# CHECK: [[empty]]():
+# CHECK-NEXT: = HasLayoutPrototype [[object]]
+# CHECK: = HasNoFieldOutsideSlot [[object]]
+# CHECK: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[behind]]([[nothing]])
+
+# Only in a checked function of the program: elsewhere the failed test leaves as before.
+function f2 name="modelOfUnchecked" module=m0 parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="model"
+    Return v1
+}
+# CHECK-LABEL: name="modelOfUnchecked"
+# CHECK: = IsSlotFilled {{*}} key="model"
+# CHECK-NOT: = Undefined

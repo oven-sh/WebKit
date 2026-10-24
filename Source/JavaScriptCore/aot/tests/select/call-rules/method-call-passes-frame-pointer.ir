@@ -1,0 +1,52 @@
+# A call that flow proves to enter nothing retains no argument, so the closure it passes lies in the frame. CallMethod retains its operands, so the read and the call stay apart. Beside it the same call with a closure of the heap becomes one CallMethod
+# TODO: flow-termination: a call that enters nothing gets no empty list of callees, so its arguments count as kept and no closure goes into the frame
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,AllocateInFrames
+# STATISTIC: ClosuresInFrames = 1
+# STATISTIC: MethodCallGroups = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = CallDirect v2 function=f3
+    Return
+}
+# CHECK-LABEL: function f1 name="callsNothing"
+# CHECK: PropGet {{*}} key="map"
+# CHECK: NewClosure function=f2 {{*}}storage=Frame
+# CHECK: = Call {{*}} calleeKey="map"
+function f1 name="callsNothing" results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=5
+    v1 = PropGet v0 key="map"
+    v2 = NewClosure function=f2
+    v3 = Call v1, v0, v2 calleeKey="map" calleeName="map"
+    Return v3
+  b1() role=CatchHandler:
+    v4 = CatchValue
+    Return
+}
+function f2 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f3 name="callsAnything"
+# CHECK: CallMethod {{*}} key="map"
+function f3 name="callsAnything" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="map"
+    v2 = NewClosure function=f4
+    v3 = Call v1, v0, v2 calleeKey="map" calleeName="map"
+    Return v3
+}
+function f4 name="otherCallback" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

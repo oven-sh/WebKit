@@ -1,0 +1,119 @@
+# The call of a tail call stays with its terminator, and a demoted one in the frame that its mark hides: neither is moved into a shared body
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tailCalls" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = Call v1, -, v3, v3, v3, v3, v2
+    ReturnCall v4
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = Call v1, -, v5, v5, v5, v5, v2
+    ReturnCall v6
+  b3() frequency=Rare:
+    v7 = String string="fatal"
+    v8 = Call v1, -, v7, v7, v7, v7, v2
+    ReturnCall v8
+  b4() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = Call v1, -, v9, v9, v9, v9, v2
+    ReturnCall v10
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = Call v1, -, v11, v11, v11, v11, v2
+    ReturnCall v12
+  b6() frequency=Rare:
+    v13 = String string="fatal"
+    v14 = Call v1, -, v13, v13, v13, v13, v2
+    ReturnCall v14
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK: [[call]]: anything = Call v1, -,
+# CHECK-NEXT: ReturnCall [[call]]
+# CHECK-COUNT-5: = Call v1, -,
+# CHECK-NOT: CallDirect
+
+function f1 name="returnsResults" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = Call v1, -, v3, v3, v3, v3, v2
+    Return v4
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = Call v1, -, v5, v5, v5, v5, v2
+    Return v6
+  b3() frequency=Rare:
+    v7 = String string="fatal"
+    v8 = Call v1, -, v7, v7, v7, v7, v2
+    Return v8
+  b4() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = Call v1, -, v9, v9, v9, v9, v2
+    Return v10
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = Call v1, -, v11, v11, v11, v11, v2
+    Return v12
+  b6() frequency=Rare:
+    v13 = String string="fatal"
+    v14 = Call v1, -, v13, v13, v13, v13, v2
+    Return v14
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: = Call v1
+# CHECK-COUNT-6: anything = CallDirect v1, v2 function=f3
+# CHECK-NOT: = Call v1
+
+function f2 name="demotedTailCalls" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = Call v1, -, v3, v3, v3, v3, v2 [isDemotedTailCall]
+    Return v4
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = Call v1, -, v5, v5, v5, v5, v2 [isDemotedTailCall]
+    Return v6
+  b3() frequency=Rare:
+    v7 = String string="fatal"
+    v8 = Call v1, -, v7, v7, v7, v7, v2 [isDemotedTailCall]
+    Return v8
+  b4() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = Call v1, -, v9, v9, v9, v9, v2 [isDemotedTailCall]
+    Return v10
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = Call v1, -, v11, v11, v11, v11, v2 [isDemotedTailCall]
+    Return v12
+  b6() frequency=Rare:
+    v13 = String string="fatal"
+    v14 = Call v1, -, v13, v13, v13, v13, v2 [isDemotedTailCall]
+    Return v14
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = Call v1, -,
+# CHECK-NOT: CallDirect
+
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: [[result]]: anything = Call v0, -,
+# CHECK-NEXT: Return [[result]]

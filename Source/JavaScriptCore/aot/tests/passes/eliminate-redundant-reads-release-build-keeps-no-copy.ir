@@ -1,0 +1,17 @@
+# A release build keeps no copy of a replaced read
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+# CHECK-NOT: ValidateSameValue
+# CHECK-COUNT-1: = GetSlot
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="readsTwice" parameters=[{type=L0}] results=[{type=boolean}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v3 = StrictEq v1, v2
+    Return v3
+}

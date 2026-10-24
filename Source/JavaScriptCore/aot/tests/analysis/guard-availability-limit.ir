@@ -1,0 +1,87 @@
+# Over the work limit the guards in the most frequent blocks are solved as far as the limit goes, and only the state of the others is Unknown. Every guard keeps its facts, and a function at the limit keeps all its answers
+# FORM: Prepared
+# OPTIONS: limit=MaxGuardAvailabilityWork:4
+# RUN: guards points uses
+# LOSS: MaxGuardAvailabilityWork f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="fourBlocksTimesTwoFacts" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    v3 = IsSlotFilled v0, v2 key="x" receivers=[L0] level=Proven
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v5
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v2 facts: [Shape of v0 by v1 reads -]
+# CHECK-NEXT: v4 facts: [SlotFilled of v0 by v3 reads ObjectFields["x"]]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b2 available at head: [v2.0]
+# CHECK-NEXT: b3 available at head: []
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: []
+# CHECK-NEXT: b1:0 available: [v2]
+# CHECK-NEXT: b1:1 available: [v2]
+# CHECK-NEXT: b2:0 available: [v2]
+# CHECK-NEXT: b2:1 available: [v2]
+# CHECK-NEXT: b3:0 available: []
+# CHECK-NEXT: v3 guard v2: Available
+# CHECK-NEXT: v5 guard v2: Available
+
+function f1 name="oneBlockTimesFourFacts" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v1]
+# CHECK-NEXT: b0:2 available: [v1]
+# CHECK-NEXT: v2 guard v1: Available
+
+function f2 name="solvedAgainWithoutUnnamedAllocation" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = NewArray v0 contents=anything
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads -]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v3.0]
+# CHECK: v4 guard v3: Available
+
+function f3 name="fourBlocksTimesOneFact" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    Jump -> next b2()
+  b2():
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v2 facts: [Shape of v0 by v1 reads -]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b2 available at head: [v2.0]
+# CHECK: v3 guard v2: Available

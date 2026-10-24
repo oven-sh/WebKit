@@ -1,0 +1,48 @@
+# A duplicated tail with one edge redirected to the copy and the uses below it repaired
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b3,b4 redirect=b2.0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tail" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number, v2: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = Add v3, v3
+    v5 = Integer integer=7
+    Jump -> next b4()
+  b4():
+    v6 = Mul v4, v5
+    Jump -> next b5()
+  b5():
+    v7 = Sub v4, v3
+    v8 = Add v7, v5
+    Return v8
+}
+# CHECK: check: CanClone
+# CHECK: function f0
+# CHECK: b1():
+# CHECK: Jump -> next b3(v1)
+# CHECK: b2():
+# CHECK: Jump -> next [[C3]](v2)
+# CHECK: b3(v3: number):
+# CHECK: v4: number = Add v3, v3
+# CHECK: Jump -> next b4()
+# CHECK: b4():
+# CHECK: v6: number = Mul v4, v5
+# CHECK: Jump -> next b5(v3, v4)
+# CHECK: b5([[P3]]: number, [[P4]]: number):
+# CHECK: v7: number = Sub [[P4]], [[P3]]
+# CHECK: [[K]]: 7 = Integer integer=7
+# CHECK: v8: number = Add v7, [[K]]
+# CHECK: Return v8
+# CHECK: [[C3]]([[X3]]: number):
+# CHECK: [[X4]]: number = Add [[X3]], [[X3]]
+# CHECK: [[X5]]: 7 = Integer integer=7
+# CHECK: Jump -> next [[C4]]()
+# CHECK: [[C4]]():
+# CHECK: [[X6]]: number = Mul [[X4]], [[X5]]
+# CHECK: Jump -> next b5([[X3]], [[X4]])

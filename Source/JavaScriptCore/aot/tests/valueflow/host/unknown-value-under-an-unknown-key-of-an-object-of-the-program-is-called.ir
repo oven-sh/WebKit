@@ -1,0 +1,21 @@
+# JSON.stringify({ [somethingThatNoTableLists]: somethingThatNoTableLists })
+# The program's own object holds a value nobody knows under a key nobody knows, which may be "toJSON": JSON.stringify calls it, and that is code that nobody compiles.
+# An object that the library's code behind a described built-in makes: operand-under-an-unknown-key-of-an-object-made-in-described-code-is-not-called.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6
+# CHECK: flag=h6
+# CHECK-NEXT: {{*}} by CallGroup
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=JSONStringify
+    v3 = NewDictionary
+    v4 = ToPropertyKey v1
+    ElemDefine v3, v4, v1
+    v6 = Call v2, -, v3
+    Return
+}

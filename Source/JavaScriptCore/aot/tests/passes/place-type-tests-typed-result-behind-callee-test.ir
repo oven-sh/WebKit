@@ -1,0 +1,23 @@
+# A call that becomes a built-in call with a typed result once its callee is tested ends the tests of arrays, as the call it becomes does: the second read of the element is tested again
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# RUN(STORAGE): pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+function f0 name="readsAroundTheParse" parameters=[{type=Array<anything>}, {type=int[0, 100]}, {type=builtin(JSONParse) flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: Array<anything> ~ Array<string, Contiguous>, v1: int[0, 100], v2: anything ~ builtin(JSONParse), v3: string):
+    v4 = Builtin builtin=JSON
+    v5 = ElemGet v0, v1 [keyIsIntegral]
+    v6 = Call v2, v4, v3 calleeKey="parse" calleeName="parse" expectedResult=x0
+    v7 = ElemGet v0, v1 [keyIsIntegral]
+    v8 = NewArray v5, v6, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f0
+# CHECK: = CallBuiltin {{*}}overload=JSONParse/0 expectedResult=x0
+# STORAGE-LABEL: function f0
+# STORAGE-COUNT-2: = HasArrayStorage v0 arrayStorage=Contiguous

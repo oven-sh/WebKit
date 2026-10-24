@@ -1,0 +1,70 @@
+# made = Object.create(base, { run: { value }, size: { get } })
+# The object that the call makes gets the properties that the map describes. The map is an object literal that goes nowhere else, so each name is defined by itself, as its descriptor says:
+# `run` is a data property, a read of `size` runs its getter, under another name nothing is found, and what lies on the prototype is inherited. Nothing is handed to code that nobody compiles.
+# RUN: valueflow-solve calls
+# CHECK: f0 v20 -> f1
+# CHECK: f0 v22 -> f3
+# CHECK: f0 v24 -> f4
+# CHECK-NOT: f0 v26 -> f
+# CHECK-NOT: unknown
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Base" fields=[{key="inherited" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="value" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewDictionary
+    v3 = NewClosure function=f1
+    v4 = NewObject layout=L1
+    PropDefine v4, v3 key="value"
+    v6 = FinishObject v4
+    PropDefine v2, v6 key="run"
+    v8 = NewClosure function=f2
+    v9 = NewObject layout=L1
+    PropDefine v9, v8 key="get"
+    v11 = FinishObject v9
+    PropDefine v2, v11 key="size"
+    v13 = Builtin builtin=Object
+    v14 = Builtin builtin=ObjectCreate
+    v15 = Call v14, v13, v1, v2
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = PropGet v15 key="run"
+    v20 = Call v19, v15 calleeKey="run"
+    v21 = PropGet v15 key="size"
+    v22 = Call v21
+    v23 = PropGet v15 key="inherited"
+    v24 = Call v23, v15 calleeKey="inherited"
+    v25 = PropGet v15 key="other"
+    v26 = Call v25
+    Return v20
+}
+function f1 name="run" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    Return v1
+}
+function f3 name="sized" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="inherited" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

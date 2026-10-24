@@ -1,0 +1,72 @@
+# The receivers of an access are the layouts of all the objects that arrive at the object it looks into. Where the analysis has followed every one of them and each has a layout, the set is complete:
+# the access is stamped with it, whether it reads, stores, tests or takes a computed key, and its site names no loss.
+# Through a type that lists a family the stamp lists the part of the family that arrives. A receiver that is no object is not listed: the stamp speaks for the objects
+# RUN: valueflow-apply
+# RUN(SITES): valueflow-results
+# SITES: access [[read]] function=f1 kind=Read
+# SITES-NEXT: access [[store]] function=f1 kind=Store
+# SITES-NEXT: access [[test]] function=f1 kind=Has
+# SITES-NEXT: access [[computed]] function=f1 kind=Read
+# SITES-NEXT: access [[single]] function=f2 kind=Read
+# SITES-NEXT: access [[typed]] function=f3 kind=Read
+# SITES-NEXT: access [[mixed]] function=f4 kind=Read
+# RUN(NOWHERE): valueflow-results
+# NOWHERE-NOT: loss
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Sized" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Circle" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Note" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = NewObject -, v0 layout=L3 fields=[0]
+    v4 = CallDirect v1 function=f1
+    v5 = CallDirect v3 function=f1
+    v6 = CallDirect v3 function=f2
+    v7 = CallDirect v1 function=f3
+    v8 = CallDirect v2 function=f4
+    v9 = CallDirect v0 function=f4
+    Return
+}
+function f1 name="everyKindOfAccess" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    PropSet v0, v1 key="size" mode=Strict
+    v3 = PropHas v0 key="size"
+    v4 = String string="size"
+    v5 = ElemGet v0, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="everyKindOfAccess"
+# CHECK: parameters=[{type=L1|L3}]
+# CHECK: = PropGet {{*}}key="size" accessSite={{*}} receivers=[L1, L3]
+# CHECK: PropSet {{*}}key="size" accessSite={{*}} receivers=[L1, L3]
+# CHECK: = PropHas {{*}}key="size" accessSite={{*}} receivers=[L1, L3]
+# CHECK: = ElemGet {{*}}accessSite={{*}} receivers=[L1, L3]
+function f2 name="oneLayout" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="oneLayout"
+# CHECK: = PropGet {{*}}key="size" accessSite={{*}} receivers=[L3]
+function f3 name="throughFamily" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="throughFamily"
+# CHECK: parameters=[{type=L1}]
+# CHECK: = PropGet {{*}}key="size" accessSite={{*}} receivers=[L1]
+function f4 name="objectOrNumber" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="objectOrNumber"
+# CHECK: = PropGet {{*}}key="size" accessSite={{*}} receivers=[L2]

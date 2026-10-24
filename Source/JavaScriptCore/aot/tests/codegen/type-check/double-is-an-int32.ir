@@ -1,0 +1,21 @@
+# Whether a double is an int32 is one comparison: the low half of the truncated number, made a double again, has the bits of the number. A number outside of int32, a fraction, NaN, an infinity and -0 all differ from it, so the range needs no test of its own (3 instructions less)
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# CHECK: f0: size=
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# X64: f0: size=35 frame=none
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isInt32" parameters=[{type=number}] results=[{type=int}] {
+  b0(v0: number):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}

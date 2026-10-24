@@ -1,0 +1,34 @@
+# Only the run time tests the declared type of a field. Its layouts get consecutive shape numbers where no test in code wants the numbers, so the run time tests the type with one range
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests
+# RUN: place shapes
+# RUN(TABLES): tables types
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Between" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Last" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Holder" fields=[{key="member" declared={type=L0|L2} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v4 layout=L3 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewObject -, v8 layout=L3 fields=[0]
+    v12 = FinishObject v11
+    Return
+}
+# CHECK: L0 shapes 1..1
+# CHECK: L1 shapes 3..3
+# CHECK: L2 shapes 2..2
+# TABLES: type L0|L2 {{*}}tests=[ShapeIn(1+2)]

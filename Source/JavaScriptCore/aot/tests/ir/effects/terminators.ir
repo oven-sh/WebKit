@@ -1,0 +1,67 @@
+# A switch over strings resolves ropes whatever its subject, a throw throws, a switch on shapes reads shape words, and other terminators have no effects
+# FORM: Prepared
+# RUN: effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="B" fields=[{key="y" declared={type=number}}]
+function f0 name="switchString" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    SwitchString v0 strings=["a"] -> case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b0 SwitchString: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+function f1 name="switchStringNumberSubject" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    SwitchString v0 strings=["a"] -> case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b0 SwitchString: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+function f2 name="plain" parameters=[{type=boolean}, {type=number}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: number):
+    Jump -> next b1()
+  b1():
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Switch v1 cases=[0] -> case b3(), otherwise b4()
+  b3():
+    Return
+  b4():
+    Unreachable
+}
+# CHECK-LABEL: function f2
+# CHECK: b0 Jump: none
+# CHECK-NEXT: b1 Branch: none
+# CHECK-NEXT: b2 Switch: none
+# CHECK-NEXT: b3 Return: none
+# CHECK-NEXT: b4 Unreachable: none
+function f3 name="throws" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1():
+    Throw v0
+  b1() role=CatchHandler:
+    v1 = CatchException
+    Rethrow v1
+}
+# CHECK-LABEL: function f3
+# CHECK: b0 Throw: throws
+# CHECK: b1 Rethrow: throws
+function f4 name="switchOnShape" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v1):
+    Return
+  b2(v2):
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: b0 SwitchOnShape: reads(ShapeWords)

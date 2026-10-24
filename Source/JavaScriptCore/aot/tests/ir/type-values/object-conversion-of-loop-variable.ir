@@ -1,0 +1,51 @@
+# The types of a loop rise from never, and a type that has risen does not come down: a variable that starts as null holds only null in the first round. What ToObject gives for it has to lie inside what it gives once the objects have arrived
+# FORM: Prepared
+# RUN: pass RetypeValues
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=anything}}]
+
+function f0 name="nullThenObjects" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0):
+    v2 = Null
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = ToObject v3
+    v6 = Upcast v1 castType=L0
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="nullThenObjects"
+# CHECK: b1(v3: null|L0):
+# CHECK: v5: L0 = ToObject v3
+
+function f1 name="onlyNull" results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = ToObject v0
+    Unreachable
+}
+# CHECK-LABEL: function f1 name="onlyNull"
+# CHECK: v1: never = ToObject v0
+# CHECK-NEXT: Unreachable
+
+function f2 name="primitiveThenObjects" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0):
+    v2 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = ToObject v3
+    v6 = Upcast v1 castType=L0
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="primitiveThenObjects"
+# CHECK: v5: object = ToObject v3

@@ -1,0 +1,57 @@
+# The block where the parts and the whole result of a call meet only hands its parameter on, to a block that also takes the result of a call which seldom runs: the ways go on to that block one by one, the ways that may bring an object get a copy of what follows, and the parts are not put together
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations SinkAllocations
+# STATISTIC: TailsDuplicatedForSinking = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 module=m0 fields=[{key="high" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="low" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation] keys=NeverEnumerated addedKeysAreComplete=true}
+
+function f0 name="worker" parameters=[{type=L0}, {type=int}] results=[{type=i32}, {type=L0}, {type=int}, {type=int}] {
+  b0(v0: L0, v1: int):
+    v2 = Integer integer=1
+    v3 = Results v2, v0, v1, v1
+    Return v3
+}
+
+function f1 name="handedOnToASecondJoin" parameters=[{type=L0}, {type=int}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: int, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = CallDirect v0, v1 function=f0
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = ResultAt v3 index=2
+    v7 = ResultAt v3 index=3
+    Switch v4 cases=[1] -> case b3(v5), otherwise b2()
+  b2():
+    v8 = NewObject -, v6, v7 layout=L0 fields=[1, 0]
+    Jump -> next b3(v8)
+  b3(v9: L0):
+    Jump -> next b7(v9)
+  b4() frequency=Rare:
+    v10 = CallDirect v0, v1 function=f0
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    v13 = ResultAt v10 index=2
+    v14 = ResultAt v10 index=3
+    Switch v11 cases=[1] -> case b6(v12), otherwise b5()
+  b5() frequency=Rare:
+    v15 = NewObject -, v13, v14 layout=L0 fields=[1, 0]
+    Jump -> next b6(v15)
+  b6(v16: L0) frequency=Rare:
+    v17 = Add v1, v1
+    Jump -> next b7(v16)
+  b7(v18: L0):
+    v19 = IsSlotFilled v18 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v19 -> taken b8(| 0), notTaken b9()
+  b8(v20: guard):
+    v21 = GetSlot v18, v20 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v21
+  b9() frequency=Rare:
+    v22 = Undefined
+    Return v22
+}
+# CHECK-LABEL: function f1 name="handedOnToASecondJoin"
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK: frequency=Rare

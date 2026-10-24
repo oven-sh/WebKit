@@ -1,0 +1,87 @@
+# A slot has an absent state unless its field is always filled, is never deleted, and its objects stay out of reach of uncompiled JavaScript. A slot of an environment has one only where a read may come before the first store
+# FORM: AsRead
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
+entry module=m0
+layout L0 name="Kept" fields=[{key="filled" declared={type=number} flags=[IsRequired]}, {key="optional" declared={type=number}}, {key="flag" declared={type=boolean}}]
+layout L1 name="Deleted" fields=[{key="deleted" declared={type=number} flags=[IsRequired]}]
+layout L2 name="GivenToUncompiledCode" fields=[{key="escaped" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Environment name="scope" fields=[{key="captured" declared={type=number}}, {key="uninitialized" declared={type=number|absent}}, {key="storedFirst" declared={type=number|absent}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="deleted" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToBoolean v1
+    v4 = NewObject -, v2, v2, v3 layout=L0 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v2 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject -, v2 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    PutModuleVariable v11 variable=g1
+    v13 = CallDirect function=f1
+    v14 = CallDirect v2 function=f2
+    v15 = CallDirect v2 function=f2
+    Return
+}
+function f1 name="use" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="filled"
+    v4 = PropGet v2 key="optional"
+    v5 = PropGet v2 key="flag"
+    v6 = Call v1, -, v3, v4, v5
+    v7 = GetModuleVariable variable=g1
+    v8 = PropGet v7 key="deleted"
+    v9 = PropDelete v7 key="deleted"
+    v10 = Call v1, -, v8
+    v11 = ToNumber v6
+    v12 = NewObject -, v11 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    v14 = ModuleNamespace module=m1
+    v15 = PropGet v14 key="take"
+    v16 = Call v15, -, v13
+    v17 = PropGet v13 key="escaped"
+    v18 = Call v1, -, v17
+    Return
+}
+function f2 name="makeClosure" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    PutEnvironmentField v1, v0 layout=L3 field=2
+    v3 = NewClosure v1 function=f3
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3
+    PutEnvironmentField v1, v0 layout=L3 field=1
+    Return
+}
+function f3 name="closure" captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    v2 = GetEnvironmentField v0 layout=L3 field=1
+    v3 = CheckInitialized v2 name="uninitialized"
+    v4 = GetEnvironmentField v0 layout=L3 field=2
+    v5 = CheckInitialized v4 name="storedFirst"
+    v6 = Add v1, v3
+    v7 = Add v6, v5
+    Return v7
+}
+# CHECK: "filled" Double @
+# CHECK: "optional" OptionalDouble @
+# CHECK: "flag" OptionalBoolean @
+# CHECK: "deleted" OptionalDouble @
+# CHECK: "escaped" OptionalDouble @
+# CHECK: "captured" Double @
+# CHECK: "uninitialized" OptionalDouble @
+# CHECK: "storedFirst" Double @

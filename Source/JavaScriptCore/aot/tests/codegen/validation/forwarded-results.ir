@@ -1,0 +1,36 @@
+# A call with several results defines no operand of its own: ResultAt reads its results, and a Return forwards and checks each of them
+# RUN: compile
+# OPTIONS: validate check=validate-back-end disable=pass:InlineCalls
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="readsResults" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = CallDirect v0, v1 function=f2
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="use" [isFreeName]
+    v7 = Call v6, -, v3, v4
+    Return v7
+}
+function f2 name="forwardsResults" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = CallDirect v0, v1 function=f3
+    Return v2
+}
+function f3 name="pair" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = Results v0, v1
+    Return v2
+}

@@ -1,0 +1,49 @@
+# point = new Point; publish(new Other); either = input; either = point; either.extra = 1
+# The receiver of the store may be an object that nobody knows, or the point. The store lists the point among its receivers, so the name gets a field in the layout of the point.
+# The other object has escaped, and the store may reach it through the receiver that nobody knows. No store lists it, so its layout gets no field: there the name is an extra property.
+# (An object that has escaped is not listed beside the unknown object, which stands for it: the solver keeps its sets without what a placeholder in them covers.)
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point"
+# CHECK: fields=[{key="extra" {{*}} flags=[IsAddedLate
+# CHECK: layout L1 kind=Instance name="Other"
+# CHECK-NOT: IsAddedLate
+# CHECK: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1
+layout L1 kind=Instance name="Other" module=m0 constructor=f2
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Construct v2
+    v7 = Construct v5
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v7
+    v11 = PropGet v8 key="input" [isFreeName]
+    PutModuleVariable v11 variable=g0
+    PutModuleVariable v6 variable=g0
+    v14 = GetModuleVariable variable=g0
+    v15 = Integer integer=1
+    PropSet v14, v15 key="extra" mode=Strict
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}

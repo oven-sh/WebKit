@@ -1,0 +1,48 @@
+# A super call whose parent is known only at run time goes through the stub that enters a constructor of the program, like a construction whose callee is known only at run time. With an argument list it is an operation
+# RUN: generate-code calls
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK-LABEL: f1: size=
+# CHECK: stub ConstructValue.NewExpression x1
+# CHECK-NOT: stub ConstructValue.SuperCall
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operation operationAOTSuperConstruct x
+# CHECK: stub ConstructValue.SuperCall x1
+# CHECK-NOT: stub ConstructValue.NewExpression
+# CHECK-LABEL: f4: size=
+# CHECK: operation operationAOTSuperConstructList x1
+# CHECK-NOT: stub ConstructValue
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f2
+layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
+layout L2 kind=Instance name="DerivedWithList" base=L0 constructor=f4 flags=[HasHeritage]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="constructs" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+function f4 name="DerivedWithList" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = NewArray v2 contents=anything
+    v5 = SuperConstructList v3, v1, v4 layout=L2
+    Return v5
+}

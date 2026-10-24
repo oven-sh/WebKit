@@ -1,0 +1,568 @@
+# An async iteration over an array, a Map, a Set or a typed array steps as the sync iteration does and stands for the wrapper the language puts around the sync iterator, which is never made:
+# each value, also the one of the last step, is awaited with one turn of the job queue more than an await takes; what a step throws arrives one turn later; a close takes one turn.
+# The prototypes of these classes are closed for @@asyncIterator, so only the object itself can have one: its names are proven or tested, and the protocol asks where the test fails.
+# A generator keeps its wrapper, because the wrapper closes it one turn before the loop hears of a value that rejects.
+# In an async generator no await takes a turn more: a second await takes that turn. The iterator of such an arm does nothing with what `next` is given, so a value that is sent changes nothing
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(AWAITS): pass ExpandIteration
+# RUN(TURNS): pass ExpandIteration
+# RUN(PROVEN): pass ExpandProvenIterations ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 12
+# STATISTIC: IterationsExpandedGenerically = 2
+# CHECK: outcome: Changed
+# An arm that awaits has a close with an effect, so it waits for the pass that expands everything.
+# PROVEN: outcome: Unchanged
+# PROVEN-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Backwards" constructor=f12 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f13 mutability=Fixed}]}
+
+function f0 name="array" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>, v1: anything):
+    v2 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b7(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b6():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2 iteratorKind=Async
+    Jump -> next b5()
+  b5():
+    Return v7
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 iteratorKind=Async completion=Throw
+    Rethrow v10
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="array"
+# CHECK: b0(v0: Array<number, pristine[Names]>, v1: anything):
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[start0]]([[zero0]])
+# CHECK-NEXT: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next [[attempt0]]()
+# CHECK: b3() handler=b6():
+# CHECK-NEXT: v7: anything = Call v1, -, v6
+# CHECK: Branch v8 -> taken b4(), notTaken b1([[carried0]])
+# The wrapper finds no return method on the iterator of an array and answers with a fulfilled promise, which the close awaits.
+# CHECK: b4():
+# CHECK-NEXT: [[nothingAtBreak0]]: undefined = Undefined
+# CHECK-NEXT: = Await [[nothingAtBreak0]]
+# CHECK-NEXT: Jump
+# CHECK: b6() role=CleanupHandler:
+# CHECK-NEXT: v10: exception = CatchException
+# CHECK-NEXT: [[nothingAtThrow0]]: undefined = Undefined
+# CHECK-NEXT: = Await [[nothingAtThrow0]]
+# CHECK-NEXT: Jump -> next [[rethrows0]]()
+# CHECK: Jump -> next b1([[first0]])
+# CHECK: [[start0]]([[first0]]: int[0, 9007199254740991]):
+# CHECK: [[rethrows0]]():
+# CHECK-NEXT: Rethrow v10
+# CHECK: [[after0]](v5: boolean, v6: anything):
+# CHECK-NEXT: = Results v5, v6
+# CHECK-NEXT: Branch v5 -> taken b7(), notTaken b2()
+# Every path of the step ends here, done or not. No handler of the step covers the await: a value that rejects has taken its two turns.
+# CHECK-NEXT: [[settled0]]([[done0]]: boolean, [[value0]]: anything, [[carried0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: [[awaited0]]{{*}} = Await [[value0]] [takesExtraTurn]
+# CHECK-NEXT: Jump -> next [[after0]]([[done0]], [[awaited0]])
+# CHECK-NEXT: [[thrown0]]() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[exception0]]: exception = CatchException
+# CHECK-NEXT: [[nothingThrown0]]: undefined = Undefined
+# CHECK-NEXT: = Await [[nothingThrown0]]
+# CHECK-NEXT: Rethrow [[exception0]]
+# CHECK-NEXT: [[attempt0]]() handler=[[thrown0]]():
+# CHECK-NEXT: [[length0]]: anything = PropGet v0 key="length"
+# CHECK-NEXT: [[limit0]]: int[0, 9007199254740991] = ToLength [[length0]]
+# CHECK-NEXT: [[inRange0]]: boolean = Less [[index0]], [[limit0]]
+# CHECK-NEXT: Branch [[inRange0]] -> taken [[read0]](| 0), notTaken [[end0]](| 0)
+# CHECK-NEXT: [[read0]]([[proven0]]: int[0, 9007199254740990]) handler=[[thrown0]]():
+# CHECK-NEXT: [[element0]]: {{*}} = ElemGet v0, [[proven0]] [keyIsIntegral]
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next0]]: int[1, 9007199254740991] = Add [[proven0]], [[one0]]
+# CHECK: [[end0]]({{*}}) handler=[[thrown0]]():
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[settled0]]([[yes0]], [[nothing0]], [[index0]])
+# A covered block ends behind what it defines for the next step.
+# CHECK: handler=[[thrown0]]():
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[settled0]]([[no0]], [[element0]], [[next0]])
+# ABSENT-LABEL: function f0 name="array"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: StepAsyncGenerator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: role=IterationCleanup
+# ABSENT-NOT: subject=
+# AWAITS-LABEL: function f0 name="array"
+# AWAITS-COUNT-4: = Await
+# AWAITS-NOT: = Await
+# TURNS-LABEL: function f0 name="array"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f1 name="map" flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Map<string, number, pristine[Names]>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# What is awaited is the pair.
+# CHECK-LABEL: function f1 name="map"
+# CHECK: b0(v0: Map<string, number, pristine[Names]>):
+# CHECK-NEXT: = CollectionTable v0
+# CHECK-NEXT: = Integer
+# CHECK-NEXT: Jump
+# CHECK-NEXT: b1([[table1]]: anything, [[position1]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next [[attempt1]]()
+# CHECK: [[settled1]]([[done1]]: boolean, [[value1]]: anything, {{*}}):
+# CHECK-NEXT: [[awaited1]]{{*}} = Await [[value1]] [takesExtraTurn]
+# CHECK-NEXT: Jump -> next {{*}}([[done1]], [[awaited1]])
+# CHECK-NEXT: [[thrown1]]() role=CleanupHandler frequency=Rare:
+# CHECK: [[attempt1]]() handler=[[thrown1]]():
+# CHECK-NEXT: = MapNext v0, [[table1]], [[position1]]
+# CHECK: [[pair1]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: Jump -> next [[settled1]]({{*}}, [[pair1]],
+# ABSENT-LABEL: function f1 name="map"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# AWAITS-LABEL: function f1 name="map"
+# AWAITS-COUNT-2: = Await
+# AWAITS-NOT: = Await
+# TURNS-LABEL: function f1 name="map"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f2 name="set" flags=[IsAsync] parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="set"
+# CHECK: b0(v0: Set<number, pristine[Names]>):
+# CHECK-NEXT: = CollectionTable v0
+# CHECK: b1([[table2]]: anything, [[position2]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next [[attempt2]]()
+# CHECK: = Await {{*}} [takesExtraTurn]
+# CHECK: [[thrown2]]() role=CleanupHandler frequency=Rare:
+# CHECK: [[attempt2]]() handler=[[thrown2]]():
+# CHECK-NEXT: = SetNext v0, [[table2]], [[position2]]
+# ABSENT-LABEL: function f2 name="set"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# AWAITS-LABEL: function f2 name="set"
+# AWAITS-COUNT-2: = Await
+# AWAITS-NOT: = Await
+# TURNS-LABEL: function f2 name="set"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f3 name="uint8Array" flags=[IsAsync] parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Uint8Array<number, pristine[Names]>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# The call that makes the iterator throws at once for a detached view. A step throws into the promise of the wrapper, so its test is covered.
+# CHECK-LABEL: function f3 name="uint8Array"
+# CHECK: b0(v0: Uint8Array<number, pristine[Names]>):
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK-NEXT: [[zero3]]: 0 = Integer
+# CHECK-NEXT: Jump -> next {{*}}([[zero3]])
+# CHECK-NEXT: b1([[index3]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next [[attempt3]]()
+# CHECK: = Await {{*}} [takesExtraTurn]
+# CHECK: [[thrown3]]() role=CleanupHandler frequency=Rare:
+# CHECK: [[attempt3]]() handler=[[thrown3]]():
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK-NEXT: [[length3]]: {{*}} = GetTypedArrayLength v0 typedArrayType=2
+# CHECK-NEXT: = Less [[index3]], [[length3]]
+# CHECK: = GetTypedArrayElement v0, {{*}} typedArrayType=2 [keyIsIntegral]
+# ABSENT-LABEL: function f3 name="uint8Array"
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# AWAITS-LABEL: function f3 name="uint8Array"
+# AWAITS-COUNT-2: = Await
+# AWAITS-NOT: = Await
+# TURNS-LABEL: function f3 name="uint8Array"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f4 name="arrayOrSet" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>|Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>|Set<number, pristine[Names]>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f4 name="arrayOrSet"
+# CHECK: [[isArray4]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken [[set4]](| 0)
+# CHECK: [[array4]]([[arraySubject4]]: Array<number, pristine[Names]>):
+# CHECK: [[set4]]([[setSubject4]]: Set<number, pristine[Names]>) frequency=Unlikely:
+# CHECK-NEXT: = CollectionTable [[setSubject4]]
+# ABSENT-LABEL: function f4 name="arrayOrSet"
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# AWAITS-LABEL: function f4 name="arrayOrSet"
+# AWAITS-COUNT-4: = Await
+# AWAITS-NOT: = Await
+# TURNS-LABEL: function f4 name="arrayOrSet"
+# TURNS-COUNT-2: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f5 name="namesAreTested" flags=[IsAsync] parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# An array with an @@asyncIterator or an @@iterator of its own fails the test, and the protocol asks it for both.
+# CHECK-LABEL: function f5 name="namesAreTested"
+# CHECK: b0(v0: Array<number>):
+# CHECK-NEXT: [[isPristine5]]: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine5]] -> taken [[pristine5]](| 0), notTaken [[changed5]]()
+# CHECK: [[protocol5]]([[iterable5]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[iterable5]] key=@@asyncIterator
+# CHECK: [[changed5]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol5]](v0)
+# The shared function opens the sync iterator and wraps it.
+# CHECK: : object = CallDirect [[iterable5]] function={{*}} [isNeverInlined]
+# ABSENT-LABEL: function f5 name="namesAreTested"
+# ABSENT-NOT: TypeTest v0
+# AWAITS-LABEL: function f5 name="namesAreTested"
+# TURNS-LABEL: function f5 name="namesAreTested"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f6 name="expectedArray" flags=[IsAsync] parameters=[{type=Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f6 name="expectedArray"
+# CHECK: b0(v0: anything ~ Array<number>):
+# CHECK-NEXT: [[isArray6]]: {{*}} = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray6]] -> taken [[array6]](| 0), notTaken [[rest6]](| 0)
+# CHECK: [[protocol6]]([[iterable6]]: anything ~ Array<number>) frequency=Unlikely:
+# CHECK-NEXT: [[object6]]: {{*}} = RequireObjectCoercible [[iterable6]] nullishAccess=Iterate
+# CHECK-NEXT: = PropGet [[object6]] key=@@asyncIterator
+# CHECK: [[array6]]([[subject6]]: Array<number>):
+# CHECK-NEXT: = IsPristine [[subject6]] builtinClass=Array aspects=[Names]
+# CHECK: [[rest6]]([[other6]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol6]]([[other6]])
+# ABSENT-LABEL: function f6 name="expectedArray"
+# ABSENT-NOT: TypeTest v0 testedType=AsyncGenerator
+# AWAITS-LABEL: function f6 name="expectedArray"
+# TURNS-LABEL: function f6 name="expectedArray"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f7 name="unknown" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# What nobody knows anything about is tested for an async generator alone.
+# CHECK-LABEL: function f7 name="unknown"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=AsyncGenerator
+# ABSENT-LABEL: function f7 name="unknown"
+# ABSENT-NOT: testedType=Array
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: ElemGet
+# AWAITS-LABEL: function f7 name="unknown"
+# TURNS-LABEL: function f7 name="unknown"
+# TURNS-NOT: [takesExtraTurn]
+
+function f8 name="generator" flags=[IsAsync] parameters=[{type=Generator<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Generator<anything, pristine[Storage, Names]>):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# The wrapper is made and stepped: passes/expand-iteration-async.ir
+# CHECK-LABEL: function f8 name="generator"
+# CHECK: b0(v0: Generator
+# CHECK-NEXT: = PropGet v0 key=@@asyncIterator
+# CHECK: : object = CallDirect v0 function={{*}} [isNeverInlined]
+# CHECK: = StepAsyncGenerator
+# ABSENT-LABEL: function f8 name="generator"
+# ABSENT-NOT: IsUnmodifiedGenerator
+# ABSENT-NOT: = StepGenerator
+# AWAITS-LABEL: function f8 name="generator"
+# TURNS-LABEL: function f8 name="generator"
+# TURNS-NOT: [takesExtraTurn]
+
+function f9 name="subclassWithItsOwnIterator" flags=[IsAsync] parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f9 name="subclassWithItsOwnIterator"
+# CHECK: b0(v0: L0
+# CHECK-NEXT: = PropGet v0 key=@@asyncIterator
+# CHECK: = PropGet v0 key=@@iterator
+# ABSENT-LABEL: function f9 name="subclassWithItsOwnIterator"
+# ABSENT-NOT: testedType=Array
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: ElemGet
+# AWAITS-LABEL: function f9 name="subclassWithItsOwnIterator"
+# TURNS-LABEL: function f9 name="subclassWithItsOwnIterator"
+# TURNS-NOT: [takesExtraTurn]
+
+function f10 name="valueIsSent" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>, v1: anything):
+    v2 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2, v1 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+}
+# The wrapper hands what is sent to `next` of the array's iterator, which does nothing with it.
+# CHECK-LABEL: function f10 name="valueIsSent"
+# CHECK: = Await {{*}} [takesExtraTurn]
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
+# ABSENT-LABEL: function f10 name="valueIsSent"
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# AWAITS-LABEL: function f10 name="valueIsSent"
+# TURNS-LABEL: function f10 name="valueIsSent"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f11 name="inAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: function, v1: Array<number, pristine[Names]>):
+    v2 = IteratorOpen v1 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+}
+# The value is awaited under the handler that waits a turn before it rethrows, and a second await takes the turn behind a value that is fulfilled.
+# CHECK-LABEL: function f11 name="inAsyncGenerator"
+# CHECK: [[thrown11]]() role=CleanupHandler frequency=Rare:
+# CHECK: = ElemGet v1, {{*}} [keyIsIntegral]
+# CHECK: () handler=[[thrown11]]():
+# CHECK-NEXT: [[awaited11]]: anything = Await
+# CHECK-NEXT: Jump -> next [[turn11]]([[awaited11]])
+# CHECK-NEXT: [[turn11]]([[value11]]: anything):
+# CHECK-NEXT: [[nothing11]]: undefined = Undefined
+# CHECK-NEXT: = Await [[nothing11]]
+# CHECK-NEXT: Jump -> next {{*}}({{*}}, [[value11]])
+# ABSENT-LABEL: function f11 name="inAsyncGenerator"
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# AWAITS-LABEL: function f11 name="inAsyncGenerator"
+# TURNS-LABEL: function f11 name="inAsyncGenerator"
+# TURNS-NOT: [takesExtraTurn]
+
+function f12 name="Backwards" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f13 name="iterator" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f14 name="inBody" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1}
+function f15 name="inAsyncGeneratorBody" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f15 body=f17 promiseType=Promise promiseParameter=2}
+# CHECK-LABEL: function f12 name="Backwards"
+# ABSENT-LABEL: function f12 name="Backwards"
+# AWAITS-LABEL: function f12 name="Backwards"
+# TURNS-LABEL: function f12 name="Backwards"
+
+function f16 name="inBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f14} creator=Coroutine{kind=AsyncFunction ramp=f14 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1} {
+  b0(v0: Array<number, pristine[Names]>, v1: undefined|Promise):
+    v2 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    v7 = ToBoolean v6
+    Branch v7 -> taken b3(), notTaken b1()
+  b3():
+    IteratorClose v2 iteratorKind=Async
+    Jump -> next b4()
+  b4():
+    v9 = ReturnAsyncResult v1, v6
+    Return v9
+  b5():
+    v10 = Undefined
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+}
+# The body of an async function awaits by saving its frame, and the flag goes along.
+# CHECK-LABEL: function f16 name="inBody"
+# CHECK: b3():
+# CHECK-NEXT: [[nothingAtBreak16]]: undefined = Undefined
+# CHECK-NEXT: = AwaitBySavingFrame [[nothingAtBreak16]], v1
+# CHECK: ([[done16]]: boolean, [[value16]]: anything, {{*}}):
+# CHECK-NEXT: [[awaited16]]{{*}} = AwaitBySavingFrame [[value16]], v1 [takesExtraTurn]
+# CHECK-NEXT: Jump -> next {{*}}([[done16]], [[awaited16]])
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
+# ABSENT-LABEL: function f16 name="inBody"
+# ABSENT-NOT: = Await v
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: StepAsyncGenerator
+# AWAITS-LABEL: function f16 name="inBody"
+# AWAITS-COUNT-3: = AwaitBySavingFrame
+# AWAITS-NOT: = AwaitBySavingFrame
+# TURNS-LABEL: function f16 name="inBody"
+# TURNS-COUNT-1: [takesExtraTurn]
+# TURNS-NOT: [takesExtraTurn]
+
+function f17 name="inAsyncGeneratorBody" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{kind=AsyncGenerator ramp=f15 body=f17 promiseType=Promise promiseParameter=2} {
+  b0(v0: function, v1: Array<number, pristine[Names]>, v2: AsyncGenerator):
+    v3 = IteratorOpen v1 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3 iteratorKind=Async
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b1()
+  b2():
+    Return v7
+}
+# CHECK-LABEL: function f17 name="inAsyncGeneratorBody"
+# CHECK: = ElemGet v1, {{*}} [keyIsIntegral]
+# CHECK: [[awaited17]]: anything = AwaitBySavingFrame {{*}}, v2
+# CHECK: [[nothing17]]: undefined = Undefined
+# CHECK-NEXT: = AwaitBySavingFrame [[nothing17]], v2
+# ABSENT-LABEL: function f17 name="inAsyncGeneratorBody"
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: StepAsyncGenerator
+# AWAITS-LABEL: function f17 name="inAsyncGeneratorBody"
+# TURNS-LABEL: function f17 name="inAsyncGeneratorBody"
+# TURNS-NOT: [takesExtraTurn]
+
+# CHECK-LABEL: name="openWrappedIterator"
+# CHECK: [[iterator18]]: object = RequireObject
+# CHECK-NEXT: [[next18]]: anything = PropGet [[iterator18]] key="next"
+# CHECK-NEXT: = CreateAsyncFromSyncIterator [[iterator18]], [[next18]]
+# ABSENT-LABEL: name="openWrappedIterator"
+# AWAITS-LABEL: name="openWrappedIterator"
+# TURNS-LABEL: name="openWrappedIterator"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: role=IterationCleanup

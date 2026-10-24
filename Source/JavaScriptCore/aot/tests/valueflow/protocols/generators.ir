@@ -1,0 +1,70 @@
+# function* first() { yield one; return returned }  function* second() { (yield two)() }  for (const f of first()) f(); g = second(); g.next().value(); g.next(sent)
+# A loop over a generator finds what the body of that generator yields and not what it returns. A step by hand answers an iterator result of its own, and what it hands in comes out of the yield.
+# Neither generator escapes.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> f3
+# CHECK: f0 v13 -> f4
+# CHECK: f2 v5 -> f6
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+# UNREACHED-NOT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = IteratorOpen v1
+    v3 = IteratorResume v2
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = Undefined
+    v7 = Call v5
+    v8 = NewClosure function=f2
+    v9 = Call v8
+    v10 = PropGet v9 key="next"
+    v11 = Call v10, v9 calleeKey="next"
+    v12 = PropGet v11 key="value"
+    v13 = Call v12
+    v14 = NewClosure function=f6
+    v15 = Call v10, v9, v14 calleeKey="next"
+    Return
+}
+function f1 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f3
+    v3 = Yield v2
+    v4 = NewClosure function=f5
+    Return v4
+}
+function f2 name="second" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f4
+    v3 = Yield v2
+    v4 = ResultAt v3
+    v5 = Call v4
+    Return
+}
+function f3 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="returned" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="sent" results=[{type=anything}] {
+  b0():
+    Return
+}

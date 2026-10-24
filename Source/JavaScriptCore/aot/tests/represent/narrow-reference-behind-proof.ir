@@ -1,0 +1,114 @@
+# A narrow reference that a proof narrows to objects stays narrow through the proof, so the code that decodes it has no case for a marker. Without the proof it is decoded as what the slot may hold
+# Hot, so that the entrypoint takes the body in: the budget for warm code (InlineBudgetWarmBytes) leaves a body of this size where it is, and the entrypoint calls it
+# OPTIONS: references=narrow heat=EverythingIsHot
+# RUN: pipeline ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="next" declared={type=undefined|null|L0} flags=[IsRequired]}, {key="previous" declared={type=undefined|null|L0} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="FilledOnOnePath" constructor=f3 fields=[{key="next" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="previous" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="filled" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="filledOnOnePath" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Construct v9, -, v1
+    PutModuleVariable v10 variable=g1
+    v12 = PropGet v0 key="keep" [isFreeName]
+    v13 = NewClosure function=f5
+    v14 = CallDirect function=f6 [isNeverInlined]
+    v15 = ToBoolean v14
+    v16 = Call v12, -, v13, v15
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v3 key="previous" mode=Strict
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="c" mode=Strict
+    Return v3
+}
+function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Undefined
+    PropDefine v0, v1 key="next"
+    PropDefine v0, v1 key="previous"
+    Return
+}
+function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="c" mode=Strict
+    v9 = ToBoolean v1
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v3 key="previous" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = Undefined
+    PropDefine v0, v1 key="next"
+    PropDefine v0, v1 key="previous"
+    Return
+}
+function f5 name="readFilled" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="previous"
+    v3 = PropGet v2 key="a"
+    v4 = PropGet v2 key="b"
+    v5 = PropGet v2 key="c"
+    v6 = Add v3, v4
+    v7 = Add v6, v5
+    Return v7
+}
+function f6 name="readFilledOnOnePath" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v0 key="previous"
+    v3 = PropGet v0 key="a"
+    v4 = PropGet v0 key="b"
+    v5 = PropGet v0 key="c"
+    v6 = Add v3, v4
+    v7 = Add v6, v5
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(v1), notTaken b1(v2)
+  b1(v9: anything):
+    Return v9
+}
+# CHECK-LABEL: function f6 name="readFilledOnOnePath"
+# CHECK: undefined|L1 @Cell32 = GetSlot {{*}} key="next"
+# CHECK: b1([[optional]]: undefined|L1 @Cell32):
+# CHECK-NEXT: Return [[optional]]
+# CHECK-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
+# CHECK: [[next]]: undefined|L0 @Cell32 = GetSlot {{*}} key="next"
+# CHECK-NEXT: [[proven]]: L0 @Cell32 = AssumeType [[next]] castType=L0
+# CHECK-NEXT: [[previous]]: undefined|L0 @Cell32 = GetSlot [[proven]] key="previous"
+# CHECK-NEXT: [[provenPrevious]]: L0 @Cell32 = AssumeType [[previous]] castType=L0
+# CHECK-NEXT: = GetSlot [[provenPrevious]] key="a"

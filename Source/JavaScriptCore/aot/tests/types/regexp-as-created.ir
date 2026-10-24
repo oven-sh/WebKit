@@ -1,0 +1,19 @@
+# One site of a literal stays as created and another does not: where their values meet nothing is known, and a value that is in both types has the proof of either
+# FORM: Prepared
+# RUN: union
+# RUN(MEET): intersect
+# RUN(SUBSET): subset
+# CHECK: t0 | t1 = RegExp<"a"[], pristine[Storage, Names]>
+# CHECK: t0 | t2 = RegExp<"a"[], "b"[], pristine[Storage, Names, AsCreated]>
+# CHECK: t0 | t3 = RegExp<pristine[Names, AsCreated]>
+# CHECK: laws hold
+# MEET: t0 & t1 = RegExp<"a"[], pristine[Storage, Names, AsCreated]>
+# MEET: t1 & t3 = RegExp<"a"[], pristine[Storage, Names, AsCreated]>
+# SUBSET: t0 <= t1: yes overlaps: yes
+# SUBSET: t1 <= t0: no overlaps: yes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=RegExp<"a"[], pristine[Storage, Names, AsCreated]>}, {type=RegExp<"a"[], pristine[Storage, Names]>}, {type=RegExp<"b"[], pristine[Storage, Names, AsCreated]>}, {type=RegExp<pristine[Names, AsCreated]>}] results=[{type=undefined}] {
+  b0(v0: RegExp<"a"[], pristine[Storage, Names, AsCreated]>, v1: RegExp<"a"[], pristine[Storage, Names]>, v2: RegExp<"b"[], pristine[Storage, Names, AsCreated]>, v3: RegExp<pristine[Names, AsCreated]>):
+    Return
+}

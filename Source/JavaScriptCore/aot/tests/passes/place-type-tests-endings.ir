@@ -1,0 +1,180 @@
+# Which writer between two uses ends a proof, and which leaves it alone
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v3:v6 site=v5:v6 effects=own
+# RUN(F1): test-placement function=f1 site=v3:v6 site=v5:v6 effects=own
+# RUN(F2): test-placement function=f2 site=v3:v6 site=v5:v6 effects=own
+# RUN(F3): test-placement function=f3 site=v3:v6 site=v5:v6 effects=own
+# RUN(F4): test-placement function=f4 site=v3:v6 site=v5:v6 effects=own
+# RUN(F5): test-placement function=f5 site=v3:v6 site=v5:v6 effects=own
+# RUN(F6): test-placement function=f6 site=v3:v6 site=v5:v6 effects=own
+# RUN(F7): test-placement function=f7 site=v2:v5 site=v4:v5 effects=own
+# RUN(F8): test-placement function=f8 site=v2:v5 site=v4:v5 effects=own
+# RUN(F9): test-placement function=f9 site=v4:v7 site=v6:v7 effects=own
+# RUN(F10): test-placement function=f10 site=v4:v7 site=v6:v7 effects=own
+# RUN(F11): test-placement function=f11 site=v1:v3 site=v2:v3 effects=own
+# RUN(F12): test-placement function=f12 site=v1:v3 site=v2:v3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+layout L1 kind=Instance name="First" constructor=f13
+layout L2 kind=Instance name="Second" constructor=f14
+
+function f0 name="slotStoreKeepsShape" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: number):
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
+}
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3 v5; cloned 8
+# F0-NOT: stretch
+
+function f1 name="slotStoreLeavesItsSlotFilled" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: number):
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# F1: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3 v5; cloned 8
+# F1-NOT: stretch
+
+function f2 name="slotStoreKeepsOtherSlot" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: number):
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
+    Return v5
+}
+# F2: stretch 0: test IsSlotFilled v0 key="y" receivers=[L0] level=Proven before v3; uses v3 v5; cloned 8
+# F2-NOT: stretch
+
+function f3 name="addingStoreEndsKeyOrder" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: number):
+    v3 = StrictEq v0, v0
+    PutSlotOrAdd v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Return v5
+}
+# F3: stretch 0: test HasKeyOrder v0 layout=L0 fields=[0, 1] before v3; uses v3; cloned 0
+# F3-NEXT: stretch 1: test HasKeyOrder v0 layout=L0 fields=[0, 1] before v5; uses v5; cloned 0
+# F3-NOT: stretch
+
+function f4 name="slotStoreKeepsKeyOrder" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: number):
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Return v5
+}
+# F4: stretch 0: test HasKeyOrder v0 layout=L0 fields=[0, 1] before v3; uses v3 v5; cloned 8
+# F4-NOT: stretch
+
+function f5 name="appendToFreshArray" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = StrictEq v0, v0
+    AppendElement v2, v1
+    v5 = StrictEq v0, v0
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v5
+}
+# F5: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v3; uses v3 v5; cloned 32
+# F5-NOT: stretch
+
+function f6 name="appendToOtherParameter" parameters=[{type=Array<anything>}, {type=anything}, {type=Array<anything>}] results=[{type=boolean}] {
+  b0(v0: Array<anything>, v1: anything, v2: Array<anything>):
+    v3 = StrictEq v0, v0
+    AppendElement v2, v1
+    v5 = StrictEq v0, v0
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v5
+}
+# F6: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v3; uses v3; cloned 0
+# F6-NEXT: stretch 1: test HasArrayStorage v0 arrayStorage=Contiguous before v5; uses v5; cloned 0
+# F6-NOT: stretch
+
+function f7 name="callEndsArrayStorage" parameters=[{type=Array<anything>}, {type=function}] results=[{type=boolean}] {
+  b0(v0: Array<anything>, v1: function):
+    v2 = StrictEq v0, v0
+    v3 = Call v1
+    v4 = StrictEq v0, v0
+    v5 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v4
+}
+# F7: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v2; uses v2; cloned 0
+# F7-NEXT: stretch 1: test HasArrayStorage v0 arrayStorage=Contiguous before v4; uses v4; cloned 0
+# F7-NOT: stretch
+
+function f8 name="callLeavesShapeAlone" parameters=[{type=object}, {type=function}] results=[{type=boolean}] {
+  b0(v0: object, v1: function):
+    v2 = StrictEq v0, v0
+    v3 = Call v1
+    v4 = StrictEq v0, v0
+    v5 = ShapeTest v0 layouts=[L0]
+    Return v4
+}
+# F8: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2 v4; cloned 32
+# F8-NOT: stretch
+
+function f9 name="otherClassKeepsMemberGuard" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    v2 = NewClosure function=f14
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Add v0, v0
+    v5 = NewClass v2 layout=L2
+    v6 = Add v0, v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v7 = AreMembersUnchanged conditions=[{layout=L1 key="m"}]
+    Return v6
+}
+# F9: stretch 0: test AreMembersUnchanged conditions=[{layout=L1 key="m"}] on b0.0; uses v4 v6; cloned 44
+# F9-NOT: stretch
+
+function f10 name="sameClassEndsMemberGuard" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    v2 = NewClosure function=f13
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Add v0, v0
+    v5 = NewClass v2 layout=L1
+    v6 = Add v0, v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v7 = AreMembersUnchanged conditions=[{layout=L1 key="m"}]
+    Return v6
+}
+# F10: stretch 0: test AreMembersUnchanged conditions=[{layout=L1 key="m"}] on b0.0; test AreMembersUnchanged conditions=[{layout=L1 key="m"}] before v6; uses v4 v6; cloned 8
+# F10-NOT: stretch
+
+function f11 name="useWithItsOwnEffectsEndsTheProof" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v2
+}
+# F11: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v1; test HasArrayStorage v0 arrayStorage=Contiguous before v2; uses v1 v2; cloned 0
+# F11-NOT: stretch
+
+function f12 name="useWithoutEffectsKeepsTheProof" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v2
+}
+# F12: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v1; uses v1 v2; cloned 0
+# F12-NOT: stretch
+
+function f13 name="First" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L1
+function f14 name="Second" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L2

@@ -1,0 +1,109 @@
+# A test of member conditions that has passed answers for each condition that it lists. A site behind it whose conditions are all among them gets no test of its own,
+# whether the test in front is placed in the same run of the pass (for another object, whose sites share it) or stands in the function already.
+# Where unknown code runs in between the site is tested again. A test that lists only some of what the site asks, or that stands on one way to the site only, answers nothing.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="a" declared={type=anything} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=anything} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[IsConstructorFunction] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed}
+function f0 name="Point" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+  b0(v0: L0):
+    Return
+}
+
+function f1 name="placed-in-the-same-run" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = NewObject layout=L0
+    PropSet v1, v0 key="a"
+    PropSet v1, v0 key="b"
+    PropSet v2, v0 key="a"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="placed-in-the-same-run"
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: PutSlotOrAdd v2, {{*}}, v0 key="a" receivers=[L0] level=Expected
+# CHECK-NOT: AreMembersUnchanged
+
+function f2 name="placed-by-an-earlier-run" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v1, v0 key="a"
+    Return v1
+  b2() frequency=Unlikely:
+    Return v0
+}
+# CHECK-LABEL: function f2 name="placed-by-an-earlier-run"
+# CHECK: v2: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: PutSlotOrAdd v1, {{*}}, v0 key="a" receivers=[L0] level=Expected
+# CHECK-NOT: AreMembersUnchanged
+
+function f3 name="in-a-block-behind" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L0
+    v3 = NewObject layout=L0
+    PropSet v2, v0 key="a"
+    PropSet v2, v0 key="b"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v0 key="b"
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="in-a-block-behind"
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: PutSlotOrAdd v3, {{*}}, v0 key="b" receivers=[L0] level=Expected
+# CHECK-NOT: AreMembersUnchanged
+
+function f4 name="unknown-code-in-between" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = NewObject layout=L0
+    PropSet v1, v0 key="a"
+    PropSet v1, v0 key="b"
+    v5 = Call v0
+    PropSet v2, v0 key="a"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="unknown-code-in-between"
+# CHECK-COUNT-2: = AreMembersUnchanged
+
+function f5 name="lists-only-a-part" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0
+    v2 = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v1, v0 key="b"
+    Return v1
+  b2() frequency=Unlikely:
+    Return v0
+}
+# CHECK-LABEL: function f5 name="lists-only-a-part"
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}]
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="b"}]
+
+function f6 name="on-one-way-only" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L0
+    v3 = NewObject layout=L0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v2, v0 key="a"
+    PropSet v2, v0 key="b"
+    Jump -> next b2()
+  b2():
+    PropSet v3, v0 key="a"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="on-one-way-only"
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}, {kind=MemberPassedByStores layout=L0 key="b"}]
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="a"}]

@@ -1,0 +1,66 @@
+# Where an image may have several instances: a function that a module declares has one closure, the cell of the closure table, so the test for it compares two addresses. A function whose closures are allocated is tested by its Structure and function number
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=flow:ReachedFunctions
+# RUN: generate-code
+# RUN(SAME): generate-code
+# RUN(PLACE): place
+# RUN(IR): pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="declared" module=m0 declared={type=function} initialization=Function function=f1
+variable g1 name="declaredAndAllocated" module=m0 declared={type=function} initialization=Function function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = NewClosure function=f2
+    v2 = GetModuleVariable variable=g1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    v6 = NewClosure function=f6
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v0, v1, v2, v3, v4, v5, v6
+    Return v9
+}
+function f1 name="declared" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="allocated" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="declaredAndAllocated" results=[{type=anything}] {
+  b0():
+    Return
+}
+# PLACE: f1 {{*}}hasOnlyTableCell
+# PLACE-NOT: hasOnlyTableCell
+function f4 name="callsDeclared" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f1):
+    v1 = Call v0
+    Return v1
+}
+function f5 name="callsAllocated" parameters=[{type=f2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f2):
+    v1 = Call v0
+    Return v1
+}
+function f6 name="callsDeclaredAndAllocated" parameters=[{type=f3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: f3):
+    v1 = Call v0
+    Return v1
+}
+# IR-LABEL: function f4 name="callsDeclared"
+# IR: = IsClosureOf v0 function=f1
+# IR-LABEL: function f5 name="callsAllocated"
+# IR: = IsClosureOf v0 function=f2
+# IR-LABEL: function f6 name="callsDeclaredAndAllocated"
+# IR: = IsClosureOf v0 function=f3
+# CHECK: f4: size=[[sizeOfAddressTest]] frame=
+# CHECK-NOT: size=[[sizeOfAddressTest]] frame=
+# CHECK: f8: size=
+# SAME: f5: size=[[sizeOfGeneralTest]] frame=
+# SAME-NEXT: f6: size=[[sizeOfGeneralTest]] frame=

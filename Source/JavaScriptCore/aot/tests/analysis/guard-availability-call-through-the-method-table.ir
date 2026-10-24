@@ -1,0 +1,64 @@
+# A call through the method table that lists everything its receiver can find under the name ends a guard on an array only where one of those may write the array.
+# The lookup of the selector calls whatever it reads under the name. It counts where the list is not whole
+# FORM: Prepared
+# RUN: guards points summaries
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="Square" constructor=f0 flow={baseState=None allocationClasses=[0]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f1}] namedMembers=[{key="scaled" function=f1}]}
+layout L1 kind=Instance name="Circle" constructor=f2 flow={baseState=None allocationClasses=[1]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f3}] namedMembers=[{key="scaled" function=f3}]}
+function f0 name="Square" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="scaled" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything ~ number):
+    Return v1
+}
+function f2 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything ~ number):
+    Return v1
+}
+function f4 name="theListIsWhole" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0|L1, v2: number):
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = CallTable v1, v2 function=f6 key="scaled" receivers=[L0, L1] entrypoints=[f7, f8] callees=[f1, f3]
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: [v4]
+
+function f5 name="theListIsOpen" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0|L1, v2: number):
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = CallTable v1, v2 function=f6 key="scaled" receivers=[L0, L1] entrypoints=[f7, f8] callees=[f1, ..]
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []
+
+function f6 role=TableLookup flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={parameter=2147483649} creator=TableLookup{key="scaled"} {
+  b0(v0: object, v1: number):
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled" [isNeverInlined]
+    Return v3
+}
+function f7 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f1 parameter=2147483649} creator=Entrypoint{target=f1 arguments=Registers} {
+  b0(v0: object, v1: number):
+    v2 = AssumeType v0 castType=L0
+    v3 = CallDirect v2, v1 function=f1
+    ReturnCall v3 requirement=Allowed
+}
+function f8 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f3 parameter=2147483649} creator=Entrypoint{target=f3 arguments=Registers} {
+  b0(v0: object, v1: number):
+    v2 = AssumeType v0 castType=L1
+    v3 = CallDirect v2, v1 function=f3
+    ReturnCall v3 requirement=Allowed
+}

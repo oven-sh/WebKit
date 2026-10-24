@@ -1,0 +1,35 @@
+# home = { go() { super.who() } }; base = { who: one }; unknown = somethingNoTableLists; unknown.held = home; unknown.__proto__ = base; home.go()
+# What lies above a home object that has escaped may have been stored through the unknown object.
+# RUN: valueflow-solve calls
+# CHECK: f2 v4 -> f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Home"
+layout L1 name="Base" fields=[{key="who" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = NewClosure v0 function=f2
+    PropDefine v0, v3 key="go"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="somethingThatNoTableLists" [isFreeName]
+    PropSet v6, v0 key="held" mode=Strict
+    PropSet v6, v2 key="__proto__" mode=Strict
+    v9 = PropGet v0 key="go"
+    v10 = Call v9, v0
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="go" kind=Method flags=[HasThis] captures=[{type=object}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperGet v2, v1 key="who"
+    v4 = Call v3, v1
+    Return
+}

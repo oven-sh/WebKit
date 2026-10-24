@@ -1,0 +1,71 @@
+# A variable is undefined or a literal assigned in a loop. The first visit of the solver meets the check of the variable with `undefined` alone and leaves it in place, a later one interprets it: where blocks behind the check meet again, the check stays a value that stands for the cell
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: AllocationsSunk = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="usedBehindMerge" parameters=[{type=anything}, {type=anything}, {type=int[0, 2000]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: int[0, 2000], v3: boolean):
+    v4 = Undefined
+    v5 = Integer
+    Jump -> next b1(v4, v5)
+  b1(v6: undefined|Array, v7: int[0, 2000]):
+    LoopHint
+    v9 = Less v7, v2
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10: int[0, 1999]):
+    v11 = NewArray v0, v1 contents=anything
+    v12 = Increment v10
+    Jump -> next b1(v11, v12)
+  b3():
+    v13 = RequireObjectCoercible v6
+    v14 = Call v0, -, v13
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6(v0)
+  b5():
+    Jump -> next b6(v1)
+  b6(v15: anything):
+    v16 = Call v15, -, v13
+    Return v16
+}
+# CHECK-LABEL: function f0 name="usedBehindMerge"
+# CHECK: b2(
+# CHECK-NOT: NewArray
+# CHECK: b6(v15: anything):
+# CHECK-NEXT: v16: anything = Call v15, -, v13
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[missing0]]: undefined = Undefined
+# CHECK-NEXT: never = RequireObjectCoercible [[missing0]]
+# CHECK-NEXT: Unreachable
+# CHECK: [[array0]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: v13: Array = Upcast [[array0]] castType=Array
+# CHECK-NEXT: v14: anything = Call v0, -, v13
+
+function f1 name="usedInOneBlock" parameters=[{type=anything}, {type=anything}, {type=int[0, 2000]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: int[0, 2000]):
+    v3 = Undefined
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5: undefined|Array, v6: int[0, 2000]):
+    LoopHint
+    v8 = Less v6, v2
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: int[0, 1999]):
+    v10 = NewArray v0, v1 contents=anything
+    v11 = Increment v9
+    Jump -> next b1(v10, v11)
+  b3():
+    v12 = RequireObjectCoercible v5
+    v13 = Call v0, -, v12
+    v14 = Call v1, -, v12
+    Return v14
+}
+# CHECK-LABEL: function f1 name="usedInOneBlock"
+# CHECK: b2(
+# CHECK-NOT: NewArray
+# CHECK-NOT: Upcast
+# CHECK: [[array1]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: v13: anything = Call v0, -, [[array1]]
+# CHECK-NEXT: v14: anything = Call v1, -, [[array1]]

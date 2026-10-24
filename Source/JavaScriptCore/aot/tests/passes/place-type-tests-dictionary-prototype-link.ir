@@ -1,0 +1,101 @@
+# A name that a dictionary does not have is looked for on its prototypes. Where objects are stored under keys nobody knows the key may be __proto__, so the read tests the prototype link first, takes the generic path on a miss, and its type holds what the stored objects have under the name. instanceof is not folded. Where only numbers are stored the link is proven and there is no test
+# TODO: flow-termination: `o[k] = 1` under a string nobody knows makes the layout of o reach unknown JavaScript though the object never leaves its function
+# RUN: pipeline PlaceTypeTests
+# CHECK-LABEL: function f1 name="ofObjects"
+# CHECK: ElemSet [[dictionary]], v0
+# CHECK-NEXT: boolean = HasLayoutPrototype [[dictionary]]
+# CHECK: undefined|7|L1 ~ undefined = AssumeType
+# CHECK: anything = PropGet [[dictionary]] key="extra"
+# CHECK: boolean = HasNoExtraProperties [[dictionary]]
+# CHECK-LABEL: function f2 name="ofNumbers"
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: boolean = HasNoExtraProperties
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-LABEL: function f3 name="instanceGetsNull"
+# CHECK: boolean = InstanceOf
+# CHECK-LABEL: function f4 name="instanceGetsNumber"
+# CHECK-NOT: InstanceOf
+# CHECK: true = TypeTest
+# CHECK-NOT: InstanceOf
+# CHECK-LABEL: function f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Index" fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="User" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="extra" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Counts" fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Instance name="Reparented" constructor=f5
+layout L4 kind=Instance name="Fixed" constructor=f6
+variable g0 name="Reparented" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="Fixed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f5
+    v3 = NewClass v2 layout=L3
+    v4 = FinishClass v3 layout=L3
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f6
+    v7 = NewClass v6 layout=L4
+    v8 = FinishClass v7 layout=L4
+    PutModuleVariable v8 variable=g1
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = NewClosure function=f3
+    v13 = NewClosure function=f4
+    v14 = Call v1, -, v10, v11, v12, v13
+    Return
+}
+function f1 name="ofObjects" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = String string="u1"
+    v5 = Integer integer=7
+    v6 = NewObject -, v4, v5 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    ElemSet v3, v0, v7 mode=Strict
+    v9 = PropGet v3 key="extra"
+    Return v9
+}
+function f2 name="ofNumbers" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    v3 = FinishObject v2
+    ElemSet v3, v0, v1 mode=Strict
+    v5 = PropGet v3 key="extra"
+    Return v5
+}
+function f3 name="instanceGetsNull" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g0
+    v2 = Construct v1
+    v3 = Null
+    ElemSet v2, v0, v3 mode=Strict
+    v5 = InstanceOf v2, v1
+    Return v5
+}
+function f4 name="instanceGetsNumber" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = GetModuleVariable variable=g1
+    v2 = Construct v1
+    v3 = Integer integer=1
+    ElemSet v2, v0, v3 mode=Strict
+    v5 = InstanceOf v2, v1
+    Return v5
+}
+function f5 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}
+function f6 name="Fixed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}

@@ -1,0 +1,27 @@
+# A use whose claim fails keeps the range, which is then created
+# FORM: Prepared
+# OPTIONS: limit=MaxSelectionGroupMembers:0
+# RUN: pass Select
+# LOSS: MaxSelectionGroupMembers f0
+# STATISTIC: SubstringViewGroups = 0
+# CHECK-NOT: StringRangeEqualsLiteral
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-with-two-uses" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = GetStringLength v7
+    PutModuleVariable v8 variable=g0
+    v10 = String string="ab"
+    v11 = StrictEq v7, v10
+    Return v11
+}
+variable g0 name="length" declared={type=anything} initialization=Undefined
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NEXT: v8: int[0, 2147483647] = GetStringLength v7
+# CHECK: v11: boolean = StrictEq v7, v10
+# CHECK-NOT: StringRangeEqualsLiteral

@@ -1,0 +1,131 @@
+# A counter is proven where the test of the loop leaves room for the step. What goes around a loop through a promise is an int32 and no more
+# FORM: AsRead
+# RUN: int32-bounds
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Variable
+function f0 name="upTo" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Convert v0 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = Less v3, v1
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Increment v5
+    v7 = Convert v6 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v2: integers [-2147483648, 2147483647]
+# CHECK-NEXT: v7: integers [-2147483647, 2147483647]
+function f1 name="downTo" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Convert v0 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = Greater v3, v1
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Decrement v5
+    v7 = Convert v6 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f1
+# CHECK: v7: integers [-2147483648, 2147483646]
+function f2 name="boundOnTheLeft" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Convert v0 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = Greater v1, v3
+    Branch v4 -> taken b2(| 1), notTaken b3(| 1)
+  b2(v5):
+    v6 = Increment v5
+    v7 = Convert v6 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f2
+# CHECK: v7: integers [-2147483647, 2147483647]
+function f3 name="afterFailedTest" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Convert v0 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = GreaterEq v3, v1
+    Branch v4 -> taken b3(| 0), notTaken b2(| 0)
+  b2(v5):
+    v6 = Increment v5
+    v7 = Convert v6 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f3
+# CHECK: v7: integers [-2147483647, 2147483647]
+function f4 name="inclusive" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = Convert v1 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = LessEq v3, v0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Increment v5
+    v7 = Convert v6 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v2: integers [0, 0]
+# CHECK-NEXT: v7: integers [-2147483647, 2147483648]
+function f5 name="byTwo" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = Convert v1 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2)
+  b1(v3: i32):
+    v4 = Less v3, v0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Integer integer=2
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v8)
+  b3(v9):
+    Return v9
+}
+# CHECK-LABEL: function f5
+# CHECK: v8: integers [-2147483646, 2147483648]
+function f6 name="untestedCounter" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Integer
+    v2 = Convert v1 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    v3 = Convert v1 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v2, v3)
+  b1(v4: i32, v5: i32):
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v7):
+    v8 = Increment v5
+    v9 = Convert v8 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    v10 = Increment v7
+    v11 = Convert v10 declared={type=i32 site=w2 flags=[IsInt32Promise]}
+    Jump -> next b1(v11, v9)
+  b3(v12):
+    Return v5
+}
+# CHECK-LABEL: function f6
+# CHECK: v9: integers [-2147483647, 2147483648]
+# CHECK-NEXT: v11: integers [-2147483647, 2147483647]

@@ -1,0 +1,17 @@
+# A raw pointer never enters a function: no parameter is declared with its type
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="takes-cursor" parameters=[{type=stringbuilder}, {type=buildercursor}] results=[{type=undefined}] {
+  b0(v0: stringbuilder, v1: buildercursor):
+    StringBuilderCommit v0, v1
+    Return
+}
+function f1 name="takes-builder" parameters=[{type=stringbuilder}] results=[{type=undefined}] {
+  b0(v0: stringbuilder):
+    v1 = StringBuilderReserve v0 size=8
+    StringBuilderCommit v0, v1
+    Return
+}

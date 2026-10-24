@@ -1,0 +1,49 @@
+# set = new Set; set.add(member); for (const each of set) each()        for (;;) { step = next(); value = step.value; if (step.done) break; value() }
+# The step that finds the end answers undefined (primitive 0) as its value. A for..of reads the value behind the branch on `done`, where the step has not found the end: what it reads is what the set holds.
+# A value that is read in front of the branch may be that of the last step.
+# RUN: valueflow-why values=f0:v10 values=f0:v17
+# CHECK: Call
+# CHECK: operand 0 {{*}} 1 members: f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = Construct v0
+    v2 = PropGet v1 key="add"
+    v3 = NewClosure function=f1
+    v4 = Call v2, v1, v3 calleeKey="add"
+    v5 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ResultAt v7 index=1
+    v10 = Call v9
+    Jump -> next b1()
+  b3():
+    v11 = IteratorOpen v1
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v13 = IteratorResume v11
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Branch v14 -> taken b6(), notTaken b5()
+  b5():
+    v16 = Undefined
+    v17 = Call v15
+    Jump -> next b4()
+  b6():
+    Return
+}
+function f1 name="member" results=[{type=anything}] {
+  b0():
+    Return
+}

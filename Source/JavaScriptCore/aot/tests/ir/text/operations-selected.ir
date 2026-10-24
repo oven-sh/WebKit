@@ -1,0 +1,235 @@
+# Every operation and terminator that is legal from form Selected on, and the payload fields that have a meaning from then on
+# FORM: Selected
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=3 kind=PropertyRead
+# CHECK-NEXT: layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: object):
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
+# CHECK-NEXT: v4:{{*}}= PropGetChain v0 key="x" secondKey="y" readOrigin={position=6} accessSite=2 receivers=[L0] secondAccessSite=3
+# CHECK-NEXT: v5:{{*}}= PropGetPair v0, v1 key="x" secondKey="y" readOrigin={position=7} accessSite=4 secondAccessSite=5
+# CHECK-NEXT: v6:{{*}}= ResultAt v5
+# CHECK-NEXT: v7:{{*}}= PropGetPair v0 key="x" secondKey="y" receivers=[L0] [readsFromFirstResult]
+# CHECK-NEXT: v8:{{*}}= CallMethod v0, v1, v1 key="m" calleeName="a.m" readOrigin={position=8} accessSite=6 receivers=[L0] callees=[f0] callAccessSite=7
+# CHECK-NEXT: v9:{{*}}= CallMethod v0 key="m"
+# CHECK-NEXT: v10:{{*}}= TryPutByIds v2, v0, v1 keys=["x", "y"]
+# CHECK-NEXT: v11:{{*}}= PropGetAndTest v0 key="x" comparedString="s" accessSite=8
+# CHECK-NEXT: TestAndBranch v11 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v12:{{*}}= PropGetAndTest v0 key="x" receivers=[L0]
+# CHECK-NEXT: TestAndBranch v12 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=object}, {type=string}, {type=function}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: number, v2: object, v3: string, v4: function):
+# CHECK-NEXT: v5:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Expected}] receivers=[L0]
+# CHECK-NEXT: v7:{{*}}= DefineOwnProperty v2, v3, v0 descriptorFlags=[HasValue, HasWritable, IsWritable, HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable]
+# CHECK-NEXT: v8:{{*}}= DefineOwnProperty v2, v3, -, v4, v4 descriptorFlags=[HasGet, HasSet]
+# CHECK-NEXT: DefineAccessors v2, v4, v4 keys=["g", "s"] getterMask=1 enumerableMask=2
+# CHECK-NEXT: v10:{{*}}= IntegerBound v1 comparison=Less [numberIsOnLeft]
+# CHECK-NEXT: v11:{{*}}= NewPromise
+# CHECK-NEXT: FulfillFreshPromise v11, v1
+# CHECK-NEXT: v13:{{*}}= IsNotThenable v0
+# CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v14:{{*}}):
+# CHECK-NEXT: FulfillFreshPromise v11, v0, v14
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 name="strings" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: string, v1: int, v2: number):
+# CHECK-NEXT: v3:{{*}}= StringOrder v0, v0
+# CHECK-NEXT: v4:{{*}}= StringOrderToCharacter v0 codeUnit=97
+# CHECK-NEXT: v5:{{*}}= StringEqualsLiteral v0 literal="a"
+# CHECK-NEXT: v6:{{*}}= StringStartsWithLiteral v0 literal="a"
+# CHECK-NEXT: v7:{{*}}= StringEndsWithLiteral v0 literal="a"
+# CHECK-NEXT: v8:{{*}}= StringIndexOfLiteral v0, v1 literal="ab"
+# CHECK-NEXT: v9:{{*}}= StringIndexOfCharacter v0, v1 codeUnit=97
+# CHECK-NEXT: v10:{{*}}= StringLastIndexOfLiteral v0, v1 literal="ab"
+# CHECK-NEXT: v11:{{*}}= StringRangeCodeUnitOrNaN v0, v1, v1, v2
+# CHECK-NEXT: v12:{{*}}= StringRangeCodeUnitOrNaN v0, -, -, v2
+# CHECK-NEXT: v13:{{*}}= StringRangeCodePointOrUndefined v0, v1, v1, v2
+# CHECK-NEXT: v14:{{*}}= StringRangeCharacterOrEmpty v0, v1, -, v2
+# CHECK-NEXT: v15:{{*}}= StringRangeCharacterOrUndefined v0, -, v1, v2
+# CHECK-NEXT: v16:{{*}}= StringRangeEqualsLiteral v0, v1, v1 literal="a"
+# CHECK-NEXT: v17:{{*}}= StringRangeToNumber v0, v1, v1
+# CHECK-NEXT: v18:{{*}}= StringRangeParseInt v0, v1, v1
+# CHECK-NEXT: v19:{{*}}= StringRangeSubstringOrUndefined v0, v1, v1
+# CHECK-NEXT: v20:{{*}}= RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[IgnoreCase]
+# CHECK-NEXT: v21:{{*}}= RegExpMatchLiteral v0 overload=RegExpPrototypeExec/0 pattern="a" matchForm=Exec
+# CHECK-NEXT: v22:{{*}}= ValueLooselyEqualsLiteral v0 literal="a"
+# CHECK-NEXT: v23:{{*}}= ValueEqualsLiteral v0 literal="a"
+# CHECK-NEXT: v24:{{*}}= StringRangeCodeUnitOrMinusOne v0, v1, -, v2
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 name="builderParts" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}, {type=boolean}, {type=anything}, {type=undefined|null|string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: string, v1: int, v2: number, v3: boolean, v4: anything, v5: undefined|null|string):
+# CHECK-NEXT: v6:{{*}}= StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppendConstant v6 string="a"
+# CHECK-NEXT: StringBuilderAppendInteger v6, v1
+# CHECK-NEXT: StringBuilderAppendNumber v6, v2
+# CHECK-NEXT: StringBuilderAppendString v6, v0
+# CHECK-NEXT: StringBuilderAppendStringRange v6, v0, v1, v1
+# CHECK-NEXT: StringBuilderAppendBoolean v6, v3
+# CHECK-NEXT: StringBuilderAppendStringOrNullish v6, v5
+# CHECK-NEXT: StringBuilderAppendValue v6, v4
+# CHECK-NEXT: v15:{{*}}= StringBuilderFinish v6
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-NEXT: function f4 name="calls" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=string}, {type=number}, {type=Array}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: string, v3: number, v4: Array):
+# CHECK-NEXT: v5:{{*}}= ResolveCallTarget v0 argumentCount=1
+# CHECK-NEXT: v6:{{*}}= CallResolved v0, v5, v1, v1 calleeName="f" accessSite=1 callees=[f0, ..]
+# CHECK-NEXT: v7:{{*}}= ResolveCallTarget v0
+# CHECK-NEXT: v8:{{*}}= CallResolved v0, v7
+# CHECK-NEXT: v9:{{*}}= CallInline v2, v3 inlineBuiltin=StringCharCodeAt overload=StringPrototypeCharCodeAt/0 accessSite=2
+# CHECK-NEXT: v10:{{*}}= CallInline -, v3 inlineBuiltin=MathFunction inlineParameters=[1] overload=MathSinh/0 allocationSite=5
+# CHECK-NEXT: v11:{{*}}= CallBuiltin v4 overload=ArrayPrototypeJoin/0 literalSeparator=", "
+# CHECK-NEXT: TryCallInline v4, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=3 allocationSite=4 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v12:{{*}}):
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b2():
+# CHECK-NEXT: TryCallInline v4 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0 -> done b3(), miss b4()
+# CHECK-NEXT: b3(v13:{{*}}):
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f5 name="fieldsFromSelected" module=m0 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: number, v1: number, v2: anything):
+# CHECK-NEXT: v3:{{*}}= Add v0, v1 form=Numbers
+# CHECK-NEXT: v4:{{*}}= Add v2, v2 form=Generic
+# CHECK-NEXT: v5:{{*}}= ToString v0 form=Number
+# CHECK-NEXT: v6:{{*}}= NewClosure function=f0 closureForm=Slim
+# CHECK-NEXT: v7:{{*}}= Data data=d0 encoding=ReadOnlyTree
+# CHECK-NEXT: v8:{{*}}= Less v0, v1 form=Numbers
+# CHECK-NEXT: TestAndBranch v8 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Array{contents=anything}
+# CHECK-NEXT: round trip: same
+
+typesite w0 module=m0 position=3 kind=PropertyRead
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
+    v4 = PropGetChain v0 key="x" secondKey="y" readOrigin={position=6} accessSite=2 receivers=[L0] secondAccessSite=3
+    v5 = PropGetPair v0, v1 key="x" secondKey="y" readOrigin={position=7} accessSite=4 secondAccessSite=5
+    v6 = ResultAt v5
+    v7 = PropGetPair v0 key="x" secondKey="y" receivers=[L0] [readsFromFirstResult]
+    v8 = CallMethod v0, v1, v1 key="m" calleeName="a.m" readOrigin={position=8} accessSite=6 receivers=[L0] callees=[f0] callAccessSite=7
+    v9 = CallMethod v0 key="m"
+    v10 = TryPutByIds v2, v0, v1 keys=["x", "y"]
+    v11 = PropGetAndTest v0 key="x" comparedString="s" accessSite=8
+    TestAndBranch v11 -> taken b1(), notTaken b2()
+  b1():
+    v12 = PropGetAndTest v0 key="x" receivers=[L0]
+    TestAndBranch v12 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    Return
+}
+function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=object}, {type=string}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: object, v3: string, v4: function):
+    v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Expected}] receivers=[L0]
+    v7 = DefineOwnProperty v2, v3, v0 descriptorFlags=[HasValue, HasWritable, IsWritable, HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable]
+    v8 = DefineOwnProperty v2, v3, -, v4, v4 descriptorFlags=[HasGet, HasSet]
+    DefineAccessors v2, v4, v4 keys=["g", "s"] getterMask=1 enumerableMask=2
+    v10 = IntegerBound v1 comparison=Less [numberIsOnLeft]
+    v11 = NewPromise
+    FulfillFreshPromise v11, v1
+    v13 = IsNotThenable v0
+    Branch v13 -> taken b1(| 0), notTaken b2()
+  b1(v14):
+    FulfillFreshPromise v11, v0, v14
+    Return v11
+  b2():
+    Return
+}
+function f2 name="strings" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: int, v2: number):
+    v3 = StringOrder v0, v0
+    v4 = StringOrderToCharacter v0 codeUnit=97
+    v5 = StringEqualsLiteral v0 literal="a"
+    v6 = StringStartsWithLiteral v0 literal="a"
+    v7 = StringEndsWithLiteral v0 literal="a"
+    v8 = StringIndexOfLiteral v0, v1 literal="ab"
+    v9 = StringIndexOfCharacter v0, v1 codeUnit=97
+    v10 = StringLastIndexOfLiteral v0, v1 literal="ab"
+    v11 = StringRangeCodeUnitOrNaN v0, v1, v1, v2
+    v12 = StringRangeCodeUnitOrNaN v0, -, -, v2
+    v13 = StringRangeCodePointOrUndefined v0, v1, v1, v2
+    v14 = StringRangeCharacterOrEmpty v0, v1, -, v2
+    v15 = StringRangeCharacterOrUndefined v0, -, v1, v2
+    v16 = StringRangeEqualsLiteral v0, v1, v1 literal="a"
+    v17 = StringRangeToNumber v0, v1, v1
+    v18 = StringRangeParseInt v0, v1, v1
+    v19 = StringRangeSubstringOrUndefined v0, v1, v1
+    v20 = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[IgnoreCase]
+    v21 = RegExpMatchLiteral v0 overload=RegExpPrototypeExec/0 pattern="a" matchForm=Exec
+    v22 = ValueLooselyEqualsLiteral v0 literal="a"
+    v23 = ValueEqualsLiteral v0 literal="a"
+    v24 = StringRangeCodeUnitOrMinusOne v0, v1, -, v2
+    Return v20
+}
+function f3 name="builderParts" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}, {type=boolean}, {type=anything}, {type=undefined|null|string}] results=[{type=anything}] {
+  b0(v0: string, v1: int, v2: number, v3: boolean, v4: anything, v5: undefined|null|string):
+    v6 = StringBuilderBegin
+    StringBuilderAppendConstant v6 string="a"
+    StringBuilderAppendInteger v6, v1
+    StringBuilderAppendNumber v6, v2
+    StringBuilderAppendString v6, v0
+    StringBuilderAppendStringRange v6, v0, v1, v1
+    StringBuilderAppendBoolean v6, v3
+    StringBuilderAppendStringOrNullish v6, v5
+    StringBuilderAppendValue v6, v4
+    v15 = StringBuilderFinish v6
+    Return v15
+}
+function f4 name="calls" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=string}, {type=number}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string, v3: number, v4: Array):
+    v5 = ResolveCallTarget v0 argumentCount=1
+    v6 = CallResolved v0, v5, v1, v1 calleeName="f" accessSite=1 callees=[f0, ..]
+    v7 = ResolveCallTarget v0
+    v8 = CallResolved v0, v7
+    v9 = CallInline v2, v3 inlineBuiltin=StringCharCodeAt overload=StringPrototypeCharCodeAt/0 accessSite=2
+    v10 = CallInline -, v3 inlineBuiltin=MathFunction inlineParameters=[1] overload=MathSinh/0 allocationSite=5
+    v11 = CallBuiltin v4 overload=ArrayPrototypeJoin/0 literalSeparator=", "
+    TryCallInline v4, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=3 allocationSite=4 -> done b1(), miss b2()
+  b1(v12):
+    Return v12
+  b2():
+    TryCallInline v4 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0 -> done b3(), miss b4()
+  b3(v13):
+    Return v13
+  b4():
+    Return
+}
+function f5 name="fieldsFromSelected" module=m0 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    v3 = Add v0, v1 form=Numbers
+    v4 = Add v2, v2 form=Generic
+    v5 = ToString v0 form=Number
+    v6 = NewClosure function=f0 closureForm=Slim
+    v7 = Data data=d0 encoding=ReadOnlyTree
+    v8 = Less v0, v1 form=Numbers
+    TestAndBranch v8 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v4
+}
+data d0 root=Array{contents=anything}

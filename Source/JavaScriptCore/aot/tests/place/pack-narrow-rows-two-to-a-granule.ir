@@ -1,0 +1,64 @@
+# A granule of an Extension holds eight bytes, so two references of four bytes share one. A layout by itself puts out of line what fits its granules: with 4 granules 8 of its 12 references.
+# The members of a family agree on one offset for a row that they inherit. With a granule for each row there is always one that all of them have free, so there each row counts as a granule:
+# 4 rows of Base go out of line, and Below, which inherits them, has no granule left for its own
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow limit=MaxExtensionGranules:4 testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ManyReferences" fields=[{key="r0" declared={type=undefined|L1}}, {key="r1" declared={type=undefined|L1}}, {key="r2" declared={type=undefined|L1}}, {key="r3" declared={type=undefined|L1}}, {key="r4" declared={type=undefined|L1}}, {key="r5" declared={type=undefined|L1}}, {key="r6" declared={type=undefined|L1}}, {key="r7" declared={type=undefined|L1}}, {key="r8" declared={type=undefined|L1}}, {key="r9" declared={type=undefined|L1}}, {key="r10" declared={type=undefined|L1}}, {key="r11" declared={type=undefined|L1}}]
+layout L1 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Base" constructor=f1 fields=[{key="b0" declared={type=undefined|L1}}, {key="b1" declared={type=undefined|L1}}, {key="b2" declared={type=undefined|L1}}, {key="b3" declared={type=undefined|L1}}, {key="b4" declared={type=undefined|L1}}, {key="b5" declared={type=undefined|L1}}]
+layout L3 kind=Instance name="Below" base=L2 constructor=f2 fields=[{key="d0" declared={type=undefined|L1}}, {key="d1" declared={type=undefined|L1}}, {key="d2" declared={type=undefined|L1}}, {key="d3" declared={type=undefined|L1}}, {key="d4" declared={type=undefined|L1}}, {key="d5" declared={type=undefined|L1}}] flags=[HasHeritage]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject layout=L0
+    v7 = FinishObject v6
+    ElemSet v7, v3, v5
+    v9 = NewClosure function=f1
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    PutModuleVariable v11 variable=g0
+    v13 = ResolveHeritage v11
+    v14 = NewClosure function=f2
+    v15 = NewClass v14, v11, v13 layout=L3
+    v16 = FinishClass v15 layout=L3
+    v17 = Construct v11
+    v18 = Construct v16
+    ElemSet v17, v3, v5
+    ElemSet v18, v3, v5
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = SuperConstruct v1, v0 layout=L3
+    Return v2
+}
+# CHECK: L0 CompiledObject size=48 extension=40
+# CHECK-NEXT: .0 "r0" OptionalCell32 out@8
+# CHECK-NEXT: .1 "r1" OptionalCell32 out@12
+# CHECK: .7 "r7" OptionalCell32 out@36
+# CHECK-NEXT: .8 "r8" {{*}} @40
+# CHECK: L2 CompiledObject size=32 extension=24
+# CHECK: .3 "b3" OptionalCell32 out@20
+# CHECK-NEXT: .4 "b4" OptionalCell32 @20
+# CHECK: L3 CompiledObject size=64 extension=24
+# CHECK-NEXT: .0 "d0" {{*}} @56
+# CHECK: .5 "d5" OptionalCell32 @52
+# CHECK-NEXT: .6 "b0" OptionalCell32 out@8

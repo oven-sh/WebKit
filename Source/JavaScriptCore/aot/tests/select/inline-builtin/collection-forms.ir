@@ -1,0 +1,197 @@
+# The inline built-ins of Map, Set, WeakMap and WeakSet are inline code alone, but for a collection made from an iterable: inline code with a miss edge for what may be an array (for a Set also an arguments object or a string), the call for anything else
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="hashTableBuiltins" parameters=[{type=Map}, {type=Set}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: anything, v3: anything):
+    v4 = Undefined
+    v5 = CallBuiltin -, v4 overload=Map/1
+    v6 = CallBuiltin v0, v2 overload=MapPrototypeGet/0
+    v7 = CallBuiltin v0, v2 overload=MapPrototypeHas/0
+    v8 = CallBuiltin v1, v2 overload=SetPrototypeHas/0
+    v9 = CallBuiltin v0, v2, v3 overload=MapPrototypeSet/0
+    v10 = CallBuiltin v1, v2 overload=SetPrototypeAdd/0
+    v11 = CallBuiltin v0 overload=MapPrototypeSize/0
+    v12 = CallBuiltin v1 overload=SetPrototypeSize/0
+    v13 = CallBuiltin -, v4 overload=Set/1
+    v14 = NewArray v5, v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Return v14
+}
+# FORMS: function f0
+# FORMS-NEXT: v5 {{*}} NewMap {{*}} Whole
+# FORMS-NEXT: v6 {{*}} MapGet {{*}} Whole
+# FORMS-NEXT: v7 {{*}} MapHas {{*}} Whole
+# FORMS-NEXT: v8 {{*}} SetHas {{*}} Whole
+# FORMS-NEXT: v9 {{*}} MapSet {{*}} Whole
+# FORMS-NEXT: v10 {{*}} SetAdd {{*}} Whole
+# FORMS-NEXT: v11 {{*}} MapSize {{*}} Whole
+# FORMS-NEXT: v12 {{*}} SetSize {{*}} Whole
+# FORMS-NEXT: v13 {{*}} NewSet {{*}} Whole
+# CHECK-LABEL: function f0 name="hashTableBuiltins"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+# CHECK: v5: {{*}} = CallInline -, v4 inlineBuiltin=NewMap overload=Map/1
+# CHECK-NEXT: v6: {{*}} = CallInline v0, v2 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NEXT: v7: {{*}} = CallInline v0, v2 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+# CHECK-NEXT: v8: {{*}} = CallInline v1, v2 inlineBuiltin=SetHas overload=SetPrototypeHas/0
+# CHECK-NEXT: v9: {{*}} = CallInline v0, v2, v3 inlineBuiltin=MapSet overload=MapPrototypeSet/0
+# CHECK-NEXT: v10: {{*}} = CallInline v1, v2 inlineBuiltin=SetAdd overload=SetPrototypeAdd/0
+# CHECK-NEXT: v11: {{*}} = CallInline v0 inlineBuiltin=MapSize overload=MapPrototypeSize/0
+# CHECK-NEXT: v12: {{*}} = CallInline v1 inlineBuiltin=SetSize overload=SetPrototypeSize/0
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+
+function f1 name="mapSetBuiltins" parameters=[{type=Map}, {type=Set}, {type=WeakMap}, {type=WeakSet}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Map, v1: Set, v2: WeakMap, v3: WeakSet, v4: anything):
+    v5 = CallBuiltin v2, v4 overload=WeakMapPrototypeGet/0
+    v6 = CallBuiltin v2, v4 overload=WeakMapPrototypeHas/0
+    v7 = CallBuiltin v3, v4 overload=WeakSetPrototypeHas/0
+    v8 = CallBuiltin v0, v4 overload=MapPrototypeDelete/0
+    v9 = CallBuiltin v1, v4 overload=SetPrototypeDelete/0
+    v10 = CallBuiltin v0 overload=MapPrototypeClear/0
+    v11 = CallBuiltin v1 overload=SetPrototypeClear/0
+    v12 = CallBuiltin v0 overload=MapPrototypeEntries/0
+    v13 = CallBuiltin v1 overload=SetPrototypeValues/0
+    v14 = NewArray v5, v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Return v14
+}
+# FORMS: function f1
+# FORMS-NEXT: v5 {{*}} WeakMapGet {{*}} Whole
+# FORMS-NEXT: v6 {{*}} WeakMapHas {{*}} Whole
+# FORMS-NEXT: v7 {{*}} WeakSetHas {{*}} Whole
+# FORMS-NEXT: v8 {{*}} MapDelete {{*}} Whole
+# FORMS-NEXT: v9 {{*}} SetDelete {{*}} Whole
+# FORMS-NEXT: v10 {{*}} MapClear {{*}} Whole
+# FORMS-NEXT: v11 {{*}} SetClear {{*}} Whole
+# FORMS-NEXT: v12 {{*}} MapIterator {{*}} Whole
+# FORMS-NEXT: v13 {{*}} SetIterator {{*}} Whole
+# CHECK-LABEL: function f1 name="mapSetBuiltins"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+# CHECK: v5: {{*}} = CallInline v2, v4 inlineBuiltin=WeakMapGet overload=WeakMapPrototypeGet/0
+# CHECK-NEXT: v6: {{*}} = CallInline v2, v4 inlineBuiltin=WeakMapHas overload=WeakMapPrototypeHas/0
+# CHECK-NEXT: v7: {{*}} = CallInline v3, v4 inlineBuiltin=WeakSetHas overload=WeakSetPrototypeHas/0
+# CHECK-NEXT: v8: {{*}} = CallInline v0, v4 inlineBuiltin=MapDelete overload=MapPrototypeDelete/0
+# CHECK-NEXT: v9: {{*}} = CallInline v1, v4 inlineBuiltin=SetDelete overload=SetPrototypeDelete/0
+# CHECK-NEXT: v10: {{*}} = CallInline v0 inlineBuiltin=MapClear overload=MapPrototypeClear/0
+# CHECK-NEXT: v11: {{*}} = CallInline v1 inlineBuiltin=SetClear overload=SetPrototypeClear/0
+# CHECK-NEXT: v12: {{*}} = CallInline v0 inlineBuiltin=MapIterator inlineParameters=[{{*}}] overload=MapPrototypeEntries/0
+# CHECK-NEXT: v13: {{*}} = CallInline v1 inlineBuiltin=SetIterator inlineParameters=[{{*}}] overload=SetPrototypeValues/0
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+
+function f2 name="setFromObject" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = CallBuiltin -, v0 overload=Set/2
+    Return v1
+}
+# FORMS: function f2
+# FORMS-NEXT: v1 {{*}} SetFromIterable {{*}} TwoWay
+# CHECK-LABEL: function f2 name="setFromObject"
+# CHECK: TryCallInline -, v0 inlineBuiltin=SetFromIterable overload=Set/2 -> done [[done2]](), miss [[miss2]]()
+# CHECK: [[done2]](v1: Set):
+# CHECK-NEXT: Return v1
+# CHECK: [[miss2]]() frequency=Rare:
+# CHECK-NEXT: [[called2]]: Set = CallBuiltin -, v0 overload=Set/2
+# CHECK-NEXT: Jump -> next [[done2]]([[called2]])
+
+function f3 name="mapFromObject" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = CallBuiltin -, v0 overload=Map/2
+    Return v1
+}
+# FORMS: function f3
+# FORMS-NEXT: v1 {{*}} MapFromEntries {{*}} TwoWay
+# CHECK-LABEL: function f3 name="mapFromObject"
+# CHECK: TryCallInline -, v0 inlineBuiltin=MapFromEntries overload=Map/2 -> done [[done3]](), miss [[miss3]]()
+# CHECK: [[done3]](v1: Map):
+# CHECK-NEXT: Return v1
+# CHECK: [[miss3]]() frequency=Rare:
+# CHECK-NEXT: [[called3]]: Map = CallBuiltin -, v0 overload=Map/2
+# CHECK-NEXT: Jump -> next [[done3]]([[called3]])
+
+function f4 name="setFromValueThatMayBeObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=Set/2
+    Return v1
+}
+# FORMS: function f4
+# FORMS-NEXT: v1 {{*}} SetFromIterable {{*}} TwoWay
+# CHECK-LABEL: function f4 name="setFromValueThatMayBeObject"
+# CHECK: TryCallInline -, v0 inlineBuiltin=SetFromIterable overload=Set/2 -> done
+
+function f5 name="setFromPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=1
+    v2 = CallBuiltin -, v1 overload=Set/2
+    v3 = CallBuiltin -, v0 overload=Set/2
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f5
+# FORMS-NEXT: v2 {{*}} SetFromIterable {{*}} Call
+# FORMS-NEXT: v3 {{*}} SetFromIterable {{*}} TwoWay
+# CHECK-LABEL: function f5 name="setFromPrimitive"
+# CHECK-NOT: CallInline
+# CHECK: v2: Set = CallBuiltin -, v1 overload=Set/2
+# CHECK: TryCallInline -, v0 inlineBuiltin=SetFromIterable overload=Set/2 -> done
+
+function f6 name="mapFromPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Integer integer=1
+    v2 = CallBuiltin -, v1 overload=Map/2
+    v3 = CallBuiltin -, v0 overload=Map/2
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+# FORMS: function f6
+# FORMS-NEXT: v2 {{*}} MapFromEntries {{*}} Call
+# FORMS-NEXT: v3 {{*}} MapFromEntries {{*}} Call
+# CHECK-LABEL: function f6 name="mapFromPrimitive"
+# CHECK-NOT: CallInline
+# CHECK: v2: Map = CallBuiltin -, v1 overload=Map/2
+# CHECK-NEXT: v3: Map{{*}} = CallBuiltin -, v0 overload=Map/2
+# CHECK-NOT: CallInline
+
+function f7 name="fromIterablesOfOtherClasses" parameters=[{type=Set}, {type=Map}, {type=MapIterator}, {type=Arguments}] results=[{type=anything}] {
+  b0(v0: Set, v1: Map, v2: MapIterator, v3: Arguments):
+    v4 = CallBuiltin -, v0 overload=Set/2
+    v5 = CallBuiltin -, v2 overload=Set/2
+    v6 = CallBuiltin -, v1 overload=Map/2
+    v7 = CallBuiltin -, v3 overload=Map/2
+    v8 = NewArray v4, v5, v6, v7 contents=anything
+    Return v8
+}
+# FORMS: function f7
+# FORMS-NEXT: v4 {{*}} SetFromIterable {{*}} Call
+# FORMS-NEXT: v5 {{*}} SetFromIterable {{*}} Call
+# FORMS-NEXT: v6 {{*}} MapFromEntries {{*}} Call
+# FORMS-NEXT: v7 {{*}} MapFromEntries {{*}} Call
+# CHECK-LABEL: function f7 name="fromIterablesOfOtherClasses"
+# CHECK-NOT: CallInline
+# CHECK: v4: Set{{*}} = CallBuiltin -, v0 overload=Set/2
+# CHECK-NEXT: v5: Set{{*}} = CallBuiltin -, v2 overload=Set/2
+# CHECK-NEXT: v6: Map{{*}} = CallBuiltin -, v1 overload=Map/2
+# CHECK-NEXT: v7: Map{{*}} = CallBuiltin -, v3 overload=Map/2
+# CHECK-NEXT: v8:{{*}}= NewArray v4, v5, v6, v7
+
+function f8 name="fromWhatMayBeListed" parameters=[{type=Arguments}, {type=Array|Set}, {type=Array|Map}, {type=object}] results=[{type=anything}] {
+  b0(v0: Arguments, v1: Array|Set, v2: Array|Map, v3: object):
+    v4 = CallBuiltin -, v0 overload=Set/2
+    v5 = CallBuiltin -, v1 overload=Set/2
+    v6 = CallBuiltin -, v2 overload=Map/2
+    v7 = CallBuiltin -, v3 overload=Map/2
+    v8 = NewArray v4, v5, v6, v7 contents=anything
+    Return v8
+}
+# FORMS: function f8
+# FORMS-NEXT: v4 {{*}} SetFromIterable {{*}} TwoWay
+# FORMS-NEXT: v5 {{*}} SetFromIterable {{*}} TwoWay
+# FORMS-NEXT: v6 {{*}} MapFromEntries {{*}} TwoWay
+# FORMS-NEXT: v7 {{*}} MapFromEntries {{*}} TwoWay
+# CHECK-LABEL: function f8 name="fromWhatMayBeListed"
+# CHECK: TryCallInline -, v0 inlineBuiltin=SetFromIterable overload=Set/2
+# CHECK: TryCallInline -, v3 inlineBuiltin=MapFromEntries overload=Map/2

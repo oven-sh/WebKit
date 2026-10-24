@@ -1,0 +1,157 @@
+# The operations that convert between representations, and the payload fields that have a meaning from form Placed on
+# FORM: Placed
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=3 kind=PropertyRead
+# CHECK-NEXT: layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+# CHECK-NEXT: layout L1 kind=Instance name="C" module=m0
+# CHECK-NEXT: layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+# CHECK-NEXT: function f0 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="fieldsFromPlaced" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=L0}, {type=string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: number, v2: L0, v3: string):
+# CHECK-NEXT: v4:{{*}}= KeyConstant key=@@iterator
+# CHECK-NEXT: v5:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=2
+# CHECK-NEXT: v6:{{*}}= PropGet v0 key="x" siteCache=1
+# CHECK-NEXT: PropSet v0, v1 key="x" siteCache=2
+# CHECK-NEXT: v8:{{*}}= GetSlotOrUndefined v2 key="x" receivers=[L0] level=Proven fieldAccess=3
+# CHECK-NEXT: PutSlots v5, v5, v0 placedKeys=[{key="x" fieldAccess=4 level=Proven}] receivers=[L0]
+# CHECK-NEXT: v10:{{*}}= AreMembersUnchanged conditions=[{layout=L1 key="m"}] guardBit=5
+# CHECK-NEXT: v11:{{*}}= AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}] guardBit=6
+# CHECK-NEXT: v12:{{*}}= AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}] guardBit=7
+# CHECK-NEXT: v13:{{*}}= HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
+# CHECK-NEXT: v14:{{*}}= Data data=d0 encoding=Expanded request=10
+# CHECK-NEXT: v15:{{*}}= NewArray v1 contents=number staticsOffset=16
+# CHECK-NEXT: v16:{{*}}= NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
+# CHECK-NEXT: v17:{{*}}= SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
+# CHECK-NEXT: v18:{{*}}= NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
+# CHECK-NEXT: v19:{{*}}= NewClosure function=f0 allocation=13
+# CHECK-NEXT: v20:{{*}}= NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
+# CHECK-NEXT: v21:{{*}}= MaterializeEnvironment v20 layout=L2 allocation=15
+# CHECK-NEXT: v22:{{*}}= NewSetFromData data=d0 request=16
+# CHECK-NEXT: v23:{{*}}= NewMapFromData data=d0 request=17
+# CHECK-NEXT: v24:{{*}}= RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
+# CHECK-NEXT: v25:{{*}}= TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=number}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: L0, v2: number, v3: object):
+# CHECK-NEXT: v4:{{*}}= PropHasOwn v0 key="x" siteCache=20
+# CHECK-NEXT: v5:{{*}}= PropGet v0 key="x" siteCache=21
+# CHECK-NEXT: v6:{{*}}= PropGetChain v0 key="x" secondKey="y" siteCache=22
+# CHECK-NEXT: v7:{{*}}= PropGetPair v0 key="x" secondKey="y" siteCache=23
+# CHECK-NEXT: v8:{{*}}= CallMethod v0 key="m" siteCache=24
+# CHECK-NEXT: v9:{{*}}= IsSlotFilled v1 key="x" receivers=[L0] level=Proven fieldAccess=25
+# CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v10:{{*}}):
+# CHECK-NEXT: v11:{{*}}= GetSlot v1, v10 key="x" receivers=[L0] level=Proven fieldAccess=26
+# CHECK-NEXT: v12:{{*}}= IsNotFrozen v1
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v13:{{*}}):
+# CHECK-NEXT: PutSlot v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=27
+# CHECK-NEXT: PutSlotOrAdd v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=28
+# CHECK-NEXT: v16:{{*}}= IsPlainDataObject v3
+# CHECK-NEXT: Branch v16 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v17:{{*}}):
+# CHECK-NEXT: v18:{{*}}= CloneAs v3, v17, v0, v2 layout=L0 fields=[0, 1] request=29
+# CHECK-NEXT: v19:{{*}}= PropGetAndTest v0 key="x" siteCache=30
+# CHECK-NEXT: TestAndBranch v19 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 name="conversions" module=m0 thisType={type=anything} parameters=[{type=number}, {type=int}, {type=i32}, {type=string}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: number @Double, v1: int @Int64, v2: i32 @Int32, v3: string @Cell):
+# CHECK-NEXT: v4:{{*}}@JSValue = Box v0
+# CHECK-NEXT: v5:{{*}}@Double = Unbox v4
+# CHECK-NEXT: v6:{{*}}@Double = IntegerToNumber v1
+# CHECK-NEXT: v7:{{*}}@Int64 = NumberToInteger v6
+# CHECK-NEXT: v8:{{*}}@Int64 = WidenInteger v2
+# CHECK-NEXT: v9:{{*}}@Int32 = NarrowInteger v8
+# CHECK-NEXT: v10:{{*}}@Cell32 = Compress v3
+# CHECK-NEXT: v11:{{*}}@Cell = Decode v10
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Array{contents=anything}
+# CHECK-NEXT: round trip: same
+
+typesite w0 module=m0 position=3 kind=PropertyRead
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
+layout L1 kind=Instance name="C" module=m0
+layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js"
+module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+function f0 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f1 name="fieldsFromPlaced" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=L0}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: L0, v3: string):
+    v4 = KeyConstant key=@@iterator
+    v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=2
+    v6 = PropGet v0 key="x" siteCache=1
+    PropSet v0, v1 key="x" siteCache=2
+    v8 = GetSlotOrUndefined v2 key="x" receivers=[L0] level=Proven fieldAccess=3
+    PutSlots v5, v5, v0 placedKeys=[{key="x" fieldAccess=4 level=Proven}] receivers=[L0]
+    v10 = AreMembersUnchanged conditions=[{layout=L1 key="m"}] guardBit=5
+    v11 = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}] guardBit=6
+    v12 = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}] guardBit=7
+    v13 = HasKeyOrder v2 layout=L0 fields=[0, 1] orderWord=9
+    v14 = Data data=d0 encoding=Expanded request=10
+    v15 = NewArray v1 contents=number staticsOffset=16
+    v16 = NewRegExp pattern="a" regExpRecord=11 staticsOffset=24
+    v17 = SharedRegExpLiteral pattern="a" regExpRecord=11 staticsOffset=32
+    v18 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}] request=12 staticsOffset=40
+    v19 = NewClosure function=f0 allocation=13
+    v20 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized allocation=14
+    v21 = MaterializeEnvironment v20 layout=L2 allocation=15
+    v22 = NewSetFromData data=d0 request=16
+    v23 = NewMapFromData data=d0 request=17
+    v24 = RegExpMatchLiteral v3 overload=RegExpPrototypeTest/0 pattern="a" regExpRecord=11
+    v25 = TryPutByIds v5, v0 keys=["z"] request=18 siteCache=19
+    Return v8
+}
+function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=number}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0, v2: number, v3: object):
+    v4 = PropHasOwn v0 key="x" siteCache=20
+    v5 = PropGet v0 key="x" siteCache=21
+    v6 = PropGetChain v0 key="x" secondKey="y" siteCache=22
+    v7 = PropGetPair v0 key="x" secondKey="y" siteCache=23
+    v8 = CallMethod v0 key="m" siteCache=24
+    v9 = IsSlotFilled v1 key="x" receivers=[L0] level=Proven fieldAccess=25
+    Branch v9 -> taken b1(| 0), notTaken b5()
+  b1(v10):
+    v11 = GetSlot v1, v10 key="x" receivers=[L0] level=Proven fieldAccess=26
+    v12 = IsNotFrozen v1
+    Branch v12 -> taken b2(| 0), notTaken b5()
+  b2(v13):
+    PutSlot v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=27
+    PutSlotOrAdd v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=28
+    v16 = IsPlainDataObject v3
+    Branch v16 -> taken b3(| 0), notTaken b5()
+  b3(v17):
+    v18 = CloneAs v3, v17, v0, v2 layout=L0 fields=[0, 1] request=29
+    v19 = PropGetAndTest v0 key="x" siteCache=30
+    TestAndBranch v19 -> taken b4(), notTaken b5()
+  b4():
+    Return v18
+  b5():
+    Return
+}
+function f3 name="conversions" module=m0 thisType={type=anything} parameters=[{type=number}, {type=int}, {type=i32}, {type=string}] results=[{type=anything}] {
+  b0(v0: number @Double, v1: int @Int64, v2: i32 @Int32, v3: string @Cell):
+    v4 @JSValue = Box v0
+    v5 @Double = Unbox v4
+    v6 @Double = IntegerToNumber v1
+    v7 @Int64 = NumberToInteger v6
+    v8 @Int64 = WidenInteger v2
+    v9 @Int32 = NarrowInteger v8
+    v10 @Cell32 = Compress v3
+    v11 @Cell = Decode v10
+    Return v4
+}
+data d0 root=Array{contents=anything}

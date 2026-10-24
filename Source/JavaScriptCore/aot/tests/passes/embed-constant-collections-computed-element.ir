@@ -1,0 +1,93 @@
+# A literal with one element, key or value that is computed when the program runs is not embedded
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 0
+# CHECK-NOT: table
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="name" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="concatenatedElement" parameters=[{type=string}] results=[{type=Set<string>}] {
+  b0(v0: string):
+    v1 = String string="a"
+    v2 = String string="b"
+    v3 = Add v2, v0
+    v4 = NewArray v1, v3 contents=string
+    v5 = CallBuiltin -, v4 overload=Set/2 builtinCallForm=Whole
+    Return v5
+}
+# CHECK-LABEL: function f0 name="concatenatedElement"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v1, v3 contents=string
+# CHECK-NEXT: = CallBuiltin -, v4 overload=Set/2
+# CHECK-NOT: FromData
+
+function f1 name="elementReadFromVariable" results=[{type=Set<anything>}] {
+  b0():
+    v0 = String string="a"
+    v1 = GetModuleVariable variable=g0
+    v2 = NewArray v0, v1 contents=anything
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f1 name="elementReadFromVariable"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v0, v1 contents=anything
+# CHECK-NEXT: = CallBuiltin -, v2 overload=Set/2
+# CHECK-NOT: FromData
+
+function f2 name="elementIsAnArray" results=[{type=Set<anything>}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=number
+    v2 = NewArray v1 contents=Array<number>
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f2 name="elementIsAnArray"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v1 contents=Array<number>
+# CHECK-NEXT: = CallBuiltin -, v2 overload=Set/2
+# CHECK-NOT: FromData
+
+function f3 name="computedKey" parameters=[{type=number}] results=[{type=Map<number, string>}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = String string="one"
+    v3 = NewArray v1, v2 contents=anything
+    v4 = Add v0, v1
+    v5 = String string="next"
+    v6 = NewArray v4, v5 contents=anything
+    v7 = NewArray v3, v6 contents=Array<anything>
+    v8 = CallBuiltin -, v7 overload=Map/2 builtinCallForm=Whole
+    Return v8
+}
+# CHECK-LABEL: function f3 name="computedKey"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v1, v2 contents=anything
+# CHECK: = NewArray v4, v5 contents=anything
+# CHECK-NEXT: = NewArray v3, v6
+# CHECK-NEXT: = CallBuiltin -, v7 overload=Map/2
+# CHECK-NOT: FromData
+
+function f4 name="computedValue" parameters=[{type=anything}] results=[{type=Map<string, anything>}] {
+  b0(v0: anything):
+    v1 = String string="k"
+    v2 = Integer integer=1
+    v3 = NewArray v1, v2 contents=anything
+    v4 = String string="j"
+    v5 = Call v0
+    v6 = NewArray v4, v5 contents=anything
+    v7 = NewArray v3, v6 contents=Array<anything>
+    v8 = CallBuiltin -, v7 overload=Map/2 builtinCallForm=Whole
+    Return v8
+}
+# CHECK-LABEL: function f4 name="computedValue"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v1, v2 contents=anything
+# CHECK: = NewArray v4, v5 contents=anything
+# CHECK-NEXT: = NewArray v3, v6
+# CHECK-NEXT: = CallBuiltin -, v7 overload=Map/2
+# CHECK-NOT: FromData
+# CHECK-NOT: data d0

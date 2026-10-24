@@ -1,0 +1,106 @@
+# An object that takes the other path is never asked for a name that one path alone asks for: the names asked on every path say which layouts are expected
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:1
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Node" constructor=f0 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="List" base=L0 constructor=f1 fields=[{key="listItems" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Token" constructor=f9 fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="tokenText" declared={type=string} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Mark" constructor=f10 fields=[{key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="Node" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+
+function f2 name="nameAskedOnOnePath" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="pos"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="listItems"
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="nameAskedOnOnePath"
+# CHECK-NEXT: b0(v0: anything ~ L0|L1, v1: boolean):
+
+function f3 name="nameAskedOnBothPaths" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="pos"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="listItems"
+    Return v3
+  b2():
+    v4 = PropGet v0 key="listItems"
+    v5 = Add v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f3 name="nameAskedOnBothPaths"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+
+function f4 name="pathThatIsSeldomTakenDoesNotCount" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="pos"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="listItems"
+    Return v3
+  b2() frequency=Unlikely:
+    Return v2
+}
+# CHECK-LABEL: function f4 name="pathThatIsSeldomTakenDoesNotCount"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+
+function f5 name="pathThatThrowsDoesNotCount" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="pos"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="listItems"
+    Return v3
+  b2():
+    Throw v2
+}
+# CHECK-LABEL: function f5 name="pathThatThrowsDoesNotCount"
+# CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+
+function f6 name="loopThatMayNotRun" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="pos"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = PropGet v0 key="listItems"
+    Jump -> next b1()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="loopThatMayNotRun"
+# CHECK-NEXT: b0(v0: anything ~ L0|L1, v1: boolean):
+
+function f7 name="everyNameCountsWhereTheOthersLeaveTooManyLayouts" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="tag"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="tokenText"
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f7 name="everyNameCountsWhereTheOthersLeaveTooManyLayouts"
+# CHECK-NEXT: b0(v0: anything ~ L2, v1: boolean):
+
+function f8 name="allocates" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L2
+    v1 = NewObject layout=L3
+    Return v0
+}
+
+function f9 name="Token" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f10 name="Mark" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3

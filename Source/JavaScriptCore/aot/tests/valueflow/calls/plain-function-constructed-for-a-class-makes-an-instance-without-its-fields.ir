@@ -1,0 +1,68 @@
+# class Shape { constructor(side) { this.side = side } }  class Circle extends Shape {}  class Dot extends Shape {}
+# Object.setPrototypeOf(Circle, function () {})  new Circle(3).side  new Dot(4).side  Reflect.construct(function () {}, [], Shape).side is the same door: f3 constructed under a class.
+# super() runs whatever lies above the class. A function that is no class makes the instance of the class that is new.target, and none of the constructors above the class runs.
+# One object stands for every Circle, and the tables say of it that the allocation in Shape is followed by a store under `side`. What the function has made has no `side`: the read may answer undefined.
+# Nobody puts anything above Dot: its `side` is there from creation.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[ofCircle]]: {{*}} = PropGet {{*}} key="side"
+# CHECK-NEXT: : undefined|int = AssumeType [[ofCircle]] castType=undefined|int
+# CHECK: [[ofDot]]: {{*}} = PropGet {{*}} key="side"
+# CHECK-NEXT: : int = AssumeType [[ofDot]] castType=int
+# CHECK-LABEL: function f2 name="Circle"
+# CHECK: = SuperConstructList {{*}} callees=[f1, f3]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f1 fields=[{key="side" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Circle" base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Dot" base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = NewClosure function=f3
+    v9 = Call v7, -, v6, v8
+    v10 = Integer integer=3
+    v11 = Construct v6, -, v10
+    v12 = PropGet v11 key="side"
+    v13 = ResolveHeritage v2
+    v14 = NewClosure function=f4
+    v15 = NewClass v14, v2, v13 layout=L2
+    v16 = FinishClass v15 layout=L2
+    v17 = Integer integer=4
+    v18 = Construct v16, -, v17
+    v19 = PropGet v18 key="side"
+    v20 = Add v12, v19
+    Return v20
+}
+function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="side"
+    Return v3
+}
+function f2 name="Circle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="nothing" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="Dot" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    Return v4
+}

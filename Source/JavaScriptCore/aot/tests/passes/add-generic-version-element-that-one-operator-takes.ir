@@ -1,0 +1,73 @@
+# `sum + list[index]`: what an array hands out may be undefined whatever its elements are declared to be. Where one operator takes the number and nothing else does, the operator tests it:
+# no copy of the code behind the read. The exit stays where the value is used twice, where it is compared, where it is returned, where it may be an object, and for the read of a field.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="added" parameters=[{type=Array<number>}, {type=i32}, {type=number}] results=[{type=number}] {
+  b0(v0: Array<number>, v1: i32, v2: number):
+    v3 = ElemGet v0, v1
+    v4 = AssumeType v3 castType=undefined|number
+    v5 = Check v4 castType=number
+    v6 = Add v2, v5
+    Return v6
+}
+# CHECK-LABEL: function f0 name="added"
+# CHECK-NOT: TypeTest
+# CHECK: = Add v2,
+# CHECK-NOT: TypeTest
+
+function f1 name="usedTwice" parameters=[{type=Array<number>}, {type=i32}] results=[{type=number}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = AssumeType v2 castType=undefined|number
+    v4 = Check v3 castType=number
+    v5 = Add v4, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="usedTwice"
+# CHECK: = TypeTest v3 testedType=number
+
+function f2 name="returned" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = AssumeType v2 castType=undefined|number
+    v4 = Check v3 castType=number
+    Return v4
+}
+# CHECK-LABEL: function f2 name="returned"
+# CHECK: = TypeTest v3 testedType=number
+
+function f3 name="mayBeAnObject" parameters=[{type=Array}, {type=i32}, {type=number}] results=[{type=number}] {
+  b0(v0: Array, v1: i32, v2: number):
+    v3 = ElemGet v0, v1
+    v4 = Check v3 castType=number
+    v5 = Add v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f3 name="mayBeAnObject"
+# CHECK: = TypeTest v3 testedType=number
+
+function f4 name="readOfAField" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = PropGet v0 key="size"
+    v3 = AssumeType v2 castType=undefined|number
+    v4 = Check v3 castType=number
+    v5 = Add v1, v4
+    Return v5
+}
+# CHECK-LABEL: function f4 name="readOfAField"
+# CHECK: = TypeTest v3 testedType=number
+
+function f5 name="compared" parameters=[{type=Array<number>}, {type=i32}, {type=number}] results=[{type=boolean}] {
+  b0(v0: Array<number>, v1: i32, v2: number):
+    v3 = ElemGet v0, v1
+    v4 = AssumeType v3 castType=undefined|number
+    v5 = Check v4 castType=number
+    v6 = Less v2, v5
+    Return v6
+}
+# CHECK-LABEL: function f5 name="compared"
+# CHECK: = TypeTest v4 testedType=number

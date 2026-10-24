@@ -1,0 +1,43 @@
+# A typed body whose parameter is tested for the type that the body checks for is typed again from its parameters.
+# An expected type is set where it says more than the type does, also in a body that keeps a check of its own and so waits for its generic version, where nothing is cut.
+#   f1 keepsCheck: the value at the entrance is checked for string, which the entrance takes in; the result of the call is checked for number, which stays
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Assertion
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    Return
+}
+function f1 name="keepsCheck" module=m0 position=100 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Check v0 castType=string site=w0
+    v3 = CallDirect v2 function=f2
+    v4 = Check v3 castType=number site=w1
+    Return v4
+}
+function f2 name="takesString" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=string site=w2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string):
+    v1 = Check v0 castType=string site=w2
+    v2 = PropGet v1 key="length"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="keepsCheck" module=m0 position=100 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK-LABEL: function f2 name="takesString" module=m0 position=200 role=EntryChecks
+# The typed bodies.
+# CHECK: name="keepsCheck" module=m0 position=100 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w0}, {type=anything}]
+# CHECK-NEXT: b0(v0: string, v1: anything):
+# CHECK: castType=number site=w1
+# CHECK: name="takesString" module=m0 position=200 flags=[IsChecked]

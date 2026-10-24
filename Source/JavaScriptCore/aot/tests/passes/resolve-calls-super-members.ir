@@ -1,0 +1,313 @@
+# A member read through super is looked up from the class above the home object, and what the lookup proves is called directly with this. What it finds only while guards of classes hold is called directly behind one test of them, with the read and the call as they were in an unlikely block
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 12
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=number} owner=L0 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+layout L0 kind=Instance name="Shape" constructor=f0 fields=[{key="label" declared={type=anything}}] staticFields=[{key="count" variable=g0}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f1 mutability=Fixed}, {key="area" kind=Getter function=f2 mutability=Fixed}, {key="area" kind=Setter function=f3 mutability=Fixed}, {key="edges" kind=Getter function=f4 mutability=Fixed}, {key="scale" kind=Setter function=f5 mutability=Fixed}, {key="counted" function=f6 mutability=Fixed}, {key="patched" function=f7}, {key="create" side=Static function=f8 mutability=Fixed}] namedMembers=[{key="run" function=f1 mutability=Fixed}, {key="area" kind=Getter function=f2 mutability=Fixed}, {key="area" kind=Setter function=f3 mutability=Fixed}, {key="edges" kind=Getter function=f4 mutability=Fixed}, {key="scale" kind=Setter function=f5 mutability=Fixed}, {key="counted" function=f6 mutability=Fixed}, {key="patched" function=f7}, {key="create" side=Static function=f8 mutability=Fixed}]}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f10 mutability=Fixed}, {key="create" side=Static function=f11 mutability=Fixed}]}
+layout L2 kind=Instance name="Disc" base=L1 constructor=f12 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="RelinkedCircle" base=L0 constructor=f13 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="Legacy" constructor=f14 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="OpenShape" base=L0 constructor=f15 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="BelowOpenShape" base=L5 constructor=f16 flags=[HasHeritage] flow={baseState=Layout base=L5} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="area" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="area" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="edges" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="scale" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f6 name="counted" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Return
+}
+function f7 name="patched" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f8 name="create" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f9 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f10 name="run" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f11 name="create" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f12 name="Disc" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f13 name="RelinkedCircle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f14 name="Legacy" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f15 name="OpenShape" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f16 name="BelowOpenShape" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f17 name="method-of-the-base" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f17 name="method-of-the-base"
+# CHECK: v4: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0, v2 function=f1
+# CHECK-NOT: function=f10
+# CHECK-NOT: SuperGet
+function f18 name="nearest-class-above-the-home-object" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f12}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f12, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f18 name="nearest-class-above-the-home-object"
+# CHECK: v4: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0, v2 function=f10
+# CHECK-NOT: function=f1
+# CHECK-NOT: SuperGet
+function f19 name="getter-two-classes-above" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f12}] results=[{type=anything}] {
+  b0(v0: anything, v1: f12):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="area"
+    Return v3
+}
+# CHECK-LABEL: function f19 name="getter-two-classes-above"
+# CHECK: = CallDirect v0 function=f2
+# CHECK-NOT: SuperGet
+function f20 name="static-method-of-the-base" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1
+    v3 = SuperGet v2, v0 key="create"
+    v4 = Call v3, v0 calleeKey="create"
+    Return v4
+}
+# CHECK-LABEL: function f20 name="static-method-of-the-base"
+# CHECK: v3: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0 function=f8
+# CHECK-NOT: function=f11
+# CHECK-NOT: SuperGet
+function f21 name="prototype-method-from-a-static-method" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f21 name="prototype-method-from-a-static-method"
+# CHECK: = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call v4, v0, v2 calleeKey="run"
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+function f22 name="getter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="area"
+    Return v3
+}
+# CHECK-LABEL: function f22 name="getter"
+# CHECK: = CallDirect v0 function=f2
+# CHECK-NOT: SuperGet
+function f23 name="setter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    SuperSet v3, v0, v2 key="area"
+    Return
+}
+# CHECK-LABEL: function f23 name="setter"
+# CHECK: = CallDirect v0, v2 function=f3
+# CHECK-NEXT: Return
+# CHECK-NOT: SuperSet
+function f24 name="setter-without-getter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="scale"
+    Return v3
+}
+# CHECK-LABEL: function f24 name="setter-without-getter"
+# CHECK-NOT: CallDirect
+# CHECK: : undefined = Undefined
+# CHECK-NOT: SuperGet
+# CHECK-NOT: CallDirect
+function f25 name="getter-without-setter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    SuperSet v3, v0, v2 key="edges"
+    Return
+}
+# CHECK-LABEL: function f25 name="getter-without-setter"
+# CHECK: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: SuperSet v3, v0, v2 key="edges"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f26 name="finds-nothing" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="label"
+    Return v3
+}
+# CHECK-LABEL: function f26 name="finds-nothing"
+# CHECK: : undefined = Undefined
+# CHECK-NOT: SuperGet
+function f27 name="store-finds-nothing" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    SuperSet v3, v0, v2 key="label"
+    Return
+}
+# CHECK-LABEL: function f27 name="store-finds-nothing"
+# CHECK: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: SuperSet v3, v0, v2 key="label"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f28 name="method-read-as-a-value" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="run"
+    Return v3
+}
+# CHECK-LABEL: function f28 name="method-read-as-a-value"
+# CHECK: = SuperGet v2, v0 key="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f29 name="static-field-of-the-base" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1
+    v3 = SuperGet v2, v0 key="count"
+    Return v3
+}
+# CHECK-LABEL: function f29 name="static-field-of-the-base"
+# CHECK: = SuperGet v2, v0 key="count"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f30 name="computed-key" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0, v2
+    v5 = Call v4, v0
+    Return v5
+}
+# CHECK-LABEL: function f30 name="computed-key"
+# CHECK: = SuperGet v3, v0, v2
+# CHECK-NEXT: = Call v4, v0
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+function f31 name="home-object-of-a-plain-function" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f14}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f14, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f31 name="home-object-of-a-plain-function"
+# CHECK: = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call v4, v0, v2 calleeKey="run"
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+function f32 name="prototype-link-may-change" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f13}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f13, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f32 name="prototype-link-may-change"
+# CHECK: [[unchanged32]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L3}]
+# CHECK-NEXT: Branch [[unchanged32]] -> taken [[direct32]](), notTaken [[byName32]]()
+# CHECK: [[direct32]]():
+# CHECK-NEXT: = CallDirect v0, v2 function=f1
+# CHECK: [[byName32]]() frequency=Unlikely:
+# CHECK-NEXT: [[read32]]: anything = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call [[read32]], v0, v2 calleeKey="run"
+# CHECK-NOT: Unchanged
+function f33 name="static-link-may-change" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f13}] results=[{type=anything}] {
+  b0(v0: anything, v1: f13):
+    v2 = GetSuperBase v1
+    v3 = SuperGet v2, v0 key="create"
+    v4 = Call v3, v0 calleeKey="create"
+    Return v4
+}
+# CHECK-LABEL: function f33 name="static-link-may-change"
+# CHECK: [[unchanged33]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L3 side=Static}]
+# CHECK-NEXT: Branch [[unchanged33]] -> taken [[direct33]](), notTaken [[byName33]]()
+# CHECK: [[direct33]]():
+# CHECK-NEXT: = CallDirect v0 function=f8
+# CHECK: [[byName33]]() frequency=Unlikely:
+# CHECK-NEXT: [[read33]]: anything = SuperGet v2, v0 key="create"
+# CHECK-NEXT: = Call [[read33]], v0 calleeKey="create"
+# CHECK-NOT: Unchanged
+function f34 name="class-between-may-gain-the-name" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f16}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f16, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f34 name="class-between-may-gain-the-name"
+# CHECK: [[unchanged34]]: boolean = AreMembersUnchanged conditions=[{layout=L5 key="run"}]
+# CHECK-NEXT: Branch [[unchanged34]] -> taken [[direct34]](), notTaken [[byName34]]()
+# CHECK: [[direct34]]():
+# CHECK-NEXT: = CallDirect v0, v2 function=f1
+# CHECK: [[byName34]]() frequency=Unlikely:
+# CHECK-NEXT: [[read34]]: anything = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call [[read34]], v0, v2 calleeKey="run"
+# CHECK-NOT: Unchanged
+function f35 name="method-may-be-replaced" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="patched"
+    v4 = Call v3, v0 calleeKey="patched"
+    Return v4
+}
+# CHECK-LABEL: function f35 name="method-may-be-replaced"
+# CHECK: [[unchanged35]]: boolean = AreMembersUnchanged conditions=[{layout=L0 key="patched"}]
+# CHECK-NEXT: Branch [[unchanged35]] -> taken [[direct35]](), notTaken [[byName35]]()
+# CHECK: [[direct35]]():
+# CHECK-NEXT: = CallDirect v0 function=f7
+# CHECK: [[byName35]]() frequency=Unlikely:
+# CHECK-NEXT: [[read35]]: anything = SuperGet v2, v0 key="patched"
+# CHECK-NEXT: = Call [[read35]], v0 calleeKey="patched"
+# CHECK-NOT: Unchanged
+function f36 name="method-with-capture" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9):
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="counted"
+    v4 = Call v3, v0 calleeKey="counted"
+    Return v4
+}
+# CHECK-LABEL: function f36 name="method-with-capture"
+# CHECK: = SuperGet v2, v0 key="counted"
+# CHECK-NEXT: = Call v3, v0 calleeKey="counted"
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+function f37 name="called-on-another-object" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: f9, v2: anything):
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v2 calleeKey="run"
+    Return v5
+}
+# CHECK-LABEL: function f37 name="called-on-another-object"
+# CHECK-NOT: = CallDirect v0

@@ -1,0 +1,64 @@
+# Every field of a record, a value and an operation of the wire that only the engine has may stand in the text of a program as read, and what the text says wins over what the reader computes
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=3 kind=Assertion function=f2
+# CHECK-NEXT: layout L0 name="I" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesObject deferredFunction=f2 isUnchangedDuringActivation=true cause=UnknownWriter witness={function=f2 value=v1 location={module=m0 position=5}}} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=anything}}] ownFieldCount=1 flow={allocation=NeverAllocated members=[L1]}
+# CHECK-NEXT: layout L1 kind=Instance name="C" module=m0 constructor=f1 fields=[{key="x" declared={type=number}}, {key="y" declared={type=anything}}] supertypes=[L0] ownFieldCount=2 flow={baseState=None members=[L1, L2] allocationClasses=[0, 2] constructorOrders=[{fields=[1, 0]}, {}] fieldCreation=OnlyAtConstruction observedUses=[Serialized, ReachesTypedParse] cause=PropertyAdded witness={function=f1 location={position=9}} impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeys=["z", @@iterator] addedKeysAreComplete=true ownAccessors=[{key="z" kind=Getter function=f2}, {key="z" kind=Setter function=f2}] ownAccessorsAreComplete=true closureEnvironmentField=1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{side=Static kind=Getter function=f2}, {key="m" function=f2 mutability=Fixed closureUse=CalledOnly}] namedMembers=[{key="m" function=f2 mutability=Fixed closureUse=CalledOnly}, {key="m" side=Static kind=Getter function=f2}]}
+# CHECK-NEXT: layout L2 kind=Instance name="D" module=m0 base=L1 flags=[HasHeritage] flow={baseState=Layout base=L1}
+# CHECK-NEXT: layout L3 kind=Instance name="E" module=m0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map}
+# CHECK-NEXT: variable g0 name="g" module=m0 declared={type=anything} flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead reads=NeverRead deferral=CapturesNothing cause=LimitReached}
+# CHECK-NEXT: module m0 path="/a.js" displayPath="a.js" body=f0 namespaceLayout=L(m0)
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayBeCloned]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+# CHECK-NEXT: function f2 name="values" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0|L1|L2}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=3 isTailCall=true module=m0}, {callee=f1 callPosition=4 parent=1 isConstruction=true module=m0}]
+# CHECK-NEXT: b0(v0: anything ~ number @JSValue, v1: L0|L1|L2 ~ L1 @Cell):
+# CHECK-NEXT: v2: number ~ i32 @Double = PropGet v0 key="n" accessSite=3 receivers=[L0, L1, ..]
+# CHECK-NEXT: v3: L0 @Cell = NewObject -, v2 layout=L0 fields=[0] allocationSite=1 storage=Frame allocationClass=2
+# CHECK-NEXT: v4: int[0, 9] @Int32 = Integer integer=4
+# CHECK-NEXT: v5: Array<number, proven, Double> = NewArray v2 contents=number capacity=v4 allocationSite=2 literalStorage=Profiled
+# CHECK-NEXT: v6: undefined|string ~ "a" = Call v0 accessSite=4 callees=[f1, f2, builtin(MathMax), ..]
+# CHECK-NEXT: v7 = Call v0 callees=[f1]
+# CHECK-NEXT: v8: number = Check v0 castType=number cause=MayFail
+# CHECK-NEXT: v9 = ElemGet v0, v4 [keyIsIntegral]
+# CHECK-NEXT: v10 = CallDirect function=f0 accessSite=5 [isNeverInlined, isAfterInlinedHead, isConstruction]
+# CHECK-NEXT: v11 = Strcat v6 [isLikelyKey]
+# CHECK-NEXT: v12 = NewClosure function=f0 allocationSite=6 storage=FrameUntilMaterialized
+# CHECK-NEXT: v13 = Undefined @5:2
+# CHECK-NEXT: v14 = Call v0 @6:1
+# CHECK-NEXT: ReturnCall v14 casts=[{declared={type=string} resolution=Check}, {declared={type=anything} resolution=Upcast}] requirement=Allowed @7:1
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+
+typesite w0 module=m0 position=3 kind=Assertion function=f2
+layout L0 name="I" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesObject deferredFunction=f2 isUnchangedDuringActivation=true cause=UnknownWriter witness={function=f2 value=v1 location={module=m0 position=5}}} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=anything}}] ownFieldCount=1 flow={allocation=NeverAllocated members=[L1]}
+layout L1 kind=Instance name="C" module=m0 constructor=f1 fields=[{key="x" declared={type=number}}, {key="y" declared={type=anything}}] supertypes=[L0] ownFieldCount=2 flow={baseState=None members=[L1, L2] allocationClasses=[0, 2] constructorOrders=[{fields=[1, 0]}, {}] fieldCreation=OnlyAtConstruction observedUses=[Serialized, ReachesTypedParse] cause=PropertyAdded witness={function=f1 location={position=9}} impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] keys=NeverEnumerated addedKeys=["z", @@iterator] addedKeysAreComplete=true ownAccessors=[{key="z" kind=Getter function=f2}, {key="z" kind=Setter function=f2}] ownAccessorsAreComplete=true closureEnvironmentField=1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{side=Static kind=Getter function=f2}, {key="m" function=f2 mutability=Fixed closureUse=CalledOnly}] namedMembers=[{key="m" function=f2 mutability=Fixed closureUse=CalledOnly}, {key="m" side=Static kind=Getter function=f2}]}
+layout L2 kind=Instance name="D" module=m0 base=L1 flags=[HasHeritage] flow={baseState=Layout base=L1}
+layout L3 kind=Instance name="E" module=m0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map}
+variable g0 name="g" module=m0 declared={type=anything} flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead reads=NeverRead deferral=CapturesNothing cause=LimitReached}
+module m0 path="/a.js" displayPath="a.js" body=f0 namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayBeCloned] {
+  b0():
+    Return
+}
+function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f2 name="values" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0|L1|L2}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=3 isTailCall=true module=m0}, {callee=f1 callPosition=4 parent=1 isConstruction=true module=m0}] {
+  b0(v0: anything ~ number @JSValue, v1: L0|L1|L2 ~ L1 @Cell):
+    v2: number ~ i32 @Double = PropGet v0 key="n" accessSite=3 receivers=[L0, L1, ..]
+    v3: L0 @Cell = NewObject -, v2 layout=L0 fields=[0] allocationSite=1 storage=Frame allocationClass=2
+    v4: int[0, 9] @Int32 = Integer integer=4
+    v5: Array<number, proven, Double> = NewArray v2 contents=number capacity=v4 allocationSite=2 literalStorage=Profiled
+    v6: undefined|string ~ "a" = Call v0 accessSite=4 callees=[f1, f2, builtin(MathMax), ..]
+    v7 = Call v0 callees=[f1]
+    v8: number = Check v0 castType=number cause=MayFail
+    v9 = ElemGet v0, v4 [keyIsIntegral]
+    v10 = CallDirect function=f0 accessSite=5 [isNeverInlined, isAfterInlinedHead, isConstruction]
+    v11 = Strcat v6 [isLikelyKey]
+    v12 = NewClosure function=f0 allocationSite=6 storage=FrameUntilMaterialized
+    v13 = Undefined @5:2
+    v14 = Call v0 @6:1
+    ReturnCall v14 casts=[{declared={type=string} resolution=Check}, {declared={type=anything} resolution=Upcast}] requirement=Allowed @7:1
+}
+entry module=m0

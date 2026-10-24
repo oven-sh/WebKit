@@ -1,0 +1,106 @@
+# codePointAt has three sides. Inside the string a code unit that is no lead surrogate is the answer, an integer: one comparison lets those below the surrogates through. A lead surrogate may begin a pair and keeps the call, in unlikely code. Outside the string the answer is undefined. A position that is proven to lie inside the string needs no comparison with the length, and still the test for a lead surrogate
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="integerPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100]):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="integerPosition"
+# CHECK-NOT: TypeTest
+# CHECK: [[length0]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[isInside0]]: boolean = Less v1, [[length0]]
+# CHECK-NEXT: Branch [[isInside0]] -> taken [[inside0]](| 0), notTaken [[outside0]](| 0)
+# CHECK: [[inside0]]([[position0]]: int[{{*}}]):
+# CHECK-NEXT: [[unit0]]: int[0, 65535] = GetStringCodeUnit v0, [[position0]]
+# CHECK-NEXT: [[firstSurrogate0]]:{{*}}= Integer integer=55296
+# CHECK-NEXT: [[isBelow0]]: boolean = Less [[unit0]], [[firstSurrogate0]]
+# CHECK-NEXT: Branch [[isBelow0]] -> taken [[below0]](), notTaken [[fromSurrogatesOn0]]()
+# CHECK: [[outside0]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = Undefined
+# CHECK: [[below0]]():
+# CHECK-NEXT: Jump -> next {{*}}([[unit0]])
+# CHECK: [[fromSurrogatesOn0]]() frequency=Unlikely:
+# CHECK-NEXT: [[mask0]]:{{*}}= Integer integer=64512
+# CHECK-NEXT: [[kind0]]:{{*}}= BitAnd [[unit0]], [[mask0]]
+# CHECK-NEXT: [[leadKind0]]:{{*}}= Integer integer=55296
+# CHECK-NEXT: [[isLead0]]: boolean = StrictEq [[kind0]], [[leadKind0]]
+# CHECK-NEXT: Branch [[isLead0]] -> taken [[lead0]](), notTaken [[single0]]()
+# CHECK: [[lead0]]() frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, [[position0]] overload=StringPrototypeCodePointAt/0
+# CHECK: [[single0]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next {{*}}([[unit0]])
+# CHECK-NOT: CallBuiltin
+
+function f1 name="numberPosition" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="numberPosition"
+# CHECK: [[isInt32Of1]]:{{*}}= TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch [[isInt32Of1]] -> taken [[integer1]](| 0), notTaken [[other1]](| 0)
+# CHECK: [[other1]]([[rest1]]: number) frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, [[rest1]] overload=StringPrototypeCodePointAt/0
+# CHECK: [[unit1]]: int[0, 65535] = GetStringCodeUnit v0, [[position1]]
+# CHECK: = Undefined
+# CHECK: [[isLead1]]: boolean = StrictEq
+# CHECK-NEXT: Branch [[isLead1]] -> taken [[lead1]](), notTaken [[single1]]()
+# CHECK: [[lead1]]() frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, [[position1]] overload=StringPrototypeCodePointAt/0
+# CHECK: [[single1]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next {{*}}([[unit1]])
+# CHECK-NOT: CallBuiltin
+
+function f2 name="positionProvenInside" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100]):
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f2 name="positionProvenInside"
+# CHECK: b1():
+# CHECK-NEXT: [[unit2]]: int[0, 65535] = GetStringCodeUnit v0, v1
+# CHECK-NOT: = Less v1
+# CHECK: [[isLead2]]: boolean = StrictEq
+# CHECK-NEXT: Branch [[isLead2]] -> taken [[lead2]](), notTaken [[single2]]()
+# CHECK-NOT: = Less
+# CHECK: [[lead2]]() frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+# CHECK: [[single2]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next {{*}}([[unit2]])
+# CHECK-NOT: = Less
+
+function f3 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+}
+# CHECK-LABEL: function f3 name="inUnlikelyCode"
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
+# CHECK-NOT: GetStringCodeUnit
+
+function f4 name="positionIsOmitted" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0 overload=StringPrototypeCodePointAt/0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="positionIsOmitted"
+# CHECK-NOT: GetStringCodeUnit
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=StringPrototypeCodePointAt/0
+# CHECK-NOT: GetStringCodeUnit

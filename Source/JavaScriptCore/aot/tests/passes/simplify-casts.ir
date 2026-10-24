@@ -1,0 +1,180 @@
+# Casts that remove nothing or repeat a dominating cast, and accesses by name that a dominating cast narrows
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 11
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="checkOfSubset" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Check v0 castType=number
+    Return v1
+}
+# CHECK-LABEL: function f0 name="checkOfSubset"
+# CHECK-NOT: Check
+
+function f1 name="fallibleCheck" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number
+    Return v1
+}
+# CHECK-LABEL: function f1 name="fallibleCheck"
+# CHECK: Check v0
+
+function f2 name="checkThroughUpcast" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Upcast v0 castType=anything
+    v2 = Check v1 castType=number
+    Return v2
+}
+# CHECK-LABEL: function f2 name="checkThroughUpcast"
+# CHECK-NOT: Check
+
+function f3 name="nestedEqualChecks" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number
+    v2 = Check v1 castType=number
+    Return v2
+}
+# CHECK-LABEL: function f3 name="nestedEqualChecks"
+# CHECK: Check v0
+# CHECK-NOT: Check
+
+function f4 name="upcastToEqualType" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Upcast v0 castType=number
+    Return v1
+}
+# CHECK-LABEL: function f4 name="upcastToEqualType"
+# CHECK-NOT: Upcast
+# CHECK: Return v0
+
+function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 ~ i32 = Check v0 castType=number
+    Return v1
+}
+# CHECK-LABEL: function f5 name="expectedTypeIsRetained"
+# CHECK-NOT: Check
+# CHECK: Upcast v0
+# CHECK: Return v1
+
+function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Check v0 castType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v0 castType=number
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="repeatedBelow"
+# CHECK: Check v0
+# CHECK: b1():
+# CHECK-NEXT: Return v2
+# CHECK-NOT: Check
+
+function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Check v0 castType=number
+    Return v2
+  b2():
+    v3 = Check v0 castType=number
+    Return v3
+}
+# CHECK-LABEL: function f7 name="repeatedInSiblingBranches"
+# CHECK: b1():
+# CHECK-NEXT: Check v0
+# CHECK: b2():
+# CHECK-NEXT: Check v0
+
+function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Check v0 castType=number
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Integer integer=0
+    Return v4
+}
+# CHECK-LABEL: function f8 name="repeatedUnderHandler"
+# CHECK: Check v0
+# CHECK-NOT: Check
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK: b2():
+# CHECK-NEXT: Return v1
+
+function f9 name="checkInCoveredBlock" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything) handler=b2():
+    v1 = Check v0 castType=number
+    Jump -> next b1()
+  b1():
+    v2 = Check v0 castType=number
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Check v0 castType=number
+    Return v4
+}
+# CHECK-LABEL: function f9 name="checkInCoveredBlock"
+# CHECK: b0(v0: anything) handler=b2():
+# CHECK: b1():
+# CHECK-NEXT: Return v1
+# CHECK: b2() role=CatchHandler:
+# CHECK: = Check v0
+
+function f10 name="accessThroughDominatingCheck" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0
+    v2 = PropGet v0 key="x"
+    Return v2
+}
+# CHECK-LABEL: function f10 name="accessThroughDominatingCheck"
+# CHECK: PropGet v1 key="x"
+
+function f11 name="accessToUndeclaredName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0
+    v2 = PropGet v0 key="y"
+    Return v2
+}
+# CHECK-LABEL: function f11 name="accessToUndeclaredName"
+# CHECK: PropGet v1 key="y"
+
+function f12 name="accessNotDominatedByCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Check v0 castType=L0
+    Return v2
+  b2():
+    v3 = PropGet v0 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f12 name="accessNotDominatedByCheck"
+# CHECK: PropGet v0 key="x"
+
+function f13 name="repeatedObjectCoercibleCheck" parameters=[{type=undefined|L0}] results=[{type=boolean}] {
+  b0(v0: undefined|L0):
+    v1 = RequireObjectCoercible v0 nullishAccess=Read name="x"
+    v2 = PropGet v1 key="x" receivers=[L0]
+    v3 = RequireObjectCoercible v0 nullishAccess=Read name="x"
+    v4 = PropGet v3 key="x" receivers=[L0]
+    v5 = StrictEq v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f13 name="repeatedObjectCoercibleCheck"
+# CHECK: RequireObjectCoercible v0
+# CHECK: PropGet v1
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: PropGet v1

@@ -1,0 +1,40 @@
+# the reason of a decline is a member of the enum of its kind, two reasons at one place are two declines, and a decline without a reason prints none
+# OPTIONS: report=Declines
+# RUN: losses declines HotCallNotResolved,f0,at=0:1,reason=TooManyCallees GeneratorLoopNotFused,f0,at=0:2,reason=InlineDepth GeneratorLoopNotFused,f0,at=0:3 ArrayChainNotFused,f0,at=0:4,reason=CallbacksInterfere StringBuilderNotCreated,f0,at=0:5,count=3,reason=TooFewAppends AllocationNotSunk,f0,at=0:6,reason=Thrown+Returned TypedResultNotSelected,f0,at=0:7,reason=NoTarget LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopNotVersioned,f0,at=0:8,reason=SeveralEntries LoopNotVersioned,f0,at=0:8,reason=NotCounted LoopBoundNotClamped,f0,at=0:10,reason=BoundNotInvariant ResultNodeInterpreted,f0,at=0:11,reason=TooManyNodes HotCallNotInlined,f0,at=0:12,count=2 LoopNotVersioned,f0,at=0:13,reason=None LoopNotVersioned,f0,at=0:14 AllocationNotSunk,f0,at=0:15 GeneratorLoopNotFused,f0,at=0:16,reason=None
+# CHECK: declines 16 of 17 added
+# CHECK-NEXT: HotCallNotResolved f0 - 0:1 None [0] reason=TooManyCallees
+# CHECK-NEXT: GeneratorLoopNotFused f0 - 0:2 None [0] reason=InlineDepth
+# CHECK-NEXT: GeneratorLoopNotFused f0 - 0:3 None [0] reason=Unknown
+# CHECK-NEXT: ArrayChainNotFused f0 - 0:4 None [0] reason=CallbacksInterfere
+# CHECK-NEXT: StringBuilderNotCreated f0 - 0:5 None [3] reason=TooFewAppends
+# CHECK-NEXT: AllocationNotSunk f0 - 0:6 None [0] reason=Returned+Thrown
+# CHECK-NEXT: TypedResultNotSelected f0 - 0:7 None [0] reason=NoTarget
+# CHECK-NEXT: LoopNotVersioned f0 - 0:8 None [0] reason=SeveralEntries
+# CHECK-NEXT: LoopNotVersioned f0 - 0:8 None [0] reason=NotCounted
+# CHECK-NEXT: LoopBoundNotClamped f0 - 0:10 None [0] reason=BoundNotInvariant
+# CHECK-NEXT: ResultNodeInterpreted f0 - 0:11 None [0] reason=TooManyNodes
+# CHECK-NEXT: HotCallNotInlined f0 - 0:12 None [2]
+# CHECK-NEXT: LoopNotVersioned f0 - 0:13 None [0]
+# CHECK-NEXT: LoopNotVersioned f0 - 0:14 None [0]
+# CHECK-NEXT: AllocationNotSunk f0 - 0:15 None [0]
+# CHECK-NEXT: GeneratorLoopNotFused f0 - 0:16 None [0]
+# RUN(ABSENT): losses declines HotCallNotInlined,f0,at=0:12,count=2 LoopNotVersioned,f0,at=0:13,reason=None LoopNotVersioned,f0,at=0:14 AllocationNotSunk,f0,at=0:15 GeneratorLoopNotFused,f0,at=0:16,reason=None
+# ABSENT: declines 5 of 5 added
+# ABSENT-NOT: reason=
+# RUN(A): losses declines HotCallNotResolved,f0,reason=NotCounted
+# RUN(B): losses declines HotCallNotInlined,f0,reason=None
+# RUN(C): losses declines AllocationNotSunk,f0,reason=Returned+
+# RUN(D): losses declines LoopNotVersioned,f0,reason=NotCounted,reason=NotCounted
+# RUN(E): losses limit-hits MaxLayoutsInType,reason=NotCounted
+# A: error: bad argument HotCallNotResolved,f0,reason=NotCounted
+# B: error: bad argument HotCallNotInlined,f0,reason=None
+# C: error: bad argument AllocationNotSunk,f0,reason=Returned+
+# D: error: bad argument LoopNotVersioned,f0,reason=NotCounted,reason=NotCounted
+# E: error: bad argument MaxLayoutsInType,reason=NotCounted
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

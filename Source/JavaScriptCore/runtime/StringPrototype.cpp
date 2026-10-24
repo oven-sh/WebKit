@@ -23,8 +23,10 @@
 #include "config.h"
 #include "StringPrototype.h"
 
+#include "AOTRemovableFeature.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
+#include "ExceptionHelpers.h"
 #include "ExecutableBaseInlines.h"
 #include "FrameTracers.h"
 #include "IntegrityInlines.h"
@@ -65,22 +67,22 @@ static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncMatchAll);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplaceAll);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSlice);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstr);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToUpperCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLocaleCompare);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleLowerCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleUpperCase);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimStart);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimEnd);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncEndsWith);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncNormalize);
@@ -334,8 +336,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncRepeatCharacter, (JSGlobalObject* global
     return JSValue::encode(repeatCharacter(globalObject, character, repeatCount));
 }
 
-JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, const CallData& callData, const String& replacementString, JSValue replaceValue)
+NEVER_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, const CallData& callData, const String& replacementString, JSValue replaceValue)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, static_cast<JSString* (*)(VM&, JSGlobalObject*, JSString*, JSValue, const CallData&, const String&, JSValue)>(replaceUsingRegExpSearch));
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto source = string->view(globalObject);
@@ -390,12 +393,12 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     Vector<String, 16> replacements;
 
     // This is either a loop (if global is set) or a one-way (if not).
-    if (global && callData.type == CallData::Type::JS) {
+    if (global && CachedCall::supports(callData)) {
         // regExp->numSubpatterns() + 1 for pattern args, + 2 for match start and string
         int argCount = regExp->numSubpatterns() + 1 + 2;
         if (hasNamedCaptures)
             ++argCount;
-        JSFunction* func = uncheckedDowncast<JSFunction>(replaceValue);
+        JSObject* func = asObject(replaceValue);
         std::optional<CachedCall> cachedCallHolder;
         CachedCall* cachedCall = nullptr;
         while (true) {
@@ -409,9 +412,8 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 OUT_OF_MEMORY(globalObject, scope);
 
             if (!cachedCall) {
-                cachedCallHolder.emplace(globalObject, func, argCount);
+                cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, func, callData, argCount);
                 RETURN_IF_EXCEPTION(scope, nullptr);
-                cachedCall = &cachedCallHolder.value();
             }
             cachedCall->clearArguments();
             JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, groupsStructure ? groupsStructure : globalObject->nullPrototypeObjectStructure()) : nullptr;
@@ -597,8 +599,9 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
 }
 
-JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
+NEVER_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, static_cast<JSString* (*)(VM&, JSGlobalObject*, JSString*, JSValue, JSValue)>(replaceUsingRegExpSearch));
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String replacementString;
@@ -689,7 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
         RegExpObject* regExpObject = dynamicDowncast<RegExpObject>(searchValue);
         if (regExpObject && regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[likely]] {
             if (!regExpObject->regExp()->global()) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, ReplaceAllNonGlobalRegExpError);
             JSString* string = thisValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[likely]]
@@ -707,7 +710,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
+                return throwVMTypeError(globalObject, scope, ReplaceAllNonGlobalRegExpError);
         }
 
         JSObject* searchObject = asObject(searchValue);

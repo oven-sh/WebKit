@@ -1,0 +1,20 @@
+# Past the limit a literal string gets no word, and a string that has one is not counted again
+# FORM: Prepared
+# OPTIONS: limit=MaxLiteralStrings:2
+# RUN: pass NumberLiteralStrings
+# STATISTIC: LiteralStringsNumbered = 2
+# LOSS: MaxLiteralStrings x1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
+  b0(v0: "south"|"north"):
+    Return
+}
+
+function f1 name="numberedAgain" parameters=[{type="south"}] results=[{type=undefined}] {
+  b0(v0: "south"):
+    Return
+}
+# CHECK: 0 ""
+# CHECK-NEXT: 1 "south"
+# CHECK-NEXT: outcome: Unchanged

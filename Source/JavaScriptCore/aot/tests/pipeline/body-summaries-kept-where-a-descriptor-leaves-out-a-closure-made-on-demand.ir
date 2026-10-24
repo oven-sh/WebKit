@@ -1,0 +1,64 @@
+# const changes = [point => void Object.defineProperty(point, "x", { writable: false }), point => void Object.defineProperty(point, "x", { get: () => 3.5, configurable: true })]
+# Both literals are records of one layout. DeferClosuresInFields lets whoever reads `get` make the closure, and the first literal leaves `get` out.
+# Native code that asks such a record for `get` finds the closure or nothing, and runs no code of the program: what was proven of the call before the pass is proven behind it.
+# With VerifyEachPass the summaries that are computed from nothing must lie within the kept ones behind every pass.
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass references=narrow heat=EverythingIsHot disable=pass:InlineCalls
+# STATISTIC: FieldsDeferringClosures >= 1
+# STATISTIC: BodySummariesKept >= 1
+# CHECK-LABEL: name="makesReadOnly"
+# CHECK: = DefineOwnProperty {{*}} descriptorFlags=[HasWritable]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Descriptor" fields=[{key="configurable" declared={type=anything}}, {key="get" declared={type=anything}}, {key="writable" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Call v0, -, v5
+    v7 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Call v1, -, v8
+    v10 = PropGet v5 key="x"
+    v11 = PropGet v8 key="x"
+    v12 = Add v10, v11
+    Return v12
+}
+function f1 name="makesReadOnly" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="x"
+    v4 = Boolean boolean=false
+    v5 = NewObject -, v4 layout=L1 fields=[2]
+    v6 = FinishObject v5
+    v7 = Call v2, v1, v0, v3, v6
+    v8 = Undefined
+    Return v8
+}
+function f2 name="makesGetter" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="x"
+    v4 = NewClosure function=f3
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5, v4 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Call v2, v1, v0, v3, v7
+    v9 = Undefined
+    Return v9
+}
+function f3 name="get" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = Double number=3.5
+    Return v0
+}

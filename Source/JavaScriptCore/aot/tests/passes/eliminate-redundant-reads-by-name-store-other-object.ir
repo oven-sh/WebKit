@@ -1,0 +1,80 @@
+# A store by name changes one field, and only in objects its receiver may be, so a read from another object or field is still replaced
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L1 name="Size" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L2 name="Pair" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L2] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="receiverHasAnotherLayout" parameters=[{type=L0}, {type=L1}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L1, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict receivers=[L1]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f0 name="receiverHasAnotherLayout"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = Upcast v3 castType=anything
+
+function f1 name="receiverIsAnotherAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v3, v1 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f1 name="receiverIsAnotherAllocation"
+# CHECK: PropSet v3, v1 key="x"
+# CHECK-NEXT: v5: anything = Upcast v0 castType=anything
+
+function f2 name="receiverCameFromOutside" parameters=[{type=L0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything, v2: anything):
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    PropSet v0, v2 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f2 name="receiverCameFromOutside"
+# CHECK: PropSet v0, v2 key="x"
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+
+function f3 name="unknownReceiverAndObjectNobodyHolds" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    PropSet v0, v2 key="x" mode=Strict
+    v5 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f3 name="unknownReceiverAndObjectNobodyHolds"
+# CHECK: PropSet v0, v2 key="x"
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+
+function f4 name="receiverMayBeTheObjectAndFieldIsAnother" parameters=[{type=L2}, {type=L2}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L2, v1: L2, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L2] level=Proven
+    PropSet v1, v2 key="y" mode=Strict receivers=[L2]
+    v5 = GetSlot v0 key="x" receivers=[L2] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f4 name="receiverMayBeTheObjectAndFieldIsAnother"
+# CHECK: PropSet v1, v2 key="y"
+# CHECK-NEXT: v5: anything = Upcast v3 castType=anything
+
+function f5 name="receiverMayBeTheObject" parameters=[{type=L0}, {type=L0}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: L0, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f5 name="receiverMayBeTheObject"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = GetSlot v0 key="x"

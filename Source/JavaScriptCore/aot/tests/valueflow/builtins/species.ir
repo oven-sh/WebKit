@@ -1,0 +1,63 @@
+# The program may keep the object that its species constructor has made. Native code fills that object: it defines the elements of the receiver there and stores a length, under names that nobody lists.
+# RUN: valueflow-solve calls
+# CHECK: f0 v16 -> ArrayPrototypeSlice
+# CHECK-NEXT: f0 v20 -> unknown f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 flags=[HasHeritage]
+layout L1 kind=Instance name="Other" constructor=f3
+variable g0 name="Other" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=Array
+    v5 = NewClosure function=f1
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L0
+    v8 = NewClosure function=f2
+    DefineMethod v7, v8 layout=L0 side=Static methodKind=Getter key=@@species
+    v10 = FinishClass v7 layout=L0
+    v11 = Construct v10
+    v12 = NewClosure function=f4
+    v13 = Builtin builtin=ArrayPrototypePush
+    v14 = Call v13, v11, v12
+    v15 = Builtin builtin=ArrayPrototypeSlice
+    v16 = Call v15, v11
+    v17 = GetModuleVariable variable=g1
+    v18 = Integer integer=0
+    v19 = ElemGet v17, v18
+    v20 = Call v19
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Other"
+    Return v2
+}
+function f3 name="Other" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PutModuleVariable v3 variable=g1
+    Return v3
+}
+function f4 name="element" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

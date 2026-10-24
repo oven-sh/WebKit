@@ -1,0 +1,14 @@
+# A module and a function are a whole text, and no line is printed that the text does not have
+# RUN: round-trip
+# CHECK: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="only" module=m0
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: round trip: same
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="only" results=[{type=undefined}] {
+  b0():
+    Return
+}

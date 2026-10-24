@@ -1,0 +1,67 @@
+# The closure of a constructor function that is evaluated once and captures nothing is the one of the closure table. A constructor function with many closures or with a capture, and a function that constructs no layout, get a cell of their own
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place program
+# RUN(CLASS): tables layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Once" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Twice" constructor=f2 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Capturing" constructor=f3 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f5
+    v6 = ToNumber v1
+    v7 = NewClosure v6 function=f3
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f4
+    v10 = Call v1, -, v9
+    Return
+}
+function f1 name="Once" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f2 name="Twice" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f3 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: number, v1: L2):
+    PropSet v1, v0 key="x" mode=Strict
+    Return
+}
+function f4 name="plain" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="createsTwice" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return
+}
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v2: f1 = NewClosure function=f1 {{*}}closureForm=Singleton
+# CHECK: v7: f3 = NewClosure v6 function=f3 {{*}}allocation=0
+# CHECK: v9: f4 = NewClosure function=f4 {{*}}closureForm=Slim
+# CHECK-LABEL: function f5 name="createsTwice"
+# CHECK: v2: f2 = NewClosure function=f2 {{*}}allocation=0
+# CHECK-NOT: closureForm=Singleton
+
+# CLASS: class index=L0 {{*}}evaluation=ProvenOnce
+# CLASS: class index=L1 {{*}}evaluation=PredictedOnce
+# CLASS: class index=L2 {{*}}evaluation=PredictedOnce

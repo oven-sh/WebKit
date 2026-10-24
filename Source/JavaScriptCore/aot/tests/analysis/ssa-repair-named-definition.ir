@@ -1,0 +1,102 @@
+# A use may name any definition of its variable, also one that does not reach it: the repair gives it the definition that does
+# FORM: Prepared
+# RUN: repair function=f0 variable=v7,v4
+# RUN(OTHER): repair function=f0 variable=v4,v7
+# RUN(ARMS): repair function=f1 variable=v5,v6,v3
+# RUN(HANDLER): repair function=f2 variable=v6,v2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number, v3: number):
+    v4 = Add v2, v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Negate v4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Sub v2, v3
+    Jump -> next b3()
+  b3():
+    v8 = Mul v4, v4
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Return v2
+}
+# CHECK: function f0
+# CHECK: v4: number = Add v2, v3
+# CHECK: Jump -> next b1(v4)
+# CHECK: b1([[H]]: number):
+# CHECK: v6: number = Negate [[H]]
+# CHECK: Branch v1 -> taken b2(), notTaken b3([[H]])
+# CHECK: b2():
+# CHECK: v7: number = Sub v2, v3
+# CHECK: Jump -> next b3(v7)
+# CHECK: b3([[J]]: number):
+# CHECK: v8: number = Mul [[J]], [[J]]
+# CHECK: Branch v0 -> taken b1([[J]]), notTaken b4()
+# CHECK: b4():
+# OTHER: function f0
+# OTHER: Jump -> next b1(v4)
+# OTHER: b1([[H]]: number):
+# OTHER: v6: number = Negate [[H]]
+# OTHER: Branch v1 -> taken b2(), notTaken b3([[H]])
+# OTHER: Jump -> next b3(v7)
+# OTHER: b3([[J]]: number):
+# OTHER: v8: number = Mul [[J]], [[J]]
+# OTHER: Branch v0 -> taken b1([[J]]), notTaken b4()
+# OTHER: b4():
+
+function f1 name="definedInBothArms" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number, v2: number):
+    v3 = Add v1, v2
+    v4 = Negate v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Sub v1, v2
+    Jump -> next b3()
+  b2():
+    v6 = Mul v1, v2
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v4
+    Return v7
+}
+# ARMS: function f1
+# ARMS: v3: number = Add v1, v2
+# ARMS: v4: number = Negate v3
+# ARMS: Jump -> next b3(v5)
+# ARMS: Jump -> next b3(v6)
+# ARMS: b3([[J]]: number):
+# ARMS: v7: number = Add [[J]], v4
+
+function f2 name="usedInHandler" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = Sub v0, v1
+    v7 = Call v4, -, v2
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v8 = CatchValue
+    Return v2
+}
+# HANDLER: function f2
+# HANDLER: v2: number = Add v0, v1
+# HANDLER: b1() handler=b3(v2):
+# HANDLER: v5: anything = Call v4, -, v2
+# HANDLER: v6: number = Sub v0, v1
+# HANDLER: Jump -> next [[A]]()
+# HANDLER: b2():
+# HANDLER: Return v6
+# HANDLER: b3([[P]]: number) role=CatchHandler:
+# HANDLER: Return [[P]]
+# HANDLER: [[A]]() handler=b3(v6):
+# HANDLER: v7: anything = Call v4, -, v6
+# HANDLER: Jump -> next b2()

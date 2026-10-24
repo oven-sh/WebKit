@@ -1,0 +1,66 @@
+# A program that hands a callback with known callers and a narrow summary to a built-in builds: what selection puts in place of the call has no effect beyond the call, whether the operands are literals of the caller or its parameters
+# RUN: compile
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v0, v0 contents=anything holes=[]
+    v3 = String string="x"
+    v4 = String string="{}"
+    v5 = Builtin builtin=PromiseResolve
+    v6 = Builtin builtin=Promise
+    v7 = Call v5, v6, v0
+    v8 = NewClosure function=f1
+    v9 = Builtin builtin=JSONStringify
+    v10 = Call v9, -, v1, v8
+    v11 = Builtin builtin=JSONParse
+    v12 = Call v11, -, v4, v8
+    v13 = Builtin builtin=StringPrototypeReplace
+    v14 = Call v13, v3, v3, v8
+    v15 = Builtin builtin=StringPrototypeReplaceAll
+    v16 = Call v15, v3, v3, v8
+    v17 = Builtin builtin=FunctionPrototypeApply
+    v18 = Call v17, v8, v1
+    v19 = Builtin builtin=ReflectApply
+    v20 = Call v19, -, v8, v1, v2
+    v21 = Builtin builtin=PromisePrototypeThen
+    v22 = Call v21, v7, v8
+    v23 = Builtin builtin=FinalizationRegistry
+    v24 = Construct v23, -, v8
+    v25 = CallDirect v1, v2, v3, v4, v7 function=f2
+    v26 = GetModuleVariable variable=g0
+    Return
+}
+function f1 name="callback" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="ran"
+    PutModuleVariable v3 variable=g0
+    Return v2
+}
+function f2 name="throughParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=JSONStringify
+    v7 = Call v6, -, v0, v5
+    v8 = Builtin builtin=JSONParse
+    v9 = Call v8, -, v3, v5
+    v10 = Builtin builtin=StringPrototypeReplace
+    v11 = Call v10, v2, v2, v5
+    v12 = Builtin builtin=StringPrototypeReplaceAll
+    v13 = Call v12, v2, v2, v5
+    v14 = Builtin builtin=FunctionPrototypeApply
+    v15 = Call v14, v5, v0
+    v16 = Builtin builtin=ReflectApply
+    v17 = Call v16, -, v5, v0, v1
+    v18 = Builtin builtin=PromisePrototypeThen
+    v19 = Call v18, v4, v5
+    v20 = Builtin builtin=FinalizationRegistry
+    v21 = Construct v20, -, v5
+    Return
+}

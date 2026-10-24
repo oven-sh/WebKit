@@ -340,7 +340,7 @@ void Node::convertToCallWasm(FrozenValue* callee)
     m_opInfo = callee;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 void Node::convertToCallFFI(FrozenValue* callee)
 {
     ASSERT(m_op == Call);

@@ -1,0 +1,93 @@
+# An append that is not reached from a literal appends to another array, so the literal gets no room for it
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="list" declared={type=undefined|Array<anything>} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType]}
+function f0 name="appendInTheOtherArm" parameters=[{type=undefined|Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: undefined|Array<anything>, v1: anything):
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v3 = NewArray v1 contents=anything
+    Jump -> next b3(v3)
+  b2(v4: Array<anything>):
+    v5 = CallBuiltin v4, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b3(v4)
+  b3(v6: Array<anything>):
+    Return v6
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: capacity=
+
+function f1 name="appendInFrontOfTheLiteral" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean):
+    v3 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v2 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewArray v1 contents=anything
+    Jump -> next b2(v4)
+  b2(v5: Array<anything>):
+    Return v5
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: capacity=
+
+function f2 name="appendBehindTheJoin" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean, v3: boolean):
+    Branch v2 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = NewArray v1 contents=anything
+    Jump -> next b2(v4)
+  b2(v5: Array<anything>):
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v6 = CallBuiltin v5, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK: [[c2]]: {{*}} = Integer integer=2
+# CHECK-NEXT: = NewArray v1 contents=anything capacity=[[c2]]
+
+function f3 name="appendInALaterTurnOfTheLoop" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean, v3: boolean):
+    Jump -> next b1(v0)
+  b1(v4: Array<anything>):
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v6 = NewArray v1 contents=anything
+    Jump -> next b4(v6)
+  b3():
+    v7 = CallBuiltin v4, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4(v4)
+  b4(v8: Array<anything>):
+    Branch v3 -> taken b1(v8), notTaken b5()
+  b5():
+    Return v8
+}
+# CHECK-LABEL: function f3
+# CHECK: [[c3]]: {{*}} = Integer integer=2
+# CHECK-NEXT: = NewArray v1 contents=anything capacity=[[c3]]
+
+function f4 name="appendToTheArrayThatTheFieldHeld" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    v2 = GetSlot v0 key="list" receivers=[L0] level=Proven
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v4 = NewArray v1 contents=anything
+    Jump -> next b3(v4)
+  b2(v5: Array<anything>):
+    v6 = CallBuiltin v5, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b3(v5)
+  b3(v7: Array<anything>):
+    PutSlot v0, -, v7 key="list" receivers=[L0] level=Proven
+    v9 = Undefined
+    Return v9
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: capacity=

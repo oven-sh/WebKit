@@ -539,6 +539,9 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
     if (callData.type == CallData::Type::JS) {
         cachedCall.emplace(globalObject, uncheckedDowncast<JSFunction>(replaceValue), 3);
         RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCall.emplace(globalObject, asObject(replaceValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     size_t endOfLastMatch = 0;
@@ -1236,6 +1239,8 @@ static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObjec
     case Yarr::SpecificPattern::LeadingSpacesStar:
     case Yarr::SpecificPattern::Atom:
     case Yarr::SpecificPattern::Newlines:
+    case Yarr::SpecificPattern::CharacterClass:
+    case Yarr::SpecificPattern::CharacterClassPlus:
     case Yarr::SpecificPattern::OptionalCRThenLF:
     case Yarr::SpecificPattern::None:
         break;

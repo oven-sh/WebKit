@@ -1,0 +1,464 @@
+# A compact function gets no test at all, so there is no fast path in it and no copy behind a failed test: every operation whose outcome is not proven stands once, in its general form,
+# and what is expected of a value stays with the value. A cold function that two functions call may run, and keeps the test in front of its accesses. So does a function with a heavy loop. The small loop of a compact function has no test either:
+# the function goes through the short schedule of generic versions, in which no test is placed
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls limit=MaxWarmCodeValues:1
+# In a very large program the tests of a cold function are placed behind the rounds: the pipeline is stopped behind that step
+# RUN: pipeline RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f5
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return
+}
+
+function f1 name="nothingLeadsHere" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v0
+    v5 = Call v2, -, v0
+    v6 = Call v2, -, v0
+    v7 = Call v2, -, v0
+    v8 = Call v2, -, v0
+    v9 = Call v2, -, v0
+    v10 = Call v2, -, v0
+    v11 = Call v2, -, v0
+    v12 = Call v2, -, v0
+    v13 = Call v2, -, v0
+    v14 = Call v2, -, v0
+    v15 = Call v2, -, v0
+    v16 = Call v2, -, v0
+    v17 = Call v2, -, v0
+    v18 = Call v2, -, v0
+    v19 = Call v2, -, v0
+    v20 = Call v2, -, v0
+    v21 = Call v2, -, v0
+    v22 = Call v2, -, v0
+    v23 = Call v2, -, v0
+    v24 = Call v2, -, v0
+    v25 = Call v2, -, v0
+    v26 = Call v2, -, v0
+    v27 = Call v2, -, v0
+    v28 = Call v2, -, v0
+    v29 = Call v2, -, v0
+    v30 = Call v2, -, v0
+    v31 = Call v2, -, v0
+    v32 = Call v2, -, v0
+    v33 = Call v2, -, v0
+    v34 = Call v2, -, v0
+    v35 = Call v2, -, v0
+    v36 = Call v2, -, v0
+    v37 = Call v2, -, v0
+    v38 = Call v2, -, v0
+    v39 = Call v2, -, v0
+    v40 = Call v2, -, v0
+    v41 = Call v2, -, v0
+    v42 = Call v2, -, v0
+    v43 = Call v2, -, v0
+    v44 = Call v2, -, v0
+    v45 = Call v2, -, v0
+    v46 = Call v2, -, v0
+    v47 = Call v2, -, v0
+    v48 = Call v2, -, v0
+    v49 = Call v2, -, v0
+    v50 = Call v2, -, v0
+    v51 = Call v2, -, v0
+    v52 = Call v2, -, v0
+    v53 = Call v2, -, v0
+    v54 = Call v2, -, v0
+    v55 = Call v2, -, v0
+    v56 = Call v2, -, v0
+    v57 = Call v2, -, v0
+    v58 = Call v2, -, v0
+    v59 = Call v2, -, v0
+    v60 = Call v2, -, v0
+    v61 = Call v2, -, v0
+    v62 = Call v2, -, v0
+    v63 = Call v2, -, v0
+    v64 = Call v2, -, v0
+    v65 = Call v2, -, v0
+    v66 = Call v2, -, v0
+    v67 = Call v2, -, v0
+    v68 = Call v2, -, v0
+    v69 = Call v2, -, v0
+    v70 = Call v2, -, v0
+    v71 = Call v2, -, v0
+    v72 = Call v2, -, v0
+    v73 = PropGet v0 key="x"
+    PropSet v0, v73 key="x"
+    v75 = CallDirect v0 function=f4
+    Return v73
+}
+# CHECK-LABEL: function f1 name="nothingLeadsHere"
+# CHECK: b0(v0: anything ~ L0):
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: TypeTest
+# CHECK: PropSet v0, {{*}} key="x"
+# CHECK-NOT: PropGet
+# CHECK-NOT: PropSet
+
+function f2 name="neitherHere" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v0
+    v5 = Call v2, -, v0
+    v6 = Call v2, -, v0
+    v7 = Call v2, -, v0
+    v8 = Call v2, -, v0
+    v9 = Call v2, -, v0
+    v10 = Call v2, -, v0
+    v11 = Call v2, -, v0
+    v12 = Call v2, -, v0
+    v13 = Call v2, -, v0
+    v14 = Call v2, -, v0
+    v15 = Call v2, -, v0
+    v16 = Call v2, -, v0
+    v17 = Call v2, -, v0
+    v18 = Call v2, -, v0
+    v19 = Call v2, -, v0
+    v20 = Call v2, -, v0
+    v21 = Call v2, -, v0
+    v22 = Call v2, -, v0
+    v23 = Call v2, -, v0
+    v24 = Call v2, -, v0
+    v25 = Call v2, -, v0
+    v26 = Call v2, -, v0
+    v27 = Call v2, -, v0
+    v28 = Call v2, -, v0
+    v29 = Call v2, -, v0
+    v30 = Call v2, -, v0
+    v31 = Call v2, -, v0
+    v32 = Call v2, -, v0
+    v33 = Call v2, -, v0
+    v34 = Call v2, -, v0
+    v35 = Call v2, -, v0
+    v36 = Call v2, -, v0
+    v37 = Call v2, -, v0
+    v38 = Call v2, -, v0
+    v39 = Call v2, -, v0
+    v40 = Call v2, -, v0
+    v41 = Call v2, -, v0
+    v42 = Call v2, -, v0
+    v43 = Call v2, -, v0
+    v44 = Call v2, -, v0
+    v45 = Call v2, -, v0
+    v46 = Call v2, -, v0
+    v47 = Call v2, -, v0
+    v48 = Call v2, -, v0
+    v49 = Call v2, -, v0
+    v50 = Call v2, -, v0
+    v51 = Call v2, -, v0
+    v52 = Call v2, -, v0
+    v53 = Call v2, -, v0
+    v54 = Call v2, -, v0
+    v55 = Call v2, -, v0
+    v56 = Call v2, -, v0
+    v57 = Call v2, -, v0
+    v58 = Call v2, -, v0
+    v59 = Call v2, -, v0
+    v60 = Call v2, -, v0
+    v61 = Call v2, -, v0
+    v62 = Call v2, -, v0
+    v63 = Call v2, -, v0
+    v64 = Call v2, -, v0
+    v65 = Call v2, -, v0
+    v66 = Call v2, -, v0
+    v67 = Call v2, -, v0
+    v68 = Call v2, -, v0
+    v69 = Call v2, -, v0
+    v70 = Call v2, -, v0
+    v71 = Call v2, -, v0
+    v72 = Call v2, -, v0
+    v73 = CallDirect v0 function=f4
+    Return v73
+}
+# CHECK-LABEL: function f2 name="neitherHere"
+
+function f3 name="hasLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="x"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v0
+    v7 = Call v5, -, v0
+    v8 = Call v5, -, v0
+    v9 = Call v5, -, v0
+    v10 = Call v5, -, v0
+    v11 = Call v5, -, v0
+    v12 = Call v5, -, v0
+    v13 = Call v5, -, v0
+    v14 = Call v5, -, v0
+    v15 = Call v5, -, v0
+    v16 = Call v5, -, v0
+    v17 = Call v5, -, v0
+    v18 = Call v5, -, v0
+    v19 = Call v5, -, v0
+    v20 = Call v5, -, v0
+    v21 = Call v5, -, v0
+    v22 = Call v5, -, v0
+    v23 = Call v5, -, v0
+    v24 = Call v5, -, v0
+    v25 = Call v5, -, v0
+    v26 = Call v5, -, v0
+    v27 = Call v5, -, v0
+    v28 = Call v5, -, v0
+    v29 = Call v5, -, v0
+    v30 = Call v5, -, v0
+    v31 = Call v5, -, v0
+    v32 = Call v5, -, v0
+    v33 = Call v5, -, v0
+    v34 = Call v5, -, v0
+    v35 = Call v5, -, v0
+    v36 = Call v5, -, v0
+    v37 = Call v5, -, v0
+    v38 = Call v5, -, v0
+    v39 = Call v5, -, v0
+    v40 = Call v5, -, v0
+    v41 = Call v5, -, v0
+    v42 = Call v5, -, v0
+    v43 = Call v5, -, v0
+    v44 = Call v5, -, v0
+    v45 = Call v5, -, v0
+    v46 = Call v5, -, v0
+    v47 = Call v5, -, v0
+    v48 = Call v5, -, v0
+    v49 = Call v5, -, v0
+    v50 = Call v5, -, v0
+    v51 = Call v5, -, v0
+    v52 = Call v5, -, v0
+    v53 = Call v5, -, v0
+    v54 = Call v5, -, v0
+    v55 = Call v5, -, v0
+    v56 = Call v5, -, v0
+    v57 = Call v5, -, v0
+    v58 = Call v5, -, v0
+    v59 = Call v5, -, v0
+    v60 = Call v5, -, v0
+    v61 = Call v5, -, v0
+    v62 = Call v5, -, v0
+    v63 = Call v5, -, v0
+    v64 = Call v5, -, v0
+    v65 = Call v5, -, v0
+    v66 = Call v5, -, v0
+    v67 = Call v5, -, v0
+    v68 = Call v5, -, v0
+    v69 = Call v5, -, v0
+    v70 = Call v5, -, v0
+    v71 = Call v5, -, v0
+    v72 = Call v5, -, v0
+    v73 = Call v5, -, v0
+    v74 = Call v5, -, v0
+    v75 = Call v5, -, v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f3 name="hasLoop"
+# CHECK: = TypeTest v0 testedType=L0
+
+function f4 name="calledByTwo" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v0
+    v5 = Call v2, -, v0
+    v6 = Call v2, -, v0
+    v7 = Call v2, -, v0
+    v8 = Call v2, -, v0
+    v9 = Call v2, -, v0
+    v10 = Call v2, -, v0
+    v11 = Call v2, -, v0
+    v12 = Call v2, -, v0
+    v13 = Call v2, -, v0
+    v14 = Call v2, -, v0
+    v15 = Call v2, -, v0
+    v16 = Call v2, -, v0
+    v17 = Call v2, -, v0
+    v18 = Call v2, -, v0
+    v19 = Call v2, -, v0
+    v20 = Call v2, -, v0
+    v21 = Call v2, -, v0
+    v22 = Call v2, -, v0
+    v23 = Call v2, -, v0
+    v24 = Call v2, -, v0
+    v25 = Call v2, -, v0
+    v26 = Call v2, -, v0
+    v27 = Call v2, -, v0
+    v28 = Call v2, -, v0
+    v29 = Call v2, -, v0
+    v30 = Call v2, -, v0
+    v31 = Call v2, -, v0
+    v32 = Call v2, -, v0
+    v33 = Call v2, -, v0
+    v34 = Call v2, -, v0
+    v35 = Call v2, -, v0
+    v36 = Call v2, -, v0
+    v37 = Call v2, -, v0
+    v38 = Call v2, -, v0
+    v39 = Call v2, -, v0
+    v40 = Call v2, -, v0
+    v41 = Call v2, -, v0
+    v42 = Call v2, -, v0
+    v43 = Call v2, -, v0
+    v44 = Call v2, -, v0
+    v45 = Call v2, -, v0
+    v46 = Call v2, -, v0
+    v47 = Call v2, -, v0
+    v48 = Call v2, -, v0
+    v49 = Call v2, -, v0
+    v50 = Call v2, -, v0
+    v51 = Call v2, -, v0
+    v52 = Call v2, -, v0
+    v53 = Call v2, -, v0
+    v54 = Call v2, -, v0
+    v55 = Call v2, -, v0
+    v56 = Call v2, -, v0
+    v57 = Call v2, -, v0
+    v58 = Call v2, -, v0
+    v59 = Call v2, -, v0
+    v60 = Call v2, -, v0
+    v61 = Call v2, -, v0
+    v62 = Call v2, -, v0
+    v63 = Call v2, -, v0
+    v64 = Call v2, -, v0
+    v65 = Call v2, -, v0
+    v66 = Call v2, -, v0
+    v67 = Call v2, -, v0
+    v68 = Call v2, -, v0
+    v69 = Call v2, -, v0
+    v70 = Call v2, -, v0
+    v71 = Call v2, -, v0
+    v72 = Call v2, -, v0
+    v73 = PropGet v0 key="x"
+    PropSet v0, v73 key="x"
+    Return v73
+}
+# CHECK-LABEL: function f4 name="calledByTwo"
+# CHECK: = TypeTest v0 testedType=L0
+
+function f5 name="mostOfItStandsOutsideItsLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v0
+    v5 = Call v3, -, v0
+    v6 = Call v3, -, v0
+    v7 = Call v3, -, v0
+    v8 = Call v3, -, v0
+    v9 = Call v3, -, v0
+    v10 = Call v3, -, v0
+    v11 = Call v3, -, v0
+    v12 = Call v3, -, v0
+    v13 = Call v3, -, v0
+    v14 = Call v3, -, v0
+    v15 = Call v3, -, v0
+    v16 = Call v3, -, v0
+    v17 = Call v3, -, v0
+    v18 = Call v3, -, v0
+    v19 = Call v3, -, v0
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = Call v21, -, v0
+    v23 = Call v21, -, v0
+    v24 = Call v21, -, v0
+    v25 = Call v21, -, v0
+    v26 = Call v21, -, v0
+    v27 = Call v21, -, v0
+    v28 = Call v21, -, v0
+    v29 = Call v21, -, v0
+    v30 = Call v21, -, v0
+    v31 = Call v21, -, v0
+    v32 = Call v21, -, v0
+    v33 = Call v21, -, v0
+    v34 = Call v21, -, v0
+    v35 = Call v21, -, v0
+    v36 = Call v21, -, v0
+    v37 = Call v21, -, v0
+    v38 = Call v21, -, v0
+    v39 = Call v21, -, v0
+    v40 = Call v21, -, v0
+    v41 = Call v21, -, v0
+    v42 = Call v21, -, v0
+    v43 = Call v21, -, v0
+    v44 = Call v21, -, v0
+    v45 = Call v21, -, v0
+    v46 = Call v21, -, v0
+    v47 = Call v21, -, v0
+    v48 = Call v21, -, v0
+    v49 = Call v21, -, v0
+    v50 = Call v21, -, v0
+    v51 = Call v21, -, v0
+    v52 = Call v21, -, v0
+    v53 = Call v21, -, v0
+    v54 = Call v21, -, v0
+    v55 = Call v21, -, v0
+    v56 = Call v21, -, v0
+    v57 = Call v21, -, v0
+    v58 = Call v21, -, v0
+    v59 = Call v21, -, v0
+    v60 = Call v21, -, v0
+    v61 = Call v21, -, v0
+    v62 = Call v21, -, v0
+    v63 = Call v21, -, v0
+    v64 = Call v21, -, v0
+    v65 = Call v21, -, v0
+    v66 = Call v21, -, v0
+    v67 = Call v21, -, v0
+    v68 = Call v21, -, v0
+    v69 = Call v21, -, v0
+    v70 = Call v21, -, v0
+    v71 = Call v21, -, v0
+    v72 = Call v21, -, v0
+    v73 = Call v21, -, v0
+    v74 = Call v21, -, v0
+    v75 = Call v21, -, v0
+    v76 = Call v21, -, v0
+    v77 = Call v21, -, v0
+    v78 = Call v21, -, v0
+    v79 = Call v21, -, v0
+    v80 = Call v21, -, v0
+    v81 = Call v21, -, v0
+    v82 = Call v21, -, v0
+    v83 = Call v21, -, v0
+    v84 = Call v21, -, v0
+    v85 = Call v21, -, v0
+    v86 = Call v21, -, v0
+    v87 = Call v21, -, v0
+    v88 = Call v21, -, v0
+    v89 = Call v21, -, v0
+    v90 = Call v21, -, v0
+    v91 = Call v21, -, v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v93 = PropGet v0 key="x"
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v93
+}
+# CHECK-LABEL: function f5 name="mostOfItStandsOutsideItsLoop"
+# CHECK-NOT: TypeTest

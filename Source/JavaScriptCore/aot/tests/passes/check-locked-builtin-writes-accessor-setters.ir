@@ -1,0 +1,15 @@
+# A store that runs a setter of a locked prototype on another object writes to that object and to no built-in object
+# FORM: AsRead
+# RUN: pipeline CheckLockedBuiltinWrites
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything @10
+    v1 = Null @11
+    PropSet v0, v1 key="__proto__" @12
+    Return
+}
+# CHECK: PropSet {{*}}, v1 key="__proto__"

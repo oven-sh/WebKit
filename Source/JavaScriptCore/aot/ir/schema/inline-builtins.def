@@ -1,0 +1,64 @@
+enum OwnKeysKind { | engine Keys Names Symbols All }
+enum PrototypeQuery { | engine ObjectGetPrototypeOf ReflectGetPrototypeOf }
+enum PrototypeChange { | engine ObjectSetPrototypeOf ReflectSetPrototypeOf }
+enum DateField { | engine FullYear Month Date Day Hours Minutes Seconds TimezoneOffset Year }
+enum TimeZone { | engine Local UTC }
+enum MathFunctionKind { | engine Sin Sinh Cos Cosh Tan Tanh ASin ASinh ACos ACosh ATan ATanh Log Log10 Log2 Cbrt Exp Expm1 Log1p }
+enum AtomicsOperation { | engine Load Store Add And CompareExchange Exchange Or Sub Xor }
+enum AccessDirection { | engine Read Write }
+enum NumberKind { | engine Signed Unsigned Float BigInt }
+enum Endianness { | engine Little Big }
+enum SearchValueKind { | engine String RegExp }
+
+inline ArrayAt ArrayIndexOf ArrayIncludes ; reads(ArrayStorage, Elements[Array]) ; family ArrayBuiltin
+inline ArrayJoin ArrayConcat ArrayShift ArrayPop ArraySlice ArraySplice ArrayUnshift ; asOverload ; family ArrayBuiltin
+inline ArraySplicePrefix ; asOverload ; family ArrayBuiltin ; optionalSlowPath
+inline ArrayIterator(IterationKind) ; Allocates ; family ArrayBuiltin ; optionalSlowPath
+inline ArrayPush ; GrowsArray ; family ArrayStorageBuiltin
+inline ArrayIsArray ; none ; family ArrayStorageBuiltin
+inline ArrayLength ; reads(ArrayStorage) ; family ArrayStorageBuiltin ; optionalSlowPath
+inline ArraySetLength ; GrowsArray ; family ArrayStorageBuiltin ; optionalSlowPath
+inline ArrayWithLength ArrayOf ; Allocates throws ; family ArrayStorageBuiltin ; optionalSlowPath
+inline ArrayFrom ; asOverload ; family ArrayBufferViewBuiltin
+inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ; reads(TypedArrayStorage) ; family ArrayBufferViewBuiltin
+inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
+inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ; asOverload ; family OwnPropertyBuiltin
+inline ObjectHasOwn ObjectPropertyIsEnumerable OwnPropertyDescriptorFields ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
+inline ObjectCreate GetPrototypeOf(PrototypeQuery) SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectFreeze ObjectPrototypeToString ; asOverload ; family ObjectBuiltin
+inline ObjectIs ReturnThis ; none ; family ObjectBuiltin ; optionalSlowPath
+inline NewMap NewSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
+inline MapGet MapHas SetHas ; CreatesConstant ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath
+inline MapSet SetAdd ; Allocates ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
+inline MapSize SetSize ; reads(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath
+inline SetFromIterable MapFromEntries ; asOverload ; family MapSetBuiltin
+inline WeakMapGet WeakMapHas WeakSetHas ; reads(CollectionStorage, CollectionEntries) ; family MapSetBuiltin ; optionalSlowPath
+inline MapDelete SetDelete MapClear SetClear ; asOverload ; family MapSetBuiltin ; optionalSlowPath
+inline MapIterator(IterationKind) SetIterator(IterationKind) ; Allocates reads(CollectionStorage) writes(CollectionStorage) ; family MapSetBuiltin ; optionalSlowPath
+
+inline PromiseResolve ; asOverload ; family PromiseBuiltin
+inline PromiseThen PromiseCatch ; asOverload ; family PromiseBuiltin ; optionalSlowPath
+inline DataViewGet(TypedArrayType) ; Allocates reads(TypedArrayStorage, TypedArrayElements) throws ; family BufferBuiltin
+inline DataViewSet(TypedArrayType) ; reads(TypedArrayStorage) writes(TypedArrayElements) throws ; family BufferBuiltin
+inline Atomics(AtomicsOperation) ; Allocates reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) throws ; family BufferBuiltin
+inline BufferAccess(AccessDirection, UInt8, NumberKind, Endianness) ; asOverload ; family BufferBuiltin
+inline MathMinOfArray MathMaxOfArray ; reads(ArrayStorage, Elements[Array]) ; family MathBuiltin
+inline CallNumberConstructor NumberToString ParseInt ; asOverload ; family MathBuiltin
+inline NumberToStringAppend ; asOverload ; family MathBuiltin ; formOnly
+inline MathAbs MathFloor MathCeil MathTrunc MathRound MathFround MathF16Round MathSqrt MathPow MathMin MathMax MathImul MathClz32 MathSign MathFunction(MathFunctionKind) MathATan2 MathHypot IsNaN IsFinite NumberIsNaN NumberIsFinite NumberIsInteger NumberIsSafeInteger ; none ; family MathBuiltin ; optionalSlowPath
+inline MathRandom ; UsesRuntime ; family MathBuiltin ; optionalSlowPath
+inline DateGetField(DateField, TimeZone) DateToISOString ; asOverload ; family DateBuiltin
+inline DateNow ; reads(ExternalState) writes(ExternalState) ; family DateBuiltin ; optionalSlowPath
+inline DateGetTime DateGetMilliseconds ; reads(InternalFields) ; family DateBuiltin ; optionalSlowPath
+inline DateSetTime ; writes(InternalFields) ; family DateBuiltin ; optionalSlowPath
+inline FunctionBind ReflectApply ; asOverload ; family FunctionBuiltin
+inline FunctionApply ; asOverload ; family FunctionBuiltin ; optionalSlowPath
+
+inline StringRepeat StringPadStart StringPadEnd StringIsWellFormed StringToWellFormed StringNormalize StringFromCodePoint CallStringConstructor StringUTF8ByteLength ; asOverload ; family StringBuiltin
+inline StringLength ; none ; family StringBuiltin ; optionalSlowPath
+inline StringAt StringCharAt StringCharCodeAt StringCodePointAt StringSlice StringSubstring StringSubstr StringStartsWith StringEndsWith StringIncludes StringIndexOf StringLastIndexOf StringToLowerCase StringToUpperCase StringTrim StringTrimStart StringTrimEnd StringLocaleCompare StringConcat StringFromCharCode StringSplitPrefix ; CreatesString ; family StringBuiltin ; optionalSlowPath
+inline StringSliceAppend StringSubstringAppend CallStringConstructorAppend ; asOverload ; family StringBuiltin ; formOnly
+inline NewRegExp ; asOverload ; family RegExpBuiltin
+inline StringMatch StringSearch ; asOverload ; family RegExpBuiltin ; optionalSlowPath
+inline RegExpExec RegExpTest RegExpFlags RegExpSource StringReplace(SearchValueKind) StringReplaceAll(SearchValueKind) StringSplit(SearchValueKind) RegExpFlag(RegExpFlags) RegExpGetLastIndex RegExpSetLastIndex RegExpExecPrefix StringMatchPrefix ; asOverload ; family RegExpBuiltin ; optionalSlowPath
+inline NewError(ErrorKind) ; asOverload ; family ErrorBuiltin
+inline FormatDateTime FormatNumber ; asOverload ; family IntlBuiltin

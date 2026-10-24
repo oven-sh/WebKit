@@ -1,0 +1,40 @@
+# data = JSON.parse(text); data.items.run(handed); data.items.map(mapper)
+# What JSON.parse makes of a text are ordinary objects and arrays that hold primitives and more such objects. None of them is a function and nobody else has them, so they are no value that nobody knows:
+# a call of a member has no callee to hand its operand to, and a method that is found above them is the one of Array.prototype or Object.prototype
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 ->
+# CHECK: f0 v11 -> ArrayPrototypeMap
+# RUN(NOTHING): valueflow-solve calls
+# NOTHING-NOT: f0 v8 -> {{*}}unknown
+# RUN(ESCAPED): valueflow-why escaped=f1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: unknown 0 untracked 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="{}"
+    v3 = Call v1, v0, v2
+    v4 = PropGet v3 key="items"
+    v5 = NewClosure function=f1
+    v6 = PropGet v4 key="run"
+    v7 = Undefined
+    v8 = Call v6, v4, v5
+    v9 = PropGet v4 key="map"
+    v10 = NewClosure function=f2
+    v11 = Call v9, v4, v10
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="mapper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,126 @@
+# A value is checked to be one of the texts that a type lists, and then it is only compared, tested and switched on. To find which of the listed texts a given text is takes a search, and a comparison takes
+# the text as it is. So the check goes and the value keeps what it is expected to be. A value that is stored or handed to a position of that type keeps its check
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Row" fields=[{key="level" declared={type="high"|"low"|"mid"} flags=[IsRequired, IsEnforced]}]
+
+function f0 name="onlyCompared" parameters=[{type=Array<string>}, {type=i32}] results=[{type=i32}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=undefined|null|"high"|"low"|"mid"
+    v4 = String string="low"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=10
+    Return v6
+  b2():
+    v7 = String string="mid"
+    v8 = StrictEq v3, v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Integer integer=20
+    Return v9
+  b4():
+    v10 = Integer integer=30
+    Return v10
+}
+# CHECK-LABEL: function f0 name="onlyCompared"
+# CHECK-NOT: Check
+# CHECK-NOT: TypeTest {{*}}testedType={{*}}"high"
+# CHECK: = StrictEq
+
+function f1 name="stored" parameters=[{type=Array<string>}, {type=i32}, {type=L0}] results=[{type=i32}] {
+  b0(v0: Array<string>, v1: i32, v2: L0):
+    v3 = ElemGet v0, v1
+    v4 = Check v3 castType="high"|"low"|"mid"
+    PropSet v2, v4 key="level" mode=Strict
+    v6 = String string="low"
+    v7 = StrictEq v4, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Integer integer=10
+    Return v8
+  b2():
+    v9 = Integer integer=30
+    Return v9
+}
+# CHECK-LABEL: function f1 name="stored"
+# CHECK: TypeTest {{*}}testedType="high"|"low"|"mid"
+
+# What a comparison has left of the value goes on as a parameter of the block behind it, and here it is returned as one of the texts that are left.
+function f2 name="comparedAndHandedOn" parameters=[{type=Array<string>}, {type=i32}] results=[{type=undefined|null|"high"|"mid" flags=[IsExpected]}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=undefined|null|"high"|"low"|"mid"
+    v4 = String string="low"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: "low"):
+    v7 = Undefined
+    Return v7
+  b2(v8: undefined|null|"high"|"mid"):
+    Return v8
+}
+# CHECK-LABEL: function f2 name="comparedAndHandedOn"
+# CHECK: TypeTest {{*}}testedType=undefined|null|"high"|"low"|"mid"
+
+function f3 name="comparedAgainBehindComparison" parameters=[{type=Array<string>}, {type=i32}] results=[{type=i32}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=undefined|null|"high"|"low"|"mid"
+    v4 = String string="low"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: "low"):
+    v7 = Integer integer=10
+    Return v7
+  b2(v8: undefined|null|"high"|"mid"):
+    v9 = String string="mid"
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Integer integer=20
+    Return v11
+  b4():
+    v12 = Integer integer=30
+    Return v12
+}
+# CHECK-LABEL: function f3 name="comparedAgainBehindComparison"
+# CHECK-NOT: TypeTest {{*}}testedType={{*}}"high"
+# CHECK: Return
+
+# A build that validates holds the value against what is known of it behind the check. That goes with the check.
+function f4 name="comparedInBuildThatValidates" parameters=[{type=Array<string>}, {type=i32}] results=[{type=i32}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=undefined|null|"high"|"low"|"mid"
+    ValidateType v3 validatedType=undefined|"low"
+    v5 = String string="low"
+    v6 = StrictEq v3, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=10
+    Return v7
+  b2():
+    v8 = Integer integer=30
+    Return v8
+}
+# CHECK-LABEL: function f4 name="comparedInBuildThatValidates"
+# CHECK-NOT: Check
+# CHECK-NOT: ValidateType
+# CHECK: = StrictEq
+
+# What an addition makes of the value depends on what the value is.
+function f5 name="added" parameters=[{type=Array<string>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType="high"|"low"|"mid"
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f5 name="added"
+# CHECK: TypeTest {{*}}testedType="high"|"low"|"mid"

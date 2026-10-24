@@ -1,0 +1,40 @@
+# Unknown code ends no guard on the array that a selected match of a literal made while nothing else holds the array, and ends it once the array is stored
+# FORM: Selected
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayStaysLocal" parameters=[{type=RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>}, {type=string}, {type=object}] results=[{type=anything}] {
+  b0(v0: RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>, v1: string, v2: object):
+    v3 = RegExpMatchLiteral v1, v0 overload=RegExpPrototypeExec/0 pattern="a(b)" matchForm=Exec
+    v4 = ToBoolean v3 form=Bits
+    TestAndBranch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    TestAndBranch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    PropSet v2, v1 key="text"
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b2:0 available: [v7]
+# CHECK-NEXT: b2:1 available: [v7]
+
+function f1 name="arrayIsStored" parameters=[{type=RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>}, {type=string}, {type=object}] results=[{type=anything}] {
+  b0(v0: RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>, v1: string, v2: object):
+    v3 = RegExpMatchLiteral v1, v0 overload=RegExpPrototypeExec/0 pattern="a(b)" matchForm=Exec
+    v4 = ToBoolean v3 form=Bits
+    TestAndBranch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    TestAndBranch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    PropSet v2, v5 key="match"
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b2:0 available: [v7]
+# CHECK-NEXT: b2:1 available: []

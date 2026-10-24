@@ -27,7 +27,7 @@
 #include "WasmOMGPlan.h"
 #include "JSToWasm.h"
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 
 #include "HeapCellInlines.h"
 #include "JITCompilation.h"
@@ -215,4 +215,4 @@ void OMGPlan::work()
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY_OMGJIT)
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)

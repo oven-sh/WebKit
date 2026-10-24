@@ -1,0 +1,19 @@
+# What is no cell has no prototype chain: a walk of the chain of a value that may be a primitive answers that in line, without a frame, and fetches the prototype of the built-in class behind that answer, where nothing else asks for it
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# CHECK: f0: size={{*}} frame=0@1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isPromise" parameters=[{type=anything}] results=[{type=int}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=PromisePrototype
+    v2 = HasInPrototypeChain v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=0
+    Return v4
+}

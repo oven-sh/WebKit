@@ -1,0 +1,62 @@
+# interface Holder { callback: () => string }  function listed() { return "listed" }  function other() { return "other" }  function run(holder: Holder) { return holder.callback() }  register(run, { callback: listed }, other, listed)
+# A call through a proven type that lists one function and admits no other is a direct call without a test of the callee.
+# A function without captures is called without its closure, so in a default build nothing is left of the callee: the read of the field is dead, and whatever the slot holds, `listed` runs.
+# The lie: a writer that nobody listed (`storeInSlotWithoutTest` of the shell) puts a closure of `other` into the slot of `callback`.
+# The flow analysis is off, and the text says by hand what it would find: the field holds closures of `listed` alone (the function type of the source admits every function), the slot is always filled and the property never leaves it.
+# A validating build puts ValidateCallee in front of a call that a type made direct, and that keeps the callee alive (the run with the prefix IR).
+# What ends the process is the test of the read that was kept. A validating build tests every value against its own type where the value is made and again at each use,
+# and the type of this callee is the very list that ValidateCallee compares it with. So the failure is a ValueType at the read.
+# An UnlistedCallee comes first only where the callee's own type is wider than the list: under a complete stamp of flow, as in the native test proof-validation/callee-outside-complete-set.
+# Beside it, in the same build: the same writer stores another closure of `listed`, which the type admits, and the slot is left alone
+# FORM: AsRead
+# RUN(IR): pipeline ResolveCalls
+# RUN: run-in-shell globalThis.register = (run, holder, other, twin) => { storeInSlotWithoutTest(holder, "callback", other); print("stored"); print(run(holder)); };
+# RUN(TWIN): run-in-shell globalThis.register = (run, holder, other, twin) => { storeInSlotWithoutTest(holder, "callback", twin); print(run(holder)); };
+# RUN(SAME): run-in-shell globalThis.register = (run, holder, other, twin) => { print(run(holder)); };
+# OPTIONS: validate disable=flow-results
+# IR: [[callee]]: f2 = GetSlot {{*}} key="callback"
+# IR: ValidateCallee [[callee]] validatedType=f2
+# IR: = CallDirect function=f2
+# CHECK: stored
+# CHECK: AOT validation: ValueType f
+# CHECK: crashed with
+# TWIN-NOT: AOT validation
+# TWIN: listed
+# TWIN-NEXT: exited with 0
+# SAME-NOT: AOT validation
+# SAME: listed
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=140 kind=Parameter
+layout L0 name="Holder" fields=[{key="callback" declared={type=f2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v5, v2, v3, v4
+    Return
+}
+function f1 name="run" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="callback"
+    v2 = Call v1, v0 calleeKey="callback"
+    Return v2
+}
+function f2 name="listed" results=[{type=anything}] {
+  b0():
+    v0 = String string="listed"
+    Return v0
+}
+function f3 name="other" results=[{type=anything}] {
+  b0():
+    v0 = String string="other"
+    Return v0
+}

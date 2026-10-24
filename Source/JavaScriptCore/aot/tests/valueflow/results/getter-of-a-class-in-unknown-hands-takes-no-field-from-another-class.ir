@@ -1,0 +1,74 @@
+# class Made { constructor() { this.id = 1 } }   class Stream { get id() { return 2 } }   class Counted { get id() { return 3 }  constructor() { this.id = 4 } }
+# publish(Made); publish(Stream); new Made; new Stream; new Counted
+# A store that finds an accessor above the object fills no slot, so the name needs no room: Counted, whose own class has the getter and which nobody else has, gets no field.
+# Whoever got Made may construct it under any new.target, so nothing names the prototype that its constructor allocates under: it stands for every object in unknown hands,
+# the prototype object of Stream among them. Such a chain says nothing about the objects of Made: a getter of the same name in a class that has nothing to do with them takes no field away.
+# What is planned for the field asks at run time what lies above the object.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Made"
+# CHECK: fields=[{key="id" {{*}} flags=[IsAddedLate
+# CHECK: layout L1 kind=Instance name="Stream"
+# CHECK-NOT: IsAddedLate
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" module=m0 constructor=f1
+layout L1 kind=Instance name="Stream" module=m0 constructor=f2
+layout L2 kind=Instance name="Counted" module=m0 constructor=f4
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = NewClosure function=f3
+    DefineMethod v4, v5 layout=L1 methodKind=Getter key="id"
+    v7 = FinishClass v4 layout=L1
+    v8 = NewClosure function=f4
+    v9 = NewClass v8 layout=L2
+    v10 = NewClosure function=f5
+    DefineMethod v9, v10 layout=L2 methodKind=Getter key="id"
+    v12 = FinishClass v9 layout=L2
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="publish" [isFreeName]
+    v15 = Call v14, -, v2
+    v16 = Call v14, -, v7
+    v17 = Construct v2
+    v18 = Construct v7
+    v19 = Construct v12
+    Return
+}
+function f1 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="id" mode=Strict
+    Return v2
+}
+function f2 name="Stream" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="id" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f4 name="Counted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = Integer integer=4
+    PropSet v2, v3 key="id" mode=Sloppy
+    Return v2
+}
+function f5 name="id" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}

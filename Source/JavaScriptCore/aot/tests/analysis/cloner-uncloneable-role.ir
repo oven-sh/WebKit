@@ -1,0 +1,47 @@
+# A function whose role forbids inlining is not copied into a caller, and its blocks may be copied inside it or moved out of it
+# FORM: Prepared
+# RUN: inline function=f2 value=v2
+# RUN(INLINABLE): inline function=f2 value=v3
+# RUN(DUPLICATE): duplicate function=f1 region=b3 redirect=b2.0
+# RUN(EXTRACT): extract function=f1 region=b3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="origin" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    Return v1
+}
+function f1 name="outlined" role=OutlinedBody parameters=[{type=boolean}, {type=number}] results=[{type=number}] derivation={source=f0} {
+  b0(v0: boolean, v1: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v1
+}
+function f2 name="caller" role=OutlinedBody parameters=[{type=boolean}, {type=number}] results=[{type=number}] derivation={source=f0} {
+  b0(v0: boolean, v1: number):
+    v2 = CallDirect v0, v1 function=f1
+    v3 = CallDirect v0, v2 function=f0
+    Return v3
+}
+# CHECK: check: FunctionMayNotBeCloned
+# CHECK-NOT: function
+# INLINABLE: check: CanClone
+# INLINABLE: function f2
+# INLINABLE: v2: number = CallDirect v0, v1 function=f1
+# INLINABLE-NOT: CallDirect
+# DUPLICATE: check: CanClone
+# DUPLICATE: function f1
+# DUPLICATE: b1():
+# DUPLICATE-NEXT: Jump -> next b3()
+# DUPLICATE-NEXT: b2():
+# DUPLICATE-NEXT: Jump -> next [[C]]()
+# DUPLICATE-NEXT: b3():
+# DUPLICATE-NEXT: Return v1
+# DUPLICATE-NEXT: [[C]]():
+# DUPLICATE-NEXT: Return v1
+# EXTRACT: check: CanClone
+# EXTRACT: live-ins: [v1]
+# EXTRACT: function f3

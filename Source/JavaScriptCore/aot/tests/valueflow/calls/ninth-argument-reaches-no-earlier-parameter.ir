@@ -1,0 +1,46 @@
+# function first(a, b, c, d, e, f, g, h, i) { a() }  function last(a, b, c, d, e, f, g, h, i) { i() }
+# first(one, 0, 0, 0, 0, 0, 0, 0, nine)  last(0, 0, 0, 0, 0, 0, 0, 0, other)
+# eighth-argument-reaches-the-eighth-parameter-alone.ir with one argument more. The call spells the position out, so the ninth argument reaches the parameters from the ninth on and none in front of them.
+# RUN: valueflow-solve calls
+# CHECK: f1 v9 -> f3
+# CHECK: f2 v9 -> f5
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Integer integer=0
+    v6 = Call v0, -, v2, v5, v5, v5, v5, v5, v5, v5, v3
+    v7 = Call v1, -, v5, v5, v5, v5, v5, v5, v5, v5, v4
+    Return
+}
+function f1 name="first" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything):
+    v9 = Call v0, -
+    Return
+}
+function f2 name="last" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything):
+    v9 = Call v8, -
+    Return
+}
+function f3 name="one" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="nine" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="other" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

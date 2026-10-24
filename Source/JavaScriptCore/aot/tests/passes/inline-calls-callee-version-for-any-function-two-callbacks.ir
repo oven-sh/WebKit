@@ -1,0 +1,46 @@
+# Outside hot code a library function that calls two parameters gets a copy for whatever function is passed first. The next run makes a copy of that copy for the second function, and the runs after that change nothing: the first parameter gets no second copy
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:1
+# RUN: pass InlineCalls InlineCalls InlineCalls InlineCalls
+# STATISTIC: CalleeVersions = 2
+# LOSS: MaxInlinedCallerBytes
+# CHECK: outcome: Changed
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="applyBoth" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, -, v2
+    v4 = Call v1, -, v3
+    v5 = Add v4, v2
+    v6 = Add v5, v2
+    v7 = Add v6, v2
+    v8 = Add v7, v2
+    v9 = Add v8, v2
+    v10 = Add v9, v2
+    Return v10
+}
+
+function f3 name="passesTwoKnownFunctions" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v1, v2, v0 function=f2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="passesTwoKnownFunctions"
+# CHECK: = CallDirect v1, v2, v0 function=[[forBoth]]
+# CHECK: function [[forBoth]] name="applyBoth" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: function, v1: f1, v2: anything):

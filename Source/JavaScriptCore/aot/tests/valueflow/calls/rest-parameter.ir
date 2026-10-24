@@ -1,0 +1,33 @@
+# function all(first, ...others) { others[0]() }  all(one, two)
+# What lies past the named parameters is in the array of the rest parameter.
+# RUN: valueflow-solve calls
+# CHECK: f1 v4 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="all" module=m0 flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = Integer integer=0
+    v3 = ElemGet v1, v2
+    v4 = Call v3, -
+    Return
+}
+function f2 name="one" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="two" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

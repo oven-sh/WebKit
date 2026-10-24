@@ -1,0 +1,262 @@
+# A static field is a module variable of the one class object: what the walk from a class object finds, which guards it needs, and when the plan reads or stores the variable
+# FORM: Prepared
+# RUN(OWNFIELD): member-lookup start=ClassObject layout=L0 key="count"
+# OWNFIELD: Variable level=Proven holder=L0 variable=V0
+# OWNFIELD-NOT: conditions=
+# RUN(THROUGHLINK): member-lookup start=ClassObject layout=L1 key="count"
+# THROUGHLINK: Variable level=Proven holder=L0 variable=V0
+# THROUGHLINK-NOT: conditions=
+# RUN(HAS): member-lookup start=ClassObject layout=L1 key="count" access=Has
+# HAS: Variable level=Proven holder=L0 variable=V0
+# RUN(OWNLOOKUP): member-lookup start=ClassObject layout=L0 key="count" access=Has own
+# OWNLOOKUP: Variable level=Proven holder=L0 variable=V0
+# RUN(OWNLOOKUPINSUBCLASS): member-lookup start=ClassObject layout=L1 key="count" access=Has own
+# OWNLOOKUPINSUBCLASS: Absent level=Proven
+# RUN(STORE): member-lookup start=ClassObject layout=L0 key="count" access=Store
+# STORE: Variable level=Proven holder=L0 variable=V0
+# STORE-NOT: conditions=
+# RUN(DEFINE): member-lookup start=ClassObject layout=L0 key="count" access=Define
+# DEFINE: Variable level=Proven holder=L0 variable=V0
+# RUN(STORETHROUGHSUBCLASS): member-lookup start=ClassObject layout=L1 key="count" access=Store
+# STORETHROUGHSUBCLASS: Unknown level=Unknown cause=Unknown
+# RUN(DEFINETHROUGHSUBCLASS): member-lookup start=ClassObject layout=L1 key="count" access=Define
+# DEFINETHROUGHSUBCLASS: Unknown level=Unknown cause=Unknown
+# RUN(WRITERS): member-lookup start=ClassObject layout=L2 key="count"
+# WRITERS: Variable level=Expected holder=L2 variable=V1 conditions=[MemberUnchanged(L2, Static, K{{*}})]
+# RUN(WRITERSFROMSUBCLASS): member-lookup start=ClassObject layout=L3 key="count"
+# WRITERSFROMSUBCLASS: Variable level=Expected holder=L2 variable=V1 conditions=[MemberUnchanged(L3, Static, K{{*}})]
+# RUN(EVALUATIONS): member-lookup start=ClassObject layout=L4 key="count"
+# EVALUATIONS: Variable level=Expected holder=L4 variable=V2 conditions=[ClassEvaluatedOnce(L4)]
+# RUN(NAMES): member-lookup start=ClassObject layout=L5 key="count"
+# NAMES: Variable level=Expected holder=L5 variable=V3 conditions=[MemberUnchanged(L5, Static, K{{*}})]
+# RUN(LINK): member-lookup start=ClassObject layout=L6 key="count"
+# LINK: Variable level=Expected holder=L0 variable=V0 conditions=[PrototypeLinkUnchanged(L6, Static)]
+# RUN(REDECLARED): member-lookup start=ClassObject layout=L7 key="count"
+# REDECLARED: Variable level=Proven holder=L7 variable=V4
+# RUN(REDECLAREDSTORE): member-lookup start=ClassObject layout=L7 key="count" access=Store
+# REDECLAREDSTORE: Variable level=Proven holder=L7 variable=V4
+# RUN(BELOWMETHOD): member-lookup start=ClassObject layout=L10 key="count" access=Store
+# BELOWMETHOD: Variable level=Proven holder=L10 variable=V6
+# RUN(BELOWSETTER): member-lookup start=ClassObject layout=L12 key="count" access=Store
+# BELOWSETTER: Unknown level=Unknown
+# RUN(BELOWSETTERREAD): member-lookup start=ClassObject layout=L12 key="count"
+# BELOWSETTERREAD: Variable level=Proven holder=L12 variable=V7
+# RUN(BELOWSETTERDEFINE): member-lookup start=ClassObject layout=L12 key="count" access=Define
+# BELOWSETTERDEFINE: Variable level=Proven holder=L12 variable=V7
+# RUN(BELOWSETTERAFTERDEFINITION): member-lookup start=ClassObject layout=L21 key="count" access=Store
+# BELOWSETTERAFTERDEFINITION: Variable level=Proven holder=L21 variable=V14
+# BELOWSETTERAFTERDEFINITION-NOT: conditions=
+# RUN(BELOWGETTER): member-lookup start=ClassObject layout=L14 key="count" access=Store
+# BELOWGETTER: Unknown level=Unknown
+# RUN(BELOWUNKNOWN): member-lookup start=ClassObject layout=L15 key="count" access=Store
+# BELOWUNKNOWN: Unknown level=Unknown
+# RUN(BELOWUNKNOWNREAD): member-lookup start=ClassObject layout=L15 key="count"
+# BELOWUNKNOWNREAD: Variable level=Proven holder=L15 variable=V9
+# RUN(BELOWCOMPUTED): member-lookup start=ClassObject layout=L17 key="count" access=Store
+# BELOWCOMPUTED: Variable level=Expected holder=L17 variable=V10 conditions=[MemberUnchanged(L17, Static, K{{*}})]
+# RUN(BELOWCOMPUTEDREAD): member-lookup start=ClassObject layout=L17 key="count"
+# BELOWCOMPUTEDREAD: Variable level=Proven holder=L17 variable=V10
+# RUN(BELOWESCAPED): member-lookup start=ClassObject layout=L19 key="count" access=Store
+# BELOWESCAPED: Variable level=Expected holder=L19 variable=V11 conditions=[MemberUnchanged(L19, Static, K{{*}})]
+# RUN(PROTOTYPE): member-lookup start=ClassObject layout=L0 key="prototype"
+# PROTOTYPE: Unknown level=Unknown cause=Unknown
+# RUN(NAME): member-lookup start=ClassObject layout=L0 key="name"
+# NAME: Unknown level=Unknown cause=Unknown
+# RUN(LENGTH): member-lookup start=ClassObject layout=L0 key="length"
+# LENGTH: Unknown level=Unknown cause=Unknown
+# RUN(METHOD): member-lookup start=ClassObject layout=L0 key="make"
+# METHOD: Method level=Proven holder=L0 method=F20
+# RUN(METHODTHROUGHLINK): member-lookup start=ClassObject layout=L1 key="make"
+# METHODTHROUGHLINK: Method level=Proven holder=L0 method=F20
+# RUN(PRIVATE): member-lookup start=ClassObject layout=L0 key=#"secret"@L0
+# PRIVATE: Variable level=Proven holder=L0 variable=V12
+# RUN(PRIVATESTORE): member-lookup start=ClassObject layout=L0 key=#"secret"@L0 access=Store
+# PRIVATESTORE: Variable level=Proven holder=L0 variable=V12
+# RUN(PRIVATESTOREBEFOREDEFINITION): member-lookup start=ClassObject layout=L8 key=#"secret"@L8 access=Store
+# PRIVATESTOREBEFOREDEFINITION: Unknown level=Unknown cause=PropertyAdded
+# RUN(PRIVATENOTINHERITED): member-lookup start=ClassObject layout=L1 key=#"secret"@L0
+# PRIVATENOTINHERITED: Absent level=Proven
+# RUN(PRIVATENAMESINCOMPLETE): member-lookup start=ClassObject layout=L5 key=#"secret"@L0
+# PRIVATENAMESINCOMPLETE: Unknown level=Unknown cause=PropertyAdded
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=number} owner=L0 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g1 name="count" module=m0 declared={type=number} owner=L2 flow={initialization=StoredBeforeEveryRead}
+variable g2 name="count" module=m0 declared={type=number} owner=L4 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g3 name="count" module=m0 declared={type=number} owner=L5 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g4 name="count" module=m0 declared={type=number} owner=L7 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g5 name="count" module=m0 declared={type=number} owner=L8 flow={writers=AllKnown}
+variable g6 name="count" module=m0 declared={type=number} owner=L10 flow={writers=AllKnown}
+variable g7 name="count" module=m0 declared={type=number} owner=L12 flow={writers=AllKnown}
+variable g8 name="count" module=m0 declared={type=number} owner=L14 flow={writers=AllKnown}
+variable g9 name="count" module=m0 declared={type=number} owner=L15 flow={writers=AllKnown}
+variable g10 name="count" module=m0 declared={type=number} owner=L17 flow={writers=AllKnown}
+variable g11 name="count" module=m0 declared={type=number} owner=L19 flow={writers=AllKnown}
+variable g12 name="secret" module=m0 declared={type=number} owner=L0 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g13 name="count" module=m0 declared={type=number} owner=L20 flags=[IsImmutable] flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g14 name="count" module=m0 declared={type=number} owner=L21 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g15 name="secret" module=m0 declared={type=number} owner=L8 flow={writers=AllKnown}
+layout L0 kind=Instance name="A" constructor=f0 staticFields=[{key="count" variable=g0}, {key=#"secret"@L0 variable=g12}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="make" side=Static function=f20 mutability=Fixed}]}
+layout L1 kind=Instance name="B" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="UnknownWriters" constructor=f2 staticFields=[{key="count" variable=g1}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="BelowUnknownWriters" base=L2 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L2} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="EvaluatedAgain" constructor=f4 staticFields=[{key="count" variable=g2}] flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="NamesIncomplete" constructor=f5 staticFields=[{key="count" variable=g3}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true}
+layout L6 kind=Instance name="LinkMayChange" base=L0 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L7 kind=Instance name="Redeclaring" base=L0 constructor=f7 staticFields=[{key="count" variable=g4}] flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="ReadEarly" constructor=f8 staticFields=[{key="count" variable=g5}, {key=#"secret"@L8 variable=g15}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L9 kind=Instance name="MethodBase" constructor=f9 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="count" side=Static function=f21 mutability=Fixed}]}
+layout L10 kind=Instance name="BelowMethod" base=L9 constructor=f10 staticFields=[{key="count" variable=g6}] flags=[HasHeritage] flow={baseState=Layout base=L9} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L11 kind=Instance name="SetterBase" constructor=f11 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="count" side=Static kind=Setter function=f22 mutability=Fixed}]}
+layout L12 kind=Instance name="BelowSetter" base=L11 constructor=f12 staticFields=[{key="count" variable=g7}] flags=[HasHeritage] flow={baseState=Layout base=L11} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L13 kind=Instance name="GetterBase" constructor=f13 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="count" side=Static kind=Getter function=f23 mutability=Fixed}]}
+layout L14 kind=Instance name="BelowGetter" base=L13 constructor=f14 staticFields=[{key="count" variable=g8}] flags=[HasHeritage] flow={baseState=Layout base=L13} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L15 kind=Instance name="BelowUnknown" constructor=f15 staticFields=[{key="count" variable=g9}] flags=[HasHeritage] classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L16 kind=Instance name="ComputedBase" constructor=f16 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true}
+layout L17 kind=Instance name="BelowComputed" base=L16 constructor=f17 staticFields=[{key="count" variable=g10}] flags=[HasHeritage] flow={baseState=Layout base=L16} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L18 kind=Instance name="EscapedBase" constructor=f18 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="count" side=Static function=f21}] namedMembers=[{key="count" side=Static function=f21}]}
+layout L19 kind=Instance name="BelowEscaped" base=L18 constructor=f19 staticFields=[{key="count" variable=g11}] flags=[HasHeritage] flow={baseState=Layout base=L18} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L20 kind=Instance name="Constant" constructor=f24 staticFields=[{key="count" variable=g13}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L21 kind=Instance name="BelowSetterAfterDefinition" base=L11 constructor=f42 staticFields=[{key="count" variable=g14}] flags=[HasHeritage] flow={baseState=Layout base=L11} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+
+function f0 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="UnknownWriters" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="BelowUnknownWriters" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="EvaluatedAgain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="NamesIncomplete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="LinkMayChange" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f7 name="Redeclaring" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f8 name="ReadEarly" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
+function f9 name="MethodBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L9
+function f10 name="BelowMethod" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L10
+function f11 name="SetterBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11
+function f12 name="BelowSetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L12
+function f13 name="GetterBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L13
+function f14 name="BelowGetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L14
+function f15 name="BelowUnknown" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L15
+function f16 name="ComputedBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L16
+function f17 name="BelowComputed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L17
+function f18 name="EscapedBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L18
+function f19 name="BelowEscaped" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L19
+function f20 name="make" kind=Method flags=[HasThis] results=[{type=anything}]
+function f21 name="count" kind=Method flags=[HasThis] results=[{type=anything}]
+function f22 name="count" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f23 name="count" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f24 name="Constant" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L20
+
+function f25 name="read" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK: F25 v1 PropGet [[count]]: form=Variable level=Proven operation=GetModuleVariable receivers=[L0] member=(Variable level=Proven holder=L0 variable=V0)
+function f26 name="read-through-subclass" parameters=[{type=f1}] results=[{type=anything}] {
+  b0(v0: f1):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F26 v1 PropGet [[count]]: form=Variable level=Proven operation=GetModuleVariable receivers=[L1] member=(Variable level=Proven holder=L0 variable=V0)
+function f27 name="read-before-the-definition-may-have-run" parameters=[{type=f8}] results=[{type=anything}] {
+  b0(v0: f8):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F27 v1 PropGet [[count]]: form=ByName level=Unknown receivers=[L8] member=(Variable level=Proven holder=L8 variable=V5)
+function f28 name="read-with-unknown-writers" parameters=[{type=f2}] results=[{type=anything}] {
+  b0(v0: f2):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F28 v1 PropGet [[count]]: form=Variable level=Expected operation=GetModuleVariable receivers=[L2] conditions=[MemberUnchanged(L2, Static, [[count]])] missPath member=(Variable level=Expected holder=L2 variable=V1 conditions=[MemberUnchanged(L2, Static, [[count]])])
+function f29 name="read-of-class-evaluated-again" parameters=[{type=f4}] results=[{type=anything}] {
+  b0(v0: f4):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F29 v1 PropGet [[count]]: form=Variable level=Expected operation=GetModuleVariable receivers=[L4] conditions=[ClassEvaluatedOnce(L4)] missPath
+function f30 name="read-of-nullable-class-object" parameters=[{type=undefined|f0}] results=[{type=anything}] {
+  b0(v0: undefined|f0):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F30 v1 PropGet [[count]]: form=Variable level=Expected operation=GetModuleVariable receivers=[L0] proofs=[NotNullish] missPath member=(Variable level=Proven holder=L0 variable=V0)
+function f31 name="read-of-one-of-two-class-objects" parameters=[{type=f0|f2}] results=[{type=anything}] {
+  b0(v0: f0|f2):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F31 v1 PropGet [[count]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
+function f32 name="store" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-NEXT: F32 v2 PropSet [[count]]: form=Variable level=Proven operation=PutModuleVariable receivers=[L0] member=(Variable level=Proven holder=L0 variable=V0)
+function f33 name="store-outside-the-declared-type" parameters=[{type=f0}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: string):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-NEXT: F33 v2 PropSet [[count]]: form=ByName level=Unknown receivers=[L0] member=(Variable level=Proven holder=L0 variable=V0)
+function f34 name="store-wider-than-the-declared-type" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-NEXT: F34 v2 PropSet [[count]]: form=ByName level=Unknown receivers=[L0] member=(Variable level=Proven holder=L0 variable=V0)
+function f35 name="store-through-subclass" parameters=[{type=f1}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-NEXT: F35 v2 PropSet [[count]]: form=ByName level=Unknown receivers=[L1]
+# CHECK-NOT: member=
+function f36 name="store-to-immutable-variable" parameters=[{type=f24}, {type=number}] results=[{type=anything}] {
+  b0(v0: f24, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK: F36 v2 PropSet [[count]]: form=ByName level=Unknown receivers=[L20] member=(Variable level=Proven holder=L20 variable=V13)
+function f37 name="definition" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    PropDefine v0, v1 key="count"
+    Return
+}
+# CHECK-NEXT: F37 v2 PropDefine [[count]]: form=Variable level=Proven operation=PutModuleVariable receivers=[L0] member=(Variable level=Proven holder=L0 variable=V0)
+function f38 name="test" parameters=[{type=f1}] results=[{type=anything}] {
+  b0(v0: f1):
+    v1 = PropHas v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F38 v1 PropHas [[count]]: form=Constant level=Proven operation=Boolean value=true receivers=[L1] member=(Variable level=Proven holder=L0 variable=V0)
+function f39 name="test-before-the-definition-may-have-run" parameters=[{type=f8}] results=[{type=anything}] {
+  b0(v0: f8):
+    v1 = PropHas v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F39 v1 PropHas [[count]]: form=ByName level=Unknown receivers=[L8]
+function f40 name="static-method-read-as-a-value" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="make"
+    Return v1
+}
+# CHECK-NEXT: F40 v1 PropGet [[make]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F20)
+function f41 name="own-properties-of-every-class-object" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v0 key="name"
+    v3 = PropGet v0 key="length"
+    Return v3
+}
+# CHECK-NEXT: F41 v1 PropGet [[prototype]]: form=ByName level=Unknown receivers=[L0]
+# CHECK-NEXT: F41 v2 PropGet [[name]]: form=ByName level=Unknown receivers=[L0]
+# CHECK-NEXT: F41 v3 PropGet [[length]]: form=ByName level=Unknown receivers=[L0]
+function f42 name="BelowSetterAfterDefinition" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L21
+function f43 name="read-of-expected-class-object" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F43 v1 PropGet [[count]]: form=Variable level=Expected operation=GetModuleVariable receivers=[L0] receiverTest=ClassObject classObject=F0 missPath member=(Variable level=Proven holder=L0 variable=V0)

@@ -1,0 +1,39 @@
+# The arm of a class without an instance test is entered by a test for an object, which is what tells it from the primitives beside it, and the passing edge gives the class back
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SplitUnions
+# STATISTIC: UnionsSplit = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="expected-first" parameters=[{type=string|ArrayIterator}] results=[{type=anything}] {
+  b0(v0: string|ArrayIterator ~ ArrayIterator):
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="expected-first"
+# CHECK-NEXT: b0(v0: string|ArrayIterator{{*}}):
+# CHECK-NEXT: [[isObject]]: boolean{{*}} = TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[iteratorArm]](| 0), notTaken [[stringArm]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[iteratorArm]]([[iterator]]: ArrayIterator{{*}}):
+# CHECK-NEXT: = PropGet [[iterator]] key="toString"
+# CHECK: [[stringArm]]([[string]]: string) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[string]] key="toString"
+function f1 name="beside-another-object" parameters=[{type=Array<number>|ArrayIterator}] results=[{type=anything}] {
+  b0(v0: Array<number>|ArrayIterator ~ ArrayIterator):
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+# Beside another object no test for an object tells it apart. The test for the array does, and what fails it is the iterator.
+# CHECK-LABEL: function f1 name="beside-another-object"
+# CHECK-NOT: testedType=object
+# CHECK-NOT: testedType=ArrayIterator
+# CHECK: [[isArray]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray]] -> taken [[arrayArm]](| 0), notTaken [[rest]](| 0)
+# CHECK-NOT: testedType=object
+# CHECK-NOT: testedType=ArrayIterator
+# CHECK: [[arrayArm]]([[array]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[array]] key="toString"
+# CHECK: [[rest]]([[expected]]: ArrayIterator):
+# CHECK-NEXT: = PropGet [[expected]] key="toString"

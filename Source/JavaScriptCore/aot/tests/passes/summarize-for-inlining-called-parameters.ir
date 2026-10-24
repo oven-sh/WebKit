@@ -1,0 +1,23 @@
+# A parameter counts as called where the function calls it, not where unknown code receives it as this or as an argument
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callsFirstWithOthers" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1, v2
+    Return v3
+}
+# CHECK: f0: barrier=None bytes=40 called=[0]
+
+function f1 name="passesToGlobal" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+# CHECK: f1: barrier=None
+# CHECK-NOT: called=
+# CHECK: outcome: Unchanged

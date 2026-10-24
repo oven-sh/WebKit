@@ -1,0 +1,33 @@
+# const run = new Function(input); run({ value: input, issues: input }); run({ id: 3 }); const kept = { key: input }; kept.key
+# The interpreter gives an object literal of evaluated text the layout of a record with the same names, where every value fits its field. Only once one of the record's objects has escaped.
+# L0 and L1 have escaped: evaluated text may create one. No object of L2 has escaped.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}observedUses=[ReachesTypedParse]
+# CHECK: layout L1 {{*}}observedUses=[ReachesTypedParse]
+# CHECK-NOT: ReachesTypedParse
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="value" declared={type=anything}}, {key="issues" declared={type=anything}}]
+layout L1 fields=[{key="id" declared={type=number}}]
+layout L2 fields=[{key="key" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Undefined
+    v5 = Undefined
+    v6 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v7 = Call v3, -, v6
+    v8 = Integer integer=3
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = Call v3, -, v9
+    v11 = Undefined
+    v12 = NewObject -, v1 layout=L2 fields=[0]
+    v13 = PropGet v12 key="key"
+    Return v13
+}

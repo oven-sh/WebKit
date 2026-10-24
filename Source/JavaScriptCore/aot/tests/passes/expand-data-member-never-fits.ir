@@ -1,0 +1,75 @@
+# A member of a constant record that the type of its field does not show to fit: an allocation fills a slot without a test, so the member is defined by name behind the allocation, and so is every named member after it, which keeps the order of the keys
+# FORM: Prepared
+# RUN: pass ExpandData
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="x" declared={type=Array<number, proven>}}, {key="y" declared={type=number}}]
+layout L1 name="Outer" fields=[{key="pair" declared={type=L0}}, {key="z" declared={type=number}}]
+layout L2 name="Loose" fields=[{key="x" declared={type=Array<number>}}, {key="y" declared={type=number}}]
+layout L3 name="Reversed" fields=[{key="y" declared={type=number}}, {key="x" declared={type=Array<number, proven>}}]
+data d0 root=Object{layout=L0 members=[{key="x" value=Array{contents=number elements=[Number{value=3}]}}, {key="y" value=Number{value=4}}]}
+data d1 root=Object{layout=L1 members=[{key="pair" value=Object{layout=L0 members=[{key="x" value=Array{contents=number elements=[Number{value=3}]}}, {key="y" value=Number{value=4}}]}}, {key="z" value=Number{value=5}}]}
+data d2 root=Object{layout=L2 members=[{key="x" value=Array{contents=number elements=[Number{value=3}]}}, {key="y" value=Number{value=4}}]}
+data d3 root=Object{layout=L3 members=[{key="y" value=Number{value=4}}, {key="x" value=Array{contents=number elements=[Number{value=3}]}}]}
+
+function f0 name="firstMemberDoesNotFit" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d0
+    v2 = Call v0, -, v1
+    Return v2
+}
+# Nothing is proven about the contents of the array that the expansion makes.
+# CHECK-LABEL: function f0 name="firstMemberDoesNotFit"
+# CHECK: [[three0]]: 3 = Integer integer=3
+# CHECK-NEXT: [[list0]]: Array<number> = NewArray [[three0]] contents=number
+# CHECK-NEXT: [[four0]]: 4 = Integer integer=4
+# CHECK-NEXT: [[head0]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: PropDefine [[head0]], [[list0]] key="x"
+# CHECK-NEXT: PropDefine [[head0]], [[four0]] key="y"
+# CHECK-NEXT: v1:{{*}}= FinishObject [[head0]]
+# CHECK-NEXT: = Call v0, -, v1
+
+function f1 name="lastMemberDoesNotFit" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d3
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="lastMemberDoesNotFit"
+# CHECK: [[four1]]: 4 = Integer integer=4
+# CHECK-NEXT: [[three1]]: 3 = Integer integer=3
+# CHECK-NEXT: [[list1]]: Array<number> = NewArray [[three1]] contents=number
+# CHECK-NEXT: [[head1]]:{{*}}= NewObject -, [[four1]] layout=L3 fields=[0]
+# CHECK-NEXT: PropDefine [[head1]], [[list1]] key="x"
+# CHECK-NEXT: v1:{{*}}= FinishObject [[head1]]
+# CHECK-NEXT: = Call v0, -, v1
+
+function f2 name="nestedMemberDoesNotFit" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d1
+    v2 = Call v0, -, v1
+    Return v2
+}
+# The record that was finished by name has its layout, so it fits the slot of the record around it.
+# CHECK-LABEL: function f2 name="nestedMemberDoesNotFit"
+# CHECK: [[innerHead2]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: PropDefine [[innerHead2]], {{*}} key="x"
+# CHECK-NEXT: PropDefine [[innerHead2]], {{*}} key="y"
+# CHECK-NEXT: [[inner2]]:{{*}}= FinishObject [[innerHead2]]
+# CHECK-NEXT: [[five2]]: 5 = Integer integer=5
+# CHECK-NEXT: v1:{{*}}= NewObject -, [[inner2]], [[five2]] layout=L1 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, v1
+
+function f3 name="membersFit" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Data data=d2
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="membersFit"
+# CHECK-NOT: PropDefine
+# CHECK: v1:{{*}}= NewObject -, {{*}} layout=L2 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NOT: PropDefine
+# CHECK-NOT: FinishObject

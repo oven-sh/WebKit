@@ -1,0 +1,101 @@
+# The list that apply makes of an arguments object that is never built comes out of the frame, out of the values by name, or out of the rest list
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# RUN(TWICE): pass SinkAllocations SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="target" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    Return v1
+}
+function f1 name="ownFrame" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: f0, v1: anything):
+    v2 = GetRestLength
+    v3 = GetArgument
+    v4 = CreateRest firstArgument=1
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = NewArgumentList v3, v5
+    v7 = CallList v3, v1, v6
+    ReturnCall v7
+}
+# CHECK-LABEL: function f1 name="ownFrame"
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: NewArgumentList
+# TWICE-LABEL: function f1 name="ownFrame"
+# TWICE-NOT: CreateRest
+# TWICE-NOT: CreateUnmappedArguments
+# TWICE-NOT: NewArgumentList
+# TWICE: [[forwarded1]]: anything = CallForwardVarargs v3, v1
+# TWICE-NEXT: ReturnCall [[forwarded1]]
+
+function f2 name="valuesAreNamed" parameters=[{type=function}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = Integer integer=3
+    v5 = NewArray v2, v3 contents=anything
+    v6 = CreateUnmappedArguments v4, v5, v1
+    v7 = Null
+    v8 = NewArgumentList v0, v6
+    v9 = CallList v0, v7, v8
+    ReturnCall v9
+}
+# CHECK-LABEL: function f2 name="valuesAreNamed"
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: NewArgumentList
+# TWICE-LABEL: function f2 name="valuesAreNamed"
+# TWICE-NOT: NewArray
+# TWICE-NOT: CallList
+# TWICE: [[passed2]]: anything = Call v0, v7, v1, v2, v3
+# TWICE-NEXT: ReturnCall [[passed2]]
+
+function f3 name="restListIsEveryArgument" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: Array):
+    v4 = CreateUnmappedArguments v2, v3
+    v5 = NewArgumentList v0, v4
+    v6 = CallList v0, v1, v5
+    ReturnCall v6
+}
+# CHECK-LABEL: function f3 name="restListIsEveryArgument"
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: NewArgumentList
+# CHECK: v5: Array = Upcast v3 castType=Array
+# CHECK-NEXT: v6: anything = CallList v0, v1, v5
+
+function f4 name="countDoesNotSayHowManyParameters" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: function, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Undefined
+    v5 = NewArgumentList v1, v3
+    v6 = CallList v1, v4, v5
+    ReturnCall v6
+}
+# CHECK-LABEL: function f4 name="countDoesNotSayHowManyParameters"
+# CHECK: v3:{{*}}= CreateUnmappedArguments v0, v2, v1
+# CHECK: v5:{{*}}= NewArgumentList v1, v3
+
+function f5 name="objectIsKeptToo" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewArray contents=anything
+    v4 = CreateUnmappedArguments v2, v3, v1
+    PutModuleVariable v4 variable=g0
+    v6 = Undefined
+    v7 = NewArgumentList v0, v4
+    v8 = CallList v0, v6, v7
+    ReturnCall v8
+}
+# CHECK-LABEL: function f5 name="objectIsKeptToo"
+# CHECK: [[object5]]:{{*}}= CreateUnmappedArguments
+# CHECK: = NewArgumentList v0, [[object5]]
+
+function f6 name="listOfAnotherObject" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Undefined
+    v3 = NewArgumentList v0, v1
+    v4 = CallList v0, v2, v3
+    ReturnCall v4
+}
+# CHECK-LABEL: function f6 name="listOfAnotherObject"
+# CHECK: v3:{{*}}= NewArgumentList v0, v1
+# CHECK-NEXT: v4: anything = CallList v0, v2, v3

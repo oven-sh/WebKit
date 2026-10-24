@@ -1,0 +1,70 @@
+# kept = { a: 1 }; kept.a      deleted = { a: 1 }; delete deleted.a; deleted.a      byKey = { a: 1 }; delete byKey[k]; byKey.a
+# below = Object.create-like { a: 1 } above which lies { a: "up" }; delete below.a; below.a      other = { b: 1 }; other.a
+# An object that its allocation gives the property has it, so a read finds it there: it does not answer undefined and asks nothing above the object.
+# A delete under the name, or under a key nobody knows, sends the read on: to what lies above, and to the end of the chain. An object that was never given the property was never asked
+# RUN: valueflow-apply
+# RUN(GO): run-in-shell globalThis.key = "a";
+# CHECK: variable g0 name="fromKept" {{*}}declared={type=int}
+# CHECK: variable g1 name="fromDeleted" {{*}}declared={type=undefined|int}
+# CHECK: variable g2 name="fromDeletedByKey" {{*}}declared={type=undefined|int}
+# CHECK: variable g3 name="fromBelow" {{*}}declared={type=undefined|int|string}
+# CHECK: variable g4 name="fromOther" {{*}}declared={type=undefined}
+# GO: 1
+# GO-NEXT: undefined
+# GO-NEXT: undefined
+# GO-NEXT: up
+# GO-NEXT: undefined
+# GO-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="a" declared={type=anything}}]
+layout L1 name="Deleted" fields=[{key="a" declared={type=anything}}]
+layout L2 name="DeletedByKey" fields=[{key="a" declared={type=anything}}]
+layout L3 name="Above" fields=[{key="a" declared={type=anything}}]
+layout L4 name="Below" fields=[{key="a" declared={type=anything}}]
+layout L5 name="Other" fields=[{key="b" declared={type=anything}}]
+variable g0 name="fromKept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="fromDeleted" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="fromDeletedByKey" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="fromBelow" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="fromOther" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="a"
+    PutModuleVariable v2 variable=g0
+    v4 = CallDirect v2 function=f1
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = PropDelete v5 key="a"
+    v7 = PropGet v5 key="a"
+    PutModuleVariable v7 variable=g1
+    v9 = CallDirect v7 function=f1
+    v10 = NewObject -, v0 layout=L2 fields=[0]
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="key" [isFreeName]
+    v13 = ElemDelete v10, v12
+    v14 = PropGet v10 key="a"
+    PutModuleVariable v14 variable=g2
+    v16 = CallDirect v14 function=f1
+    v17 = String string="up"
+    v18 = NewObject -, v17 layout=L3 fields=[0]
+    v19 = NewObject v18, v0 layout=L4 fields=[0]
+    v20 = PropDelete v19 key="a"
+    v21 = PropGet v19 key="a"
+    PutModuleVariable v21 variable=g3
+    v23 = CallDirect v21 function=f1
+    v24 = NewObject -, v0 layout=L5 fields=[0]
+    v25 = PropGet v24 key="a"
+    PutModuleVariable v25 variable=g4
+    v27 = CallDirect v25 function=f1
+    Return
+}
+function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}

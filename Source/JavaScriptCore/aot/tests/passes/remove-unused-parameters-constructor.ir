@@ -1,0 +1,42 @@
+# A function that constructs the instances of a class keeps a parameter that nothing uses
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 0
+# CHECK: outcome: Unchanged
+# CHECK-NOT: derivation=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="Legacy" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+
+function f0 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=object}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3, v1 layout=L0 fields=[0]
+    Return v4
+}
+# CHECK-LABEL: function f0 name="Point"{{*}}parameters=[{type=anything}, {type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# CHECK-NEXT: = GetConstructPrototype v0 layout=L0
+
+function f1 name="Legacy" flags=[HasThis] thisType={type=L1} parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L1, v1: anything, v2: anything):
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1 name="Legacy"{{*}}parameters=[{type=anything}, {type=anything}]
+# CHECK-NEXT: b0(v0: L1, v1: anything, v2: anything):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+
+function f2 name="constructsBoth" parameters=[{type=f0}, {type=f1}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: f1, v2: anything, v3: anything):
+    v4 = CallDirect v0, v2, v3 function=f0 [isConstruction]
+    v5 = GetConstructPrototype v1 layout=L1
+    v6 = NewObject v5 layout=L1
+    v7 = CallDirect v6, v2, v3 function=f1 [isConstruction]
+    v8 = NewArray v4, v6 contents=anything
+    Return v8
+}
+# CHECK-LABEL: function f2 name="constructsBoth"
+# CHECK: = CallDirect v0, v2, v3 function=f0 [isConstruction]
+# CHECK: = CallDirect v6, v2, v3 function=f1 [isConstruction]

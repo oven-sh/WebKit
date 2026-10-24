@@ -1,0 +1,52 @@
+# Tests, a typed body and a fallback are three functions for one, which pays where callers that have proven their arguments enter the typed body often. A cold function stays one function: its checks become guards at their uses
+# FORM: Prepared
+# OPTIONS: limit=MaxWarmCodeValues:6
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = CallDirect v0 function=f1
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return
+}
+
+function f1 name="calledInInnerLoop" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w0
+    v2 = Add v1, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="calledInInnerLoop" module=m0 position=5 role=EntryChecks
+
+function f2 name="coldByTheLimit" module=m0 position=6 flags=[IsChecked] length=1 parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w1
+    v2 = Add v1, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="coldByTheLimit" module=m0 position=6 flags=[IsChecked]
+# CHECK: = Check v0 castType=number

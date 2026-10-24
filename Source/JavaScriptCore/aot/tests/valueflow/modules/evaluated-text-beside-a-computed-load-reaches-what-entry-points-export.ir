@@ -1,0 +1,67 @@
+# import "./inner.js"; eval(text); require(name)   built with two entry points, main.js and other.js
+# The program loads by a name nobody knows, so the run time finds the entry points by name, for evaluated text too: what an entry point exports is called by a caller without types.
+# What it keeps to itself stays unreached. So does what inner.js exports, a file that is in the image because main.js names it by a constant, and a file that nothing names is not evaluated: the run time refuses both
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NEXT: unreached f5
+# CHECK-NEXT: unreached f6
+# RUN(TEXT): valueflow-solve unseen
+# TEXT: unseen EvaluatesText f0:v2
+# RUN(LOAD): valueflow-solve unseen
+# LOAD: unseen LoadsModuleByName f0:v5
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code yes
+# UNSEEN-NEXT: modules-by-name yes
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}]
+module m1 path="other.js" displayPath="other.js" body=f1 exports=[{name="exported" variable=g0}]
+module m2 path="inner.js" displayPath="inner.js" body=f4 exports=[{name="exportedByInner" variable=g1}]
+module m3 path="unnamed.js" displayPath="unnamed.js" body=f6
+entry module=m0
+entry module=m1
+evalscope e0
+variable g0 name="exported" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exportedByInner" module=m2 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = Builtin builtin=DateNow
+    v4 = Call v3
+    v5 = RequireDynamic v4 referrer=m0
+    Return
+}
+function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="keptInside" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="inner" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f5 name="exportedByInner" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="unnamed" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,97 @@
+# An entrance whose tests may fail unasked is read like any other, and so is a shorter one made from it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot testing=FailPredictions:2
+# RUN: pass SkipAnsweredEntryChecks VerifyProgram
+# STATISTIC: ShorterEntrancesCreated = 2
+# STATISTIC: CallsThatSkipAnsweredEntryChecks = 3
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="answersTheFirst" module=m0 parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = CallDirect v0, v1 function=f6 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="answersTheFirst"
+# CHECK: = CallDirect v0, v1 function=f9
+function f2 name="answersTheFirstToo" module=m0 parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = CallDirect v0, v1 function=f6 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="answersTheFirstToo"
+# CHECK: = CallDirect v0, v1 function=f9
+function f3 name="answersBoth" module=m0 parameters=[{type=number}, {type=string}] results=[{type=number}] {
+  b0(v0: number, v1: string):
+    v2 = CallDirect v0, v1 function=f6 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f3 name="answersBoth"
+# CHECK: = CallDirect v0, v1 function=f10
+function f4 name="answersNone" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v0, v1 function=f6 [isNeverInlined]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="answersNone"
+# CHECK: = CallDirect v0, v1 function=f6
+function f5 name="answersInAnArmThatIsUnlikely" module=m0 parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v3 = CallDirect v0, v1 function=f6 [isNeverInlined]
+    Return v3
+}
+# CHECK-LABEL: function f5 name="answersInAnArmThatIsUnlikely"
+# CHECK: = CallDirect v0, v1 function=f6
+function f6 name="shared" module=m0 role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=EntryChecks{body=f7 fallback=f8} {
+  b0(v0: anything, v1: anything):
+    v2 = ShouldFailPrediction
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4: number):
+    v5 = TypeTest v1 testedType=string
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6: string):
+    v7 = CallDirect v4, v6 function=f7 [isNeverInlined]
+    ReturnCall v7 requirement=Allowed
+  b4() frequency=Unlikely:
+    v8 = CallDirect v0, v1 function=f8 [isNeverInlined]
+    ReturnCall v8 requirement=Allowed
+}
+function f7 name="shared" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6} {
+  b0(v0: number, v1: string):
+    v2 = Mul v0, v0
+    Return v2
+}
+function f8 name="shared" module=m0 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6} creator=Version{provenVersion=f7} {
+  b0(v0: anything, v1: anything):
+    v2 = ToNumber v0
+    Return v2
+}
+# A shorter entrance has the parameters of the entrance, one for one, and says so: what flow knows of them is found through it
+# CHECK-LABEL: function f9 name="shared" module=m0 role=CallSiteVersion{{*}}derivation={source=f6 parameterMap=[{original=0}, {original=1}]}
+# CHECK: b0(v0: number, v1: anything{{*}}):
+# CHECK-NEXT: [[fails]]: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch [[fails]] -> taken [[failed]](), notTaken
+# CHECK: [[failed]]() frequency=Unlikely:
+# CHECK-NEXT: = CallDirect v0, v1 function=f8
+# CHECK: = TypeTest v1 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, {{*}} function=f7
+# CHECK-LABEL: function f10 name="shared" module=m0 role=CallSiteVersion{{*}}derivation={source=f6 parameterMap=[{original=0}, {original=1}]}
+# CHECK: b0(v0: number, v1: string):
+# CHECK-NOT: ShouldFailPrediction
+# CHECK: = CallDirect v0, v1 function=f7
+# CHECK-NOT: function=f8

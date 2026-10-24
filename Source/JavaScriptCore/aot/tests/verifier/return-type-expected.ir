@@ -1,0 +1,27 @@
+# the type of an expected result bounds nothing that is returned: the caller checks it. It stays a JavaScript value
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: ReturnTypeMismatch 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
+function f0 name="badValueForCheckedResult" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="badNoneForCheckedResult" results=[{type=number}] {
+  b0():
+    Return
+}
+function f2 name="badEnvironmentForExpectedResult" captures=[{type=env L0}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: env L0):
+    Return v0
+}
+function f3 name="goodValueForExpectedResult" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="goodNoneForExpectedResult" results=[{type=number flags=[IsExpected]}] {
+  b0():
+    Return
+}

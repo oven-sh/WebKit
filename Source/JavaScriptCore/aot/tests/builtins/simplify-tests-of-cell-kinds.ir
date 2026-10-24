@@ -1,0 +1,32 @@
+# The library's questions about the kind of a cell are tests for the classes whose instances are the cells of that kind: they fold where the type answers, and what passes has the type.
+# The kinds are numbered as the table lists them: 7 JSMapType, 8 JSPromiseType, 9 JSSetType, 4 to 2 Int8ArrayType to BigUint64ArrayType, 5 JSArrayIteratorType, none ArrayType.
+# Not the question for ArrayType, which an array of a class below Array fails, not a kind that no class of the table has, and not of what has the layout of a class below a built-in class
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Registry" flow={baseState=BuiltinClass baseClass=Map}
+function f0 name="kinds" parameters=[{type=anything}, {type=Map}, {type=string|L0}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Map, v2: string|L0, v3: Array):
+    v4 = HasJSType v0 first=7 last=7
+    v5 = HasJSType v0 first=9 last=9
+    v6 = HasJSType v0 first=8 last=8
+    v7 = HasJSType v0 first=4 last=2
+    v8 = HasJSType v1 first=7 last=7
+    v9 = HasJSType v2 first=7 last=7
+    v10 = HasJSType v3
+    v11 = HasJSType v0
+    v12 = HasJSType v0 first=5 last=5
+    v13 = NewArray v4, v5, v6, v7, v8, v9, v10, v11, v12 contents=anything
+    Return v13
+}
+# CHECK-LABEL: function f0 name="kinds"
+# CHECK: v4: boolean = TypeTest v0 testedType=Map
+# CHECK-NEXT: v5: boolean = TypeTest v0 testedType=Set
+# CHECK-NEXT: v6: boolean = TypeTest v0 testedType=Promise
+# CHECK-NEXT: v7: boolean = TypeTest v0 testedType={{*}}BigUint64Array{{*}}Uint8Array
+# CHECK-NEXT: v8: {{*}} = TypeTest v1 testedType=Map
+# CHECK-NEXT: v9: boolean = HasJSType v2 first=
+# CHECK-NEXT: v10: boolean = HasJSType v3
+# CHECK-NEXT: v11: boolean = HasJSType v0

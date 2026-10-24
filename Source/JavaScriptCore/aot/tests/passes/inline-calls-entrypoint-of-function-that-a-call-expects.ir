@@ -1,0 +1,68 @@
+# No callee set lists the function and no type names it, so the call graph counts no call of it. But a call expects it: that call tests for the function and then names it,
+# and the body stays for it. So the entrypoint calls the body and holds no second copy. The small function that no call expects is taken into its entrypoint
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return
+}
+
+function f1 name="expectedByACall" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+
+function f2 name="expectedByNoCall" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+
+function f3 name="caller" parameters=[{type=f1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f1, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: name="expectedByACall" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-NOT: = Mul
+# CHECK-LABEL: name="expectedByNoCall" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = CallDirect
+# CHECK-COUNT-13: = Mul

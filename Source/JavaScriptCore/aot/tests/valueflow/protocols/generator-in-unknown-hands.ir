@@ -1,0 +1,32 @@
+# function* handedOver() { (yield one)() }  keep(handedOver())
+# Native code steps a generator that it holds: what the body yields escapes, and a yield gives the unknown value.
+# RUN: valueflow-solve calls
+# CHECK: f1 v5 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="keep" [isFreeName]
+    v4 = Call v3, -, v1
+    Return
+}
+function f1 name="handedOver" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = NewClosure function=f2
+    v3 = Yield v2
+    v4 = ResultAt v3
+    v5 = Call v4
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,75 @@
+# A deferred closure has no code and no value, so it is neither the result of an outlined body nor an argument of one: it moves only together with the allocation that names it
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="run" declared={type=function} flags=[IsRequired]}, {key="detail" declared={type=anything}}]
+
+function f0 name="holderStaysInTheFrame" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1() frequency=Rare:
+    v2 = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1] allocationSite=2 storage=Frame
+    v4 = StrictEq v3, v1
+    Return v4
+  b2() frequency=Rare:
+    v5 = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+    v6 = NewObject -, v5, v1 layout=L0 fields=[0, 1] allocationSite=2 storage=Frame
+    v7 = StrictEq v6, v1
+    Return v7
+  b3() frequency=Rare:
+    v8 = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+    v9 = NewObject -, v8, v1 layout=L0 fields=[0, 1] allocationSite=2 storage=Frame
+    v10 = StrictEq v9, v1
+    Return v10
+  b4() frequency=Rare:
+    v11 = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+    v12 = NewObject -, v11, v1 layout=L0 fields=[0, 1] allocationSite=2 storage=Frame
+    v13 = StrictEq v12, v1
+    Return v13
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-4: = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+# CHECK-NOT: CallDirect
+
+function f1 name="holderMovesToo" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1() frequency=Rare:
+    v2 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1] allocationSite=4
+    Return v3
+  b2() frequency=Rare:
+    v4 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+    v5 = NewObject -, v4, v1 layout=L0 fields=[0, 1] allocationSite=4
+    Return v5
+  b3() frequency=Rare:
+    v6 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+    v7 = NewObject -, v6, v1 layout=L0 fields=[0, 1] allocationSite=4
+    Return v7
+  b4() frequency=Rare:
+    v8 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+    v9 = NewObject -, v8, v1 layout=L0 fields=[0, 1] allocationSite=4
+    Return v9
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewClosure
+# CHECK-COUNT-4: = CallDirect v1 function=[[body]]
+# CHECK-NOT: NewClosure
+
+function f2 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK: function [[body]] {{*}}role=OutlinedBody
+# CHECK: [[closure]]: f2 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+# CHECK-NEXT: = NewObject -, [[closure]], v0 layout=L0

@@ -1,0 +1,47 @@
+# An append of an element is in line in fast code alone: balanced and compact code call the stub
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="balanced" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: anything):
+    AppendElement v0, v1
+    Return
+}
+# S: f0 b0 Balanced
+# CHECK: f0: size=
+# CHECK-NEXT: stub ArrayPush x1
+# CHECK-NEXT: stub PollAtPrologue
+# CHECK-NEXT: f1: size=
+
+function f1 name="fast" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# The barrier of the store in line remembers the element. The stub is the slow path.
+# S: f1 b1 Fast
+# CHECK: stub ArrayPush x1
+# CHECK-NEXT: stub PollAtPrologue
+# CHECK-NEXT: stub RememberElement x1
+
+function f2 name="compact" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    AppendElement v0, v1
+    Jump -> next b2()
+  b2():
+    Return
+}
+# S: f2 b1 Compact
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub ArrayPush x1
+# CHECK-NEXT: stub PollAtPrologue

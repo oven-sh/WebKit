@@ -1,0 +1,10 @@
+# A backslash in a string starts \", \\, \n, \x with two hexadecimal digits or \u{..}, and nothing else
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    v0 = String string="\q"
+    Return
+}

@@ -1,0 +1,200 @@
+# In an async generator an await whose only use is the yield right after it becomes one suspension with the yield
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 11
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="adjacent" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    Return v1
+}
+function f1 name="throughUpcasts" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Upcast v3 castType=anything
+    v5 = Upcast v4 castType=anything
+    v6 = Yield v5 @12
+    v7 = ResultAt v6 index=0
+    Return v7
+}
+function f2 name="twoInOneBlock" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = Await v5 @13
+    v7 = Yield v6 @14
+    v8 = ResultAt v7 index=0
+    Return v8
+}
+function f3 name="checkBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Check v3 castType=number cause=AddedByPass
+    v5 = Yield v4 @12
+    v6 = ResultAt v5 index=0
+    Return v6
+}
+function f4 name="awaitedValueHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    Return v3
+}
+function f5 name="upcastHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Upcast v3 castType=anything
+    v5 = Yield v4 @12
+    v6 = ResultAt v5 index=0
+    Return v4
+}
+function f6 name="callBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Call v1
+    v5 = Yield v3 @12
+    v6 = ResultAt v5 index=0
+    Return v6
+}
+function f7 name="constantBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Integer integer=7
+    v5 = Yield v3 @12
+    v6 = ResultAt v5 index=0
+    Return v4
+}
+function f8 name="yieldInNextBlock" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Await v1 @11
+    Jump -> next b1()
+  b1():
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    Return v5
+}
+function f9 name="yieldsWithoutAwait" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Yield v1 @12
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+function f10 name="synchronousGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+  b0(v0: function, v1: anything):
+    InitialYield @10
+    v3 = Yield v1 @12
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+
+# CHECK-LABEL: function f11 name="adjacent"
+# CHECK: = YieldBySavingFrame [[driver0]], {{*}} @10
+# CHECK: otherwise [[rest0]]() @10
+# CHECK-NOT: BySavingFrame
+# CHECK: Throw v5
+# CHECK: [[rest0]]():
+# CHECK-NEXT: v4{{*}}= AsyncGeneratorYield [[driver0]], v1 @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v4 index=1
+# CHECK-NEXT: Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+# CHECK-NOT: BySavingFrame
+
+# CHECK-LABEL: function f12 name="throughUpcasts"
+# CHECK: = YieldBySavingFrame [[driver1]], {{*}} @10
+# CHECK: otherwise [[rest1]]() @10
+# CHECK-NOT: BySavingFrame
+# CHECK-NOT: Upcast
+# CHECK: [[rest1]]():
+# CHECK-NEXT: v6{{*}}= AsyncGeneratorYield [[driver1]], v1 @12
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NOT: BySavingFrame
+# CHECK-NOT: Upcast
+
+# CHECK-LABEL: function f13 name="twoInOneBlock"
+# CHECK: = YieldBySavingFrame [[driver2]], {{*}} @10
+# CHECK: otherwise [[rest2]]() @10
+# CHECK-NOT: BySavingFrame
+# CHECK: [[rest2]]():
+# CHECK-NEXT: v4{{*}}= AsyncGeneratorYield [[driver2]], v1 @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v7{{*}}= AsyncGeneratorYield [[driver2]], v5 @14
+# CHECK-NEXT: v8: anything = ResultAt v7
+# CHECK-NOT: BySavingFrame
+
+# CHECK-LABEL: function f14 name="checkBetween"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver3]] @11
+# CHECK-NEXT: v4: number = Check v3 castType=number cause=AddedByPass
+# CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver3]], v4 @12
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f15 name="awaitedValueHasSecondUse"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver4]] @11
+# CHECK-NEXT: v4{{*}}= YieldBySavingFrame [[driver4]], v3 @12
+# CHECK: Return v3
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f16 name="upcastHasSecondUse"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver5]] @11
+# CHECK-NEXT: v4: anything = Upcast v3 castType=anything
+# CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver5]], v4 @12
+# CHECK: Return v4
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f17 name="callBetween"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver6]] @11
+# CHECK-NEXT: v4: anything = Call v1
+# CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver6]], v3 @12
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f18 name="constantBetween"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver7]] @11
+# CHECK-NEXT: v4: 7 = Integer integer=7
+# CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver7]], v3 @12
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f19 name="yieldInNextBlock"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v4{{*}}= YieldBySavingFrame [[driver8]], v3 @12
+# CHECK: v3: anything = AwaitBySavingFrame v1, [[driver8]] @11
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f20 name="yieldsWithoutAwait"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK-NOT: AwaitBySavingFrame
+# CHECK: v3{{*}}= YieldBySavingFrame [[driver9]], v1 @12
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK-NOT: AwaitBySavingFrame
+
+# CHECK-LABEL: function f21 name="synchronousGenerator"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3{{*}}= YieldBySavingFrame [[driver10]], v1 @12
+# CHECK-NOT: AsyncGeneratorYield

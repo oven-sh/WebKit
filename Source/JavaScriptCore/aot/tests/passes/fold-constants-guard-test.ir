@@ -1,0 +1,106 @@
+# A test whose proof holds only for a stretch of code is never folded, whatever the types say about its operand
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 2
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass FoldConstants FoldConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Label" fields=[{key="text" declared={type=string}}]
+
+function f0 name="shapeTestTheTypeProves" parameters=[{type=L0}] results=[{type=boolean}] {
+  b0(v0: L0):
+    v1 = ShapeTest v0 layouts=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f0 name="shapeTestTheTypeProves"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Return v1
+
+function f1 name="typeTestTheTypeProves" parameters=[{type=L0}] results=[{type=boolean}] {
+  b0(v0: L0):
+    v1 = TypeTest v0 testedType=L0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="typeTestTheTypeProves"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: true = Boolean boolean=true
+# CHECK-NEXT: Return v1
+
+function f2 name="shapeTestTheTypeRefutes" parameters=[{type=L1}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L1, v1: number):
+    v2 = ShapeTest v0 layouts=[L0]
+    v3 = ShapeTest v1 layouts=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="shapeTestTheTypeRefutes"
+# CHECK-NEXT: b0(v0: L1, v1: number):
+# CHECK-NEXT: v2: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: v3: boolean = ShapeTest v1 layouts=[L0]
+# CHECK-NEXT: Return v2
+
+function f3 name="typeTestTheTypeRefutes" parameters=[{type=L1}, {type=number}] results=[{type=boolean}] {
+  b0(v0: L1, v1: number):
+    v2 = TypeTest v0 testedType=L0
+    v3 = TypeTest v1 testedType=L0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="typeTestTheTypeRefutes"
+# CHECK-NEXT: b0(v0: L1, v1: number):
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: Return v2
+
+function f4 name="conditionWithoutProofs" parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="conditionWithoutProofs"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+
+function f5 name="guardPassedToAccess" parameters=[{type=object}] results=[{type=number}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    Return v3
+  b2():
+    v4 = Integer integer=0
+    Return v4
+}
+# CHECK-LABEL: function f5 name="guardPassedToAccess"
+# CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+
+function f6 name="otherGuardTests" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}, {type=L0}] results=[{type=boolean}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: number, v2: L0):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    v4 = IsNotThenable v1
+    v5 = IsSlotFilled v2 key="x" receivers=[L0] level=Proven
+    v6 = HasNoExtraProperties v2
+    v7 = IsNotFrozen v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="otherGuardTests"
+# CHECK: v3: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: v4: boolean = IsNotThenable v1
+# CHECK-NEXT: v5: boolean = IsSlotFilled v2 key="x" receivers=[L0] level=Proven
+# CHECK-NEXT: v6: boolean = HasNoExtraProperties v2
+# CHECK-NEXT: v7: boolean = IsNotFrozen v2
+# CHECK-NEXT: Return v3

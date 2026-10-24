@@ -1,0 +1,109 @@
+# A site in a branch, in a loop, under a handler or in a function may come first or never: the module it names has a state, and the site calls the function that looks at it.
+# What only that module leads to has no state. A site that says it is bare and does not stand where every run passes once counts as one of these.
+# A wrapper of a bundler counts as done once it has begun, whatever its body throws: its start has no handler.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 4
+# STATISTIC: ModulesWithoutState = 1
+# STATISTIC: RequireSitesBound = 6
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m5 kind=Require}]
+module m1 path="/in-a-branch.cjs" displayPath="in-a-branch.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 requests=[{target=m4 kind=Require completes=true}]
+module m2 path="/under-a-handler.cjs" displayPath="under-a-handler.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
+module m3 path="/moved.cjs" displayPath="moved.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3
+module m4 path="/own-of-the-branch.cjs" displayPath="own-of-the-branch.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f4
+module m5 path="#5" displayPath="main.cjs" kind=CommonJs requireResult=ModuleExports body=f5
+entry module=m0
+# CHECK: module m1 {{*}}flags=[KeepsError, EvaluatesItself]
+# CHECK: module m2 {{*}}flags=[KeepsError, EvaluatesItself]
+# CHECK: module m3 {{*}}flags=[KeepsError, EvaluatesItself]
+# CHECK: module m4 path="/own-of-the-branch.cjs" displayPath="own-of-the-branch.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports
+# CHECK-NOT: body=f4
+# CHECK: module m5 {{*}}flags=[EvaluatesItself]
+
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    EvaluateModule module=m1 referrer=m0
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    Jump -> next b3()
+  b2():
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    Jump -> next b3()
+  b3() handler=b5():
+    EvaluateModule module=m2 referrer=m0
+    Jump -> next b4()
+  b4():
+    EvaluateModule module=m5 referrer=m0
+    Return
+  b5() role=CatchHandler:
+    v8 = CatchValue
+    Jump -> next b4()
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK: = CallDirect function=f3
+# CHECK: = CallDirect function=f2
+# CHECK: = CallDirect function=f5
+# CHECK-NOT: EvaluateModule
+function f1 name="inABranch" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m4 referrer=m1 [isBare]
+    Return
+}
+# A CommonJS module begins in its code, behind the stack check of that frame.
+# CHECK-LABEL: function f1 name="inABranch"
+# CHECK-NOT: BeginModuleEvaluation
+# CHECK: AbandonModuleEvaluation {{*}} module=m1
+function f2 name="underAHandler" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f2 name="underAHandler"
+# CHECK: AbandonModuleEvaluation {{*}} module=m2
+function f3 name="moved" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f3 name="moved"
+# CHECK: = CallDirect function=f8
+function f4 name="ownOfTheBranch" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f4 name="ownOfTheBranch"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NOT: ModuleEvaluation
+function f5 name="wrapped" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f5 name="wrapped"
+# CHECK-NOT: ModuleEvaluation
+# CHECK-LABEL: function f6 name="inABranch"{{*}}derivation={source=f1}
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m1
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: FinishModuleEvaluation module=m1
+# CHECK-NEXT: Return
+# CHECK-LABEL: function f8 name="moved"
+# CHECK: = BeginModuleEvaluation module=m3
+# CHECK-LABEL: function f9 name="wrapped"
+# CHECK: = BeginModuleEvaluation module=m5
+# CHECK: FinishModuleEvaluation module=m5

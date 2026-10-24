@@ -1,0 +1,50 @@
+# Native code stores every required field of an expected result when it creates the object, so those fields are in the cell, and an optional field may still be out of line
+# TODO: flow-termination: a layout that only a typed JSON.parse fills counts as never allocated and gets no plan
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow limit=MaxParsedObjectMembers:8
+# RUN: plan-slots layouts
+# STATISTIC: FieldsOutOfLine = 14
+# LOSS: MaxParsedObjectMembers L0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0]
+layout L0 name="FilledByParse" fields=[{key="c0" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c1" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c2" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c3" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c4" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c5" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c6" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c7" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c8" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c9" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c10" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c11" declared={type=undefined|null|number} flags=[IsRequired]}, {key="note0" declared={type=undefined|number}}, {key="note1" declared={type=undefined|number}}, {key="note2" declared={type=undefined|number}}]
+layout L1 name="CreatedEmpty" fields=[{key="c0" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c1" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c2" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c3" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c4" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c5" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c6" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c7" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c8" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c9" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c10" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c11" declared={type=undefined|null|number} flags=[IsRequired]}, {key="note0" declared={type=undefined|number}}, {key="note1" declared={type=undefined|number}}, {key="note2" declared={type=undefined|number}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Builtin builtin=JSONParse
+    v5 = Call v4, -, v3 expectedResult=x0
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject layout=L1
+    v8 = FinishObject v7
+    ElemSet v8, v3, v2
+    Return
+}
+
+# The limit keeps the parse of L0 in native code: a compiled parser would list every field in its allocation.
+# CHECK: L0 CompiledObject size=128 extension=24
+# CHECK-NEXT: .0 "c0" OptionalDouble @24
+# CHECK: .11 "c11" OptionalDouble @112
+# The 8 bytes that are left under the cap of 128 go to the first optional field.
+# CHECK-NEXT: .12 "note0" OptionalDouble @120
+# CHECK-NEXT: .13 "note1" JSValue out@8 record=
+# CHECK-NEXT: .14 "note2" JSValue out@16 record=
+# CHECK-NEXT: extension Cell32 @16
+# CHECK-NEXT: extra-properties Cell32 @20
+# L1 has the same fields, and compiled code creates it with none of them, so its inline cap is 48 bytes.
+# CHECK-NEXT: L1 CompiledObject size=48 extension=104
+# CHECK-NEXT: .0 "c0" OptionalDouble @24
+# CHECK-NEXT: .1 "c1" OptionalDouble @32
+# CHECK-NEXT: .2 "c2" OptionalDouble @40
+# CHECK-NEXT: .3 "c3" JSValue out@8 record=
+# CHECK: .11 "c11" JSValue out@72 record=
+# CHECK-NEXT: .12 "note0" JSValue out@80 record=
+# CHECK: .14 "note2" JSValue out@96 record=
+# CHECK-NEXT: extension Cell32 @16
+# CHECK-NEXT: extra-properties Cell32 @20

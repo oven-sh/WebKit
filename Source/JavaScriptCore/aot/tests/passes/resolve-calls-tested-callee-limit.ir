@@ -1,0 +1,48 @@
+# A call with several expected callees tests for none of them: another function may come, so the call has to stay, and it serves them as well as their arms would
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="second" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="third" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="fourth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="fifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f5 name="two-expected-callees" parameters=[{type=f0|f1 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="two-expected-callees"
+# CHECK-NEXT: b0(v0: anything ~ f0|f1, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f6 name="one-expected-callee-more" parameters=[{type=f0|f1|f2|f3|f4 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1|f2|f3|f4, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="one-expected-callee-more"
+# CHECK-NEXT: b0(v0: anything ~ f0|f1|f2|f3|f4, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

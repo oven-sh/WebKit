@@ -1,0 +1,58 @@
+# Fast code fits MaxHotCodeValues: of a program larger than that only the hottest code has the long forms in line, the rest of what runs often is balanced, and its arms that are not expected to be taken are compact. In a smaller program heat alone decides
+# FORM: Prepared
+# OPTIONS: limit=MaxHotCodeValues:1
+# RUN: code-shapes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = CallDirect v0 function=f1
+    v6 = CallDirect v0 function=f3
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return
+}
+
+function f1 name="calledInInnerLoop" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f1 b0 Fast
+
+function f2 name="calledInOuterLoop" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK: f2 b0 Balanced heat=11.00
+
+function f3 name="hasUnlikelyArm" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = Undefined
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK: f3 b0 Fast
+# CHECK-NEXT: f3 b1 Compact heat=5.
+# CHECK-NEXT: f3 b2 Balanced

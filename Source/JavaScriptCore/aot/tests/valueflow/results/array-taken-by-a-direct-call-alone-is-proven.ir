@@ -1,0 +1,34 @@
+# function ofStrings(x) { return first([String(x)]) }, where first is a function of the library that the host may enter too
+# A direct call is edges alone, so no operation takes the array, and the parameter of a function with callers nobody knows is not narrowed. What is proven of the array is written on the allocation itself
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="first"
+# CHECK: parameters=[{type=Array}]
+# CHECK-LABEL: function f2 name="ofStrings"
+# CHECK: [[array]]: Array<string> = NewArray v1 contents=string
+# CHECK-NEXT: [[proven]]: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType [[array]]
+# CHECK-NEXT: = CallDirect [[proven]] function=f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=0 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="first" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f2 name="ofStrings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = NewArray v1 contents=anything
+    v3 = CallDirect v2 function=f1
+    Return v3
+}

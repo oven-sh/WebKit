@@ -1,0 +1,63 @@
+# A super call whose parent is only expected tests the parent for the class, and under the test the parent's constructor is called directly
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(NEXT): pass PlaceTypeTests ResolveCalls
+# CHECK: outcome: Changed
+# NEXT: outcome: Changed
+# NEXT-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L0, L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeProperty=Fixed}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L0|L1}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 castType=L0|L1
+    Return v4
+}
+function f1 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 ~ f0 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f0, ..]
+    Return v4
+}
+# CHECK-LABEL: function f1 name="Circle"
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: anything):
+# CHECK-NEXT: v3: null|object ~ f0 = GetSuperBase v0
+# CHECK-NEXT: [[isShape]]: boolean{{*}}= IsClosureOf v3 function=f0
+# CHECK-NEXT: Branch [[isShape]] -> taken [[passed]](| 0), notTaken {{*}}
+# CHECK: [[passed]]([[parent]]: f0):
+# CHECK: v4: object{{*}}= SuperConstruct [[parent]], v1, v2 layout=L1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperConstruct {{*}}, v1, v2 layout=L1
+# CHECK-NOT: IsClosureOf
+# NEXT-LABEL: function f1 name="Circle"
+# NEXT: = IsClosureOf v3 function=f0
+# NEXT: = CallDirect v1, v2 function=f0 [isConstruction]
+# NEXT: frequency=Unlikely:
+# NEXT-NEXT: = SuperConstruct {{*}}, v1, v2 layout=L1
+function f2 name="arrow" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f3 name="nothing-is-expected" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+# CHECK-LABEL: function f3 name="nothing-is-expected"
+# CHECK-NOT: IsClosureOf
+# CHECK: v4: object{{*}}= SuperConstruct v3, v1, v2 layout=L1
+
+function f4 name="expected-parent-is-no-constructor" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 ~ f2 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f2, ..]
+    Return v4
+}
+# CHECK-LABEL: function f4 name="expected-parent-is-no-constructor"
+# CHECK-NOT: IsClosureOf
+# CHECK: v4: object{{*}}= SuperConstruct v3, v1, v2 layout=L1

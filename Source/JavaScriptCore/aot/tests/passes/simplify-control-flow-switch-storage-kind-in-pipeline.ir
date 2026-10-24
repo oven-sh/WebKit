@@ -1,0 +1,67 @@
+# The comparisons of a library function with the storage kind are a switch before the function is copied to where the array is known to hold no numbers: that copy has no code for doubles
+# TODO: flow-termination: the arms of a switch over the storage kind that the arrays' own definitions rule out are no longer removed
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=0 function=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="first" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = ArrayStorageKind v0
+    v2 = Integer integer=2
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=0
+    v5 = GetDoubleIndex v0, v4
+    Return v5
+  b2():
+    v6 = Integer integer=3
+    v7 = StrictEq v1, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Integer integer=0
+    v9 = GetContiguousIndex v0, v8
+    Return v9
+  b4():
+    v10 = Integer integer=1
+    v11 = StrictEq v1, v10
+    Branch v11 -> taken b3(), notTaken b5()
+  b5():
+    v12 = Integer integer=0
+    v13 = ElemGet v0, v12
+    Return v13
+}
+function f2 name="ofStrings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = NewArray v1, v1 contents=anything
+    v3 = CallDirect v2 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="ofStrings"
+# CHECK: [[kind2]]: int[0, 3] = ArrayStorageKind
+# CHECK-NEXT: Switch [[kind2]] cases=[3, 1] ->
+# CHECK-NOT: GetDoubleIndex
+function f3 name="ofNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = NewArray v1, v1 contents=anything
+    v3 = CallDirect v2 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="ofNumbers"
+# CHECK: [[kind3]]: int[0, 3] = ArrayStorageKind
+# CHECK-NEXT: Switch [[kind3]] cases=[2, 3, 1] ->
+# CHECK: = GetDoubleIndex

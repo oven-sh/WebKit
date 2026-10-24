@@ -1,0 +1,120 @@
+# An object without a constructor gets its keys from stores and definitions, in the order of the declarations. As far as it can get in that order, the place there comes before the place behind the allocation. A field that only a definition creates is listed like any other, so the stores behind it go on from the order word that the run time leaves
+# An allocation that lists the first declared keys is continued in the same order, as far as stores go on in it. A place that no object reaches takes no place from the allocations
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place key-orders key-order-continuations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Exports" fields=[{key="__esModule" declared={type=anything} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}, {key="a" declared={type=number}}, {key="b" declared={type=number}}]
+layout L1 name="StartsWithFirstKeys" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number} form=[IsNotEnumerable]}]
+layout L2 name="TwoStarts" fields=[{key="p" declared={type=number}}, {key="q" declared={type=number}}, {key="r" declared={type=number}}]
+layout L3 name="Skips" fields=[{key="p" declared={type=number}}, {key="q" declared={type=number}}, {key="r" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = CallDirect v5, v2 function=f1
+    v7 = CallDirect v5, v2 function=f2
+    v8 = CallDirect v5, v2 function=f3
+    v9 = Call v3, -, v5
+    v10 = NewObject -, v2 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = CallDirect v11, v2 function=f4
+    v13 = CallDirect v11, v2 function=f5
+    v14 = CallDirect v11, v2 function=f6
+    v15 = Call v3, -, v11
+    v16 = NewObject layout=L2
+    v17 = FinishObject v16
+    v18 = CallDirect v17, v2 function=f7
+    v19 = CallDirect v17, v2 function=f8
+    v20 = Call v3, -, v17
+    v21 = NewObject -, v2 layout=L2 fields=[2]
+    v22 = FinishObject v21
+    v23 = CallDirect v22, v2 function=f7
+    v24 = Call v3, -, v22
+    v25 = NewObject layout=L3
+    v26 = FinishObject v25
+    v27 = CallDirect v26, v2 function=f9
+    v28 = Call v3, -, v26
+    v29 = NewObject -, v2, v2 layout=L3 fields=[2, 0]
+    v30 = FinishObject v29
+    v31 = CallDirect v30, v2 function=f9
+    v32 = Call v3, -, v30
+    Return
+}
+# The store goes by name and creates nothing in the slot. It is here so that something writes the field, which has no slot otherwise.
+function f1 name="storeMarker" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="__esModule"
+    Return
+}
+function f2 name="storeA" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="a"
+    Return
+}
+function f3 name="storeB" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="b"
+    Return
+}
+function f4 name="addB" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="b"
+    Return
+}
+function f5 name="addC" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="c"
+    Return
+}
+function f6 name="storeD" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="d"
+    Return
+}
+function f7 name="addP" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: L2, v1: number):
+    PropSet v0, v1 key="p"
+    Return
+}
+function f8 name="addQ" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: L2, v1: number):
+    PropSet v0, v1 key="q"
+    Return
+}
+function f9 name="addQBehindNothingOrTwoKeys" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: L3, v1: number):
+    PropSet v0, v1 key="q"
+    Return
+}
+# CHECK: L0 orders=3: [0 1 2] [1] [2]
+# No store creates "d", so the image does not list it behind "c".
+# CHECK-NEXT: L1 orders=2: [0 1 2] [0 2]
+# The code of the store to "q" names its place among the declarations and the place behind the allocation without keys, so the image has no order [2 1].
+# CHECK-NEXT: L2 orders=3: [0 1 2] [1] [2 0]
+# CHECK-NEXT: L3 orders=3: [0 1 2] [1] [2 0 1]
+# CHECK: allocation {{*}} L0 fields=[] order=0 count=0
+# CHECK-NEXT: allocation {{*}} L1 fields=[0] order=0 count=1
+# CHECK-NEXT: allocation {{*}} L2 fields=[] order=0 count=0
+# CHECK-NEXT: allocation {{*}} L2 fields=[2] order=2 count=1
+# CHECK-NEXT: allocation {{*}} L3 fields=[] order=0 count=0
+# CHECK-NEXT: allocation {{*}} L3 fields=[2 0] order=2 count=2
+# What a store creates is writable, enumerable and configurable, so no store creates the marker.
+# CHECK-NOT: L0 creating [0
+# The definition of the marker leaves order 0 with one key.
+# CHECK: L0 creating [1]: order=0 count=1 -> order=0 count=2; order=0 count=0 -> order=1 count=1;
+# CHECK-NEXT: L0 creating [2]: order=0 count=2 -> order=0 count=3; order=0 count=0 -> order=2 count=1;
+# The place among the declarations and the place behind the allocation are one place.
+# CHECK-NEXT: L1 creating [1]: order=0 count=1 -> order=0 count=2;
+# CHECK-NEXT: L1 creating [2]: order=0 count=2 -> order=0 count=3; order=0 count=1 -> order=1 count=2;
+# CHECK-NOT: L1 creating [3
+# CHECK: L2 creating [0]: order=0 count=0 -> order=0 count=1; order=2 count=1 -> order=2 count=2;
+# CHECK-NEXT: L2 creating [1]: order=0 count=1 -> order=0 count=2; order=0 count=0 -> order=1 count=1;
+# No store creates "p" and no allocation lists it alone, so no object has "p" and nothing else when "q" is stored.
+# CHECK-NEXT: L3 creating [1]: order=0 count=0 -> order=1 count=1; order=2 count=2 -> order=2 count=3;

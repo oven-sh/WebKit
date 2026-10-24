@@ -1,0 +1,25 @@
+# ToObject and ToThis return an object as it is, so the result keeps what is known about it. ToObject throws for undefined and null: they add nothing to its result
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v5: Array<string>
+# CHECK-NEXT: v6: Array<string>
+# CHECK-NEXT: v7: object
+# CHECK-NEXT: v8: object
+# CHECK-NEXT: v9: Array<string>
+# CHECK-NEXT: v10: object
+# CHECK-NEXT: v11: object
+# CHECK-NEXT: v12: never
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="conversions" parameters=[{type=Array<string>}, {type=undefined|null|Array<string>}, {type=string|Array<string>}, {type=undefined}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array<string>, v1: undefined|null|Array<string>, v2: string|Array<string>, v3: undefined, v4: anything):
+    v5 = ToObject v0
+    v6 = ToObject v1
+    v7 = ToObject v2
+    v8 = ToObject v4
+    v9 = ToThis v0
+    v10 = ToThis v1
+    v11 = ToThis v2
+    v12 = ToObject v3
+    Unreachable
+}

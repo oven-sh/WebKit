@@ -1,0 +1,76 @@
+# The result of an allocation is a fresh object, a value that comes from an operand, from memory, from a call or from a source site is not, and the result of a built-in is as fresh as its overload declares
+# FORM: Prepared
+# RUN: result-freshness
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="operations" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewArray v0 contents=number
+    v4 = NewClosure function=f1
+    v5 = NewRegExp pattern="a"
+    v6 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v7 = SharedRegExpLiteral pattern="a"
+    v8 = FinishObject v2
+    v9 = Upcast v2 castType=anything
+    v10 = PropGet v1 key="x"
+    v11 = PropGet v2 key="x"
+    v12 = Call v1
+    v13 = CallDirect function=f1
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v2 NewObject: fresh
+# CHECK-NEXT: v3 NewArray: fresh
+# CHECK-NEXT: v4 NewClosure: fresh
+# CHECK-NEXT: v5 NewRegExp: fresh
+# CHECK-NEXT: v6 NewTemplateObject: unknown
+# CHECK-NEXT: v7 SharedRegExpLiteral: unknown
+# CHECK-NEXT: v8 FinishObject: unknown
+# CHECK-NEXT: v9 Upcast: unknown
+# CHECK-NEXT: v10 PropGet: unknown
+# CHECK-NEXT: v11 PropGet: unknown
+# CHECK-NEXT: v12 Call: unknown
+# CHECK-NEXT: v13 CallDirect: unknown
+function f1 name="allocates" results=[{type=Array<number>}] {
+  b0():
+    v0 = NewArray contents=number
+    Return v0
+}
+function f2 name="builtins" parameters=[{type=L0}, {type=object}, {type=Map}, {type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=string}] results=[{type=undefined}] {
+  b0(v0: L0, v1: object, v2: Map, v3: number, v4: Array<number, pristine[Storage, Names]>, v5: string):
+    v6 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v7 = CallBuiltin v4, v3, v3 overload=ArrayPrototypeSlice/0
+    v8 = CallBuiltin v2, v3 overload=MapPrototypeGet/0
+    v9 = CallBuiltin -, v3 overload=MathAbs/0
+    v10 = CallBuiltin -, v1, v1 overload=ObjectCreate/1
+    v11 = CallBuiltin v1, v3, v3 overload=ArrayPrototypeSlice/1
+    v12 = CallBuiltin v4, v3, v3 overload=ArrayPrototypeSlice/0 builtinCallForm=AnyReceiver
+    v13 = CallBuiltin -, v0, v5 overload=ObjectGetOwnPropertyDescriptor/0
+    v14 = CallBuiltin -, v0, v5 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
+    v15 = CallBuiltin v5, v5 overload=StringPrototypeSplit/0
+    v16 = CallBuiltin v5, v5 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v6 CallBuiltin: fresh
+# CHECK-NEXT: v7 CallBuiltin: fresh
+# CHECK-NEXT: v8 CallBuiltin: unknown
+# CHECK-NEXT: v9 CallBuiltin: unknown
+# CHECK-NEXT: v10 CallBuiltin: unaliased
+# CHECK-NEXT: v11 CallBuiltin: unknown
+# CHECK-NEXT: v12 CallBuiltin: unknown
+# CHECK-NEXT: v13 CallBuiltin: fresh
+# CHECK-NEXT: v14 CallBuiltin: unknown
+# CHECK-NEXT: v15 CallBuiltin: fresh
+# CHECK-NEXT: v16 CallBuiltin: unknown
+function f3 name="entrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1} {
+  b0(v0: function):
+    v1 = CreateRest firstArgument=1
+    v2 = GetArgument argumentIndex=1
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v1 CreateRest: fresh
+# CHECK-NEXT: v2 GetArgument: unknown

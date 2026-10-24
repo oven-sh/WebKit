@@ -1,0 +1,30 @@
+# eval(text); unknown = somethingNoTableLists; unknown.constructor.extra = one; Array.extra()
+# Text that eval or `Function` runs is code of the global scope, and `Array` is in its hands. The run time refuses it, as it refuses native code, a change of a member that compiled code relies on
+# in a built-in object of the realm. It refuses nobody a new name: what the program stores through the unknown object under a name that `Array` has no member under is found on `Array`
+# RUN: valueflow-solve calls
+# CHECK: f0 v10 -> {{*}}f1
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+evalscope e0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = String string="text"
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = PropGet v4 key="constructor"
+    v6 = NewClosure function=f1
+    PropSet v5, v6 key="extra" mode=Strict
+    v8 = Builtin builtin=Array
+    v9 = PropGet v8 key="extra"
+    v10 = Call v9, v8
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

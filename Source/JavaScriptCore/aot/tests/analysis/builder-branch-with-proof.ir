@@ -1,0 +1,63 @@
+# A branch with proof passes the narrowed operand on both edges of a test that holds for good, and a guard on the taken edge of a test that holds for a stretch
+# FORM: Prepared
+# RUN: branch-with-proof function=f0 block=b0 test=v1
+# RUN(SECOND): branch-with-proof function=f1 block=b0 test=v2 operand=1
+# RUN(SHAPE): branch-with-proof function=f2 block=b0 test=v1
+# RUN(STRETCH): branch-with-proof function=f2 block=b0 test=v1 operand=1
+# RUN(PLAIN): branch-with-proof function=f3 block=b0 test=v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="typeTest" parameters=[{type=number|string}] results=[{type=string}] {
+  b0(v0: number|string):
+    v1 = TypeTest v0 testedType=string
+    Unreachable
+}
+# CHECK: function f0
+# CHECK-NEXT: b0(v0: number|string):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1([[string]]: string):
+# CHECK-NEXT: Return [[string]]
+# CHECK-NEXT: b2([[number]]: number):
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+function f1 name="secondOperand" parameters=[{type=string}, {type=number|string}] results=[{type=string}] {
+  b0(v0: string, v1: number|string):
+    v2 = StrictEq v0, v1
+    Unreachable
+}
+# SECOND: function f1
+# SECOND-NEXT: b0(v0: string, v1: number|string):
+# SECOND-NEXT: v2: boolean = StrictEq v0, v1
+# SECOND-NEXT: Branch v2 -> taken b1(| 1), notTaken b2(| 1)
+# SECOND-NEXT: b1([[equal]]: string):
+# SECOND-NEXT: Return [[equal]]
+# SECOND-NEXT: b2([[different]]: number|string):
+# SECOND-NEXT: Unreachable
+# SECOND-NEXT: }
+function f2 name="shapeTest" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Unreachable
+}
+# SHAPE: function f2
+# SHAPE-NEXT: b0(v0: object):
+# SHAPE-NEXT: v1: boolean = ShapeTest v0 layouts=[L0]
+# SHAPE-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# SHAPE-NEXT: b1([[guard]]: guard):
+# SHAPE-NEXT: Return
+# SHAPE-NEXT: b2():
+# SHAPE-NEXT: Unreachable
+# SHAPE-NEXT: }
+# STRETCH-NOT: function f2
+# STRETCH: error: bad argument operand
+# STRETCH-NOT: function f2
+function f3 name="provesNothing" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = LogicalNot v0
+    Unreachable
+}
+# PLAIN-NOT: function f3
+# PLAIN: error: bad argument test=v1
+# PLAIN-NOT: function f3

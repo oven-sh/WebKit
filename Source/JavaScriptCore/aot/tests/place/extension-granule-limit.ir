@@ -1,0 +1,174 @@
+# An Extension has a bit for each of its granules in one word. Rows beyond that stay in the cell, and the least used ones go out first
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow disable=flow:NarrowedTypes limit=MaxExtensionGranules:18 testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+# STATISTIC: MaxExtensionGranulesHits = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Fits" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="fits0" declared={type=undefined|number}}, {key="fits1" declared={type=undefined|number}}, {key="fits2" declared={type=undefined|number}}, {key="fits3" declared={type=undefined|number}}, {key="fits4" declared={type=undefined|number}}, {key="fits5" declared={type=undefined|number}}, {key="fits6" declared={type=undefined|number}}, {key="fits7" declared={type=undefined|number}}, {key="fits8" declared={type=undefined|number}}, {key="fits9" declared={type=undefined|number}}, {key="fits10" declared={type=undefined|number}}, {key="fits11" declared={type=undefined|number}}, {key="fits12" declared={type=undefined|number}}, {key="fits13" declared={type=undefined|number}}, {key="fits14" declared={type=undefined|number}}, {key="fits15" declared={type=undefined|number}}, {key="fits16" declared={type=undefined|number}}, {key="fits17" declared={type=undefined|number}}, {key="fits18" declared={type=undefined|number}}, {key="fits19" declared={type=undefined|number}}]
+layout L1 name="Exceeds" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="more0" declared={type=undefined|number}}, {key="more1" declared={type=undefined|number}}, {key="more2" declared={type=undefined|number}}, {key="more3" declared={type=undefined|number}}, {key="more4" declared={type=undefined|number}}, {key="more5" declared={type=undefined|number}}, {key="more6" declared={type=undefined|number}}, {key="more7" declared={type=undefined|number}}, {key="more8" declared={type=undefined|number}}, {key="more9" declared={type=undefined|number}}, {key="more10" declared={type=undefined|number}}, {key="more11" declared={type=undefined|number}}, {key="more12" declared={type=undefined|number}}, {key="more13" declared={type=undefined|number}}, {key="more14" declared={type=undefined|number}}, {key="more15" declared={type=undefined|number}}, {key="more16" declared={type=undefined|number}}, {key="more17" declared={type=undefined|number}}, {key="more18" declared={type=undefined|number}}, {key="more19" declared={type=undefined|number}}, {key="more20" declared={type=undefined|number}}, {key="more21" declared={type=undefined|number}}, {key="more22" declared={type=undefined|number}}, {key="more23" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = String string="text"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = NewObject -, v2 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v0
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    v11 = CallDirect v6, v2 function=f1
+    v12 = CallDirect v6, v3 function=f2
+    v13 = ForInOpen v6
+    v14 = CallDirect v8, v2 function=f3
+    v15 = CallDirect v8, v3 function=f4
+    v16 = ForInOpen v8
+    Return
+}
+function f1 name="storeNumbers" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="fits0"
+    PropSet v0, v1 key="fits1"
+    PropSet v0, v1 key="fits2"
+    PropSet v0, v1 key="fits3"
+    PropSet v0, v1 key="fits4"
+    PropSet v0, v1 key="fits5"
+    PropSet v0, v1 key="fits6"
+    PropSet v0, v1 key="fits7"
+    PropSet v0, v1 key="fits8"
+    PropSet v0, v1 key="fits9"
+    PropSet v0, v1 key="fits10"
+    PropSet v0, v1 key="fits11"
+    PropSet v0, v1 key="fits12"
+    PropSet v0, v1 key="fits13"
+    PropSet v0, v1 key="fits14"
+    PropSet v0, v1 key="fits15"
+    PropSet v0, v1 key="fits16"
+    PropSet v0, v1 key="fits17"
+    PropSet v0, v1 key="fits18"
+    PropSet v0, v1 key="fits19"
+    Return
+}
+function f2 name="storeStrings" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    PropSet v0, v1 key="fits0"
+    PropSet v0, v1 key="fits1"
+    PropSet v0, v1 key="fits2"
+    PropSet v0, v1 key="fits3"
+    PropSet v0, v1 key="fits4"
+    PropSet v0, v1 key="fits5"
+    PropSet v0, v1 key="fits6"
+    PropSet v0, v1 key="fits7"
+    PropSet v0, v1 key="fits8"
+    PropSet v0, v1 key="fits9"
+    PropSet v0, v1 key="fits10"
+    PropSet v0, v1 key="fits11"
+    PropSet v0, v1 key="fits12"
+    PropSet v0, v1 key="fits13"
+    PropSet v0, v1 key="fits14"
+    PropSet v0, v1 key="fits15"
+    PropSet v0, v1 key="fits16"
+    PropSet v0, v1 key="fits17"
+    PropSet v0, v1 key="fits18"
+    PropSet v0, v1 key="fits19"
+    Return
+}
+function f3 name="storeMoreNumbers" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="more0"
+    PropSet v0, v1 key="more1"
+    PropSet v0, v1 key="more2"
+    PropSet v0, v1 key="more3"
+    PropSet v0, v1 key="more4"
+    PropSet v0, v1 key="more5"
+    PropSet v0, v1 key="more6"
+    PropSet v0, v1 key="more7"
+    PropSet v0, v1 key="more8"
+    PropSet v0, v1 key="more9"
+    PropSet v0, v1 key="more10"
+    PropSet v0, v1 key="more11"
+    PropSet v0, v1 key="more12"
+    PropSet v0, v1 key="more13"
+    PropSet v0, v1 key="more14"
+    PropSet v0, v1 key="more15"
+    PropSet v0, v1 key="more16"
+    PropSet v0, v1 key="more17"
+    PropSet v0, v1 key="more18"
+    PropSet v0, v1 key="more19"
+    PropSet v0, v1 key="more20"
+    PropSet v0, v1 key="more21"
+    PropSet v0, v1 key="more22"
+    PropSet v0, v1 key="more23"
+    v26 = PropGet v0 key="more0"
+    v27 = PropGet v0 key="more1"
+    v28 = PropGet v0 key="more2"
+    v29 = PropGet v0 key="more3"
+    v30 = PropGet v0 key="more0"
+    v31 = PropGet v0 key="more1"
+    v32 = PropGet v0 key="more2"
+    v33 = PropGet v0 key="more3"
+    v34 = PropGet v0 key="more0"
+    v35 = PropGet v0 key="more1"
+    v36 = PropGet v0 key="more2"
+    v37 = PropGet v0 key="more3"
+    Return
+}
+function f4 name="storeMoreStrings" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    PropSet v0, v1 key="more0"
+    PropSet v0, v1 key="more1"
+    PropSet v0, v1 key="more2"
+    PropSet v0, v1 key="more3"
+    PropSet v0, v1 key="more4"
+    PropSet v0, v1 key="more5"
+    PropSet v0, v1 key="more6"
+    PropSet v0, v1 key="more7"
+    PropSet v0, v1 key="more8"
+    PropSet v0, v1 key="more9"
+    PropSet v0, v1 key="more10"
+    PropSet v0, v1 key="more11"
+    PropSet v0, v1 key="more12"
+    PropSet v0, v1 key="more13"
+    PropSet v0, v1 key="more14"
+    PropSet v0, v1 key="more15"
+    PropSet v0, v1 key="more16"
+    PropSet v0, v1 key="more17"
+    PropSet v0, v1 key="more18"
+    PropSet v0, v1 key="more19"
+    PropSet v0, v1 key="more20"
+    PropSet v0, v1 key="more21"
+    PropSet v0, v1 key="more22"
+    PropSet v0, v1 key="more23"
+    v26 = PropGet v0 key="more0"
+    v27 = PropGet v0 key="more1"
+    v28 = PropGet v0 key="more2"
+    v29 = PropGet v0 key="more3"
+    v30 = PropGet v0 key="more0"
+    v31 = PropGet v0 key="more1"
+    v32 = PropGet v0 key="more2"
+    v33 = PropGet v0 key="more3"
+    v34 = PropGet v0 key="more0"
+    v35 = PropGet v0 key="more1"
+    v36 = PropGet v0 key="more2"
+    v37 = PropGet v0 key="more3"
+    Return
+}
+
+# Eighteen rows want a granule, and there are eighteen.
+# CHECK: L0 CompiledObject size=48 extension=152
+# CHECK: .2 "fits1" OptionalDouble @40
+# CHECK-NEXT: .3 "fits2" JSValue out@8
+# CHECK: .20 "fits19" JSValue out@144
+# Twenty-two want one. The four that are read most stay in the cell beside the two that fit anyway.
+# CHECK: L1 CompiledObject size=80 extension=152
+# CHECK: .6 "more5" OptionalDouble @72
+# CHECK-NEXT: .7 "more6" JSValue out@8
+# CHECK: .24 "more23" JSValue out@144

@@ -1,0 +1,51 @@
+# class Base { constructor(first, second) { first(); } }  class Derived extends Base { constructor(...args) { args[0] = args[1]; super(...args) } }  new Derived(one, two)
+# rest-array-that-is-only-spread-keeps-the-positions.ir with a constructor that does something else with the array in front of the call: what lies at an index is no longer what the caller has passed
+# at that position, so whatever the array holds may land at any parameter.
+# RUN: valueflow-solve calls
+# CHECK: f1 v5 -> f3 f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = Construct v6, -, v7, v8
+    Return
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0 fields=[]
+    v5 = Call v1, -
+    Return v4
+}
+function f2 name="Derived" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = Integer integer=1
+    v4 = ElemGet v2, v3
+    v5 = Integer integer=0
+    ElemSet v2, v5, v4 mode=Strict
+    v7 = GetSuperBase v0 homeKind=Object
+    v8 = SuperConstructList v7, v1, v2 layout=L1
+    Return v8
+}
+function f3 name="one" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="two" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,49 @@
+# With wide references no slot holds deferred closures: the two deferred fields of deferred-closure.ir get a plain cell slot and their closures are created
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=wide
+# RUN: plan-slots layouts
+# RUN(PROGRAM): place program
+# STATISTIC: DeferredClosureSlots = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="CapturesObject" constructor=f1 fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L1 name="CapturesNothing" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f3
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f1 name="CapturesObject" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = NewClosure v2 function=f2
+    PropDefine v2, v3 key="run"
+    Return v2
+}
+function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f3 name="first" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: L0 CompiledObject size=32 extension=0 wide
+# CHECK-NEXT: .0 "run" Cell @16 record=0
+# CHECK-NEXT: L1 CompiledObject size=32 extension=0 wide
+# CHECK-NEXT: .0 "run" Cell @16 record=0
+# PROGRAM-NOT: closureForm=Deferred
+# PROGRAM: function f0 name="main"
+# PROGRAM-NOT: closureForm=Deferred

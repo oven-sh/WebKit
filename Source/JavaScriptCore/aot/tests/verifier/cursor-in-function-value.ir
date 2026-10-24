@@ -1,0 +1,47 @@
+# a function with a cursor or a key order in its signature has only direct callers, and each call of it returns to its caller
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: CursorInFunctionValue 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="skips" role=Parser parameters=[{type=cursor}] results=[{type=cursor}] creator=Parser{type=anything} {
+  b0(v0: cursor):
+    v1 = JSONSkipWhitespace v0
+    Return v1
+}
+function f1 name="goodDirectCall" role=Parser parameters=[{type=cursor}] results=[{type=number}] creator=Parser{type=anything} {
+  b0(v0: cursor):
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v1 function=f7
+    Return v2
+}
+function f2 name="badReturnedCall" role=Parser parameters=[{type=cursor}] results=[{type=number}] creator=Parser{type=anything} {
+  b0(v0: cursor):
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v1 function=f7
+    ReturnCall v2
+}
+function f3 name="badClosure" results=[{type=function}] {
+  b0():
+    v0 = JSONHasStackSpace
+    v1 = NewClosure function=f0
+    Return v1
+}
+function f4 name="badCursorInFunctionCalledByValue" parameters=[{type=cursor}] results=[{type=cursor}] {
+  b0(v0: cursor):
+    v1 = JSONSkipWhitespace v0
+    Return v1
+}
+function f5 name="badKeyOrderInFunctionCalledByValue" parameters=[{type=keyorder}] results=[{type=keyorder}] {
+  b0(v0: keyorder):
+    Return v0
+}
+function f6 name="goodKeyOrder" role=Parser parameters=[{type=keyorder}] results=[{type=keyorder}] creator=Parser{type=anything} {
+  b0(v0: keyorder):
+    Return v0
+}
+function f7 name="reads" role=Parser parameters=[{type=cursor}] results=[{type=number}] creator=Parser{type=anything} {
+  b0(v0: cursor):
+    v1 = JSONGetByte v0
+    Return v1
+}

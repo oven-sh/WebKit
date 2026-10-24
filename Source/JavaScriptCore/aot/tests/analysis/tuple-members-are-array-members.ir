@@ -1,0 +1,36 @@
+# A tuple of the built-ins table is an array: it has the own length of an array, and any other name may be its own property until flow rules that out
+# FORM: Prepared
+# RUN(LENGTH): member-lookup layout=L(EntriesPair) key="length"
+# LENGTH: Builtin level=Proven builtin=B
+# LENGTH-NOT: proofs=
+# LENGTH-NOT: conditions=
+# RUN(OWNLENGTH): member-lookup layout=L(EntriesPair) key="length" own
+# OWNLENGTH: Builtin level=Proven builtin=B
+# RUN(HASLENGTH): member-lookup layout=L(EntriesPair) key="length" access=Has
+# HASLENGTH: Builtin level=Proven builtin=B
+# RUN(STOREDLENGTH): member-lookup layout=L(EntriesPair) key="length" access=Store
+# STOREDLENGTH: Builtin level=Proven builtin=B
+# RUN(METHOD): member-lookup layout=L(EntriesPair) key="map"
+# METHOD: Unknown level=Unknown cause=OwnPropertyHidesMember
+# RUN(SYMBOL): member-lookup layout=L(EntriesPair) key=@@iterator
+# SYMBOL: Unknown level=Unknown cause=OwnPropertyHidesMember
+# RUN(OTHERNAME): member-lookup layout=L(EntriesPair) key="nope"
+# OTHERNAME: Unknown level=Unknown cause=OwnPropertyHidesMember
+# RUN(OWNOTHERNAME): member-lookup layout=L(EntriesPair) key="nope" own
+# OWNOTHERNAME: Unknown level=Unknown cause=OwnPropertyHidesMember
+# RUN(ELEMENT): member-lookup layout=L(EntriesPair) key="0"
+# ELEMENT: Unknown level=Unknown cause=Unknown
+# RUN(RECORD): member-lookup layout=L(IteratorResult) key="length"
+# RECORD: Absent level=Expected proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="keys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="map"
+    v3 = PropGet v0 key=@@iterator
+    v4 = PropGet v0 key="nope"
+    v5 = PropGet v0 key="0"
+    Return v5
+}

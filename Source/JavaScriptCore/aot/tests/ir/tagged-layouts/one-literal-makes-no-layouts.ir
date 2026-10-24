@@ -1,0 +1,28 @@
+# interface Node { kind: number }  interface Num extends Node { kind: 1; value: number }
+# function NodeObject(this: Node, kind: number) { this.kind = kind }
+# One literal below the declared `this` tells nothing apart: the reader derives no layout, and the function stays as it was sent
+# FORM: AsRead
+# RUN: pass AllocateTaggedLayouts
+# STATISTIC: TaggedLayoutsAllocated = 0
+# STATISTIC: TaggedLayoutsNeverAllocated = 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|L1, v1: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    Return
+}
+
+# CHECK: layout L2 name="Num"
+# CHECK-NOT: layout L3
+# CHECK-LABEL: function f1 name="NodeObject" module=m0 flags=[HasThis] thisType={type=undefined|null|L0|L1|L2}
+# CHECK-NOT: Switch
+# CHECK-NOT: function f2

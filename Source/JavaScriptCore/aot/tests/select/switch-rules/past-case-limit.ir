@@ -1,0 +1,139 @@
+# A chain longer than the limit becomes several switches, each the default target of the one before, and remaining links that are too few for a switch stay branches
+# FORM: Prepared
+# OPTIONS: limit=MaxSwitchCases:4
+# RUN: pass Select
+# LOSS: MaxSwitchCases x3 f0 v0
+# STATISTIC: SwitchNumberGroups = 5
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="eight-numbers"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: Switch v0 cases=[1, 2, 3, 4] -> case b2(), case b2(), case b2(), case b2(), otherwise b1()
+# CHECK-NEXT: b1():
+# CHECK: Switch v0 cases=[5, 6, 7, 8] -> case b2(), case b2(), case b2(), case b2(), otherwise b3()
+# CHECK-NOT: StrictEq
+function f0 name="eight-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b8(), notTaken b1()
+  b1():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b8(), notTaken b2()
+  b2():
+    v5 = Integer integer=3
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b8(), notTaken b3()
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b8(), notTaken b4()
+  b4():
+    v9 = Integer integer=5
+    v10 = StrictEq v0, v9
+    Branch v10 -> taken b8(), notTaken b5()
+  b5():
+    v11 = Integer integer=6
+    v12 = StrictEq v0, v11
+    Branch v12 -> taken b8(), notTaken b6()
+  b6():
+    v13 = Integer integer=7
+    v14 = StrictEq v0, v13
+    Branch v14 -> taken b8(), notTaken b7()
+  b7():
+    v15 = Integer integer=8
+    v16 = StrictEq v0, v15
+    Branch v16 -> taken b8(), notTaken b9()
+  b8():
+    Return v0
+  b9():
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="ten-numbers"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: Switch v0 cases=[1, 2, 3, 4] -> case b4(), case b4(), case b4(), case b4(), otherwise b1()
+# CHECK-NEXT: b1():
+# CHECK: Switch v0 cases=[5, 6, 7, 8] -> case b4(), case b4(), case b4(), case b4(), otherwise b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[nine]]: 9 = Integer integer=9
+# CHECK-NEXT: [[first]]: boolean = StrictEq v0, [[nine]]
+# CHECK-NEXT: Branch [[first]] -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: [[ten]]: 10 = Integer integer=10
+# CHECK-NEXT: [[second]]: boolean = StrictEq v0, [[ten]]
+# CHECK-NEXT: Branch [[second]] -> taken b4(), notTaken b5()
+function f1 name="ten-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b10(), notTaken b1()
+  b1():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b10(), notTaken b2()
+  b2():
+    v5 = Integer integer=3
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b10(), notTaken b3()
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b10(), notTaken b4()
+  b4():
+    v9 = Integer integer=5
+    v10 = StrictEq v0, v9
+    Branch v10 -> taken b10(), notTaken b5()
+  b5():
+    v11 = Integer integer=6
+    v12 = StrictEq v0, v11
+    Branch v12 -> taken b10(), notTaken b6()
+  b6():
+    v13 = Integer integer=7
+    v14 = StrictEq v0, v13
+    Branch v14 -> taken b10(), notTaken b7()
+  b7():
+    v15 = Integer integer=8
+    v16 = StrictEq v0, v15
+    Branch v16 -> taken b10(), notTaken b8()
+  b8():
+    v17 = Integer integer=9
+    v18 = StrictEq v0, v17
+    Branch v18 -> taken b10(), notTaken b9()
+  b9():
+    v19 = Integer integer=10
+    v20 = StrictEq v0, v19
+    Branch v20 -> taken b10(), notTaken b11()
+  b10():
+    Return v0
+  b11():
+    Return v0
+}
+
+# CHECK-LABEL: function f2 name="four-numbers"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: Switch v0 cases=[1, 2, 3, 4] -> case b1(), case b1(), case b1(), case b1(), otherwise b2()
+# CHECK-NOT: Switch
+function f2 name="four-numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = Integer integer=2
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b4(), notTaken b2()
+  b2():
+    v5 = Integer integer=3
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b4(), notTaken b3()
+  b3():
+    v7 = Integer integer=4
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v0
+}

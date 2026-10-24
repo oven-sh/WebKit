@@ -1,0 +1,50 @@
+# A function whose closure is stored into by name where it is made gets full closures: a slim one would allocate its storage, with its length, its name and its prototype, at that store. A closure that is only read from, called or handed on stays slim, and so does one that gets its property elsewhere
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions
+# RUN: plan-slots closures
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure v1 function=f1
+    PropSet v2, v1 key="queue"
+    v4 = NewClosure v1 function=f2
+    v5 = PropGet v4 key="queue"
+    v6 = NewClosure v1 function=f3
+    v7 = Upcast v6 castType=anything
+    PropSet v7, v1 key="cancel"
+    v9 = NewClosure v1 function=f4
+    PropSet v1, v9 key="listener"
+    v11 = NewClosure v1 function=f5
+    v12 = Call v1, v0, v2, v4, v6, v11
+    Return v12
+}
+function f1 name="storedInto" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="readFrom" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="storedIntoThroughCast" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="storedSomewhere" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="handedOn" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+# CHECK: f1 Full
+# CHECK-NEXT: f2 Slim
+# CHECK-NEXT: f3 Full
+# CHECK-NEXT: f4 Slim
+# CHECK-NEXT: f5 Slim

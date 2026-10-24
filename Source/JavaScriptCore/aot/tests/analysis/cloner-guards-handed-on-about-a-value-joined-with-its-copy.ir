@@ -1,0 +1,76 @@
+# The inner loop takes a guard as an argument: the test in front of it and the test at the end of each turn are about one object, so what they prove joins at its head.
+# f0: the object is a value of the region, and it is live where the copy is entered from the region. There, and wherever the paths from there meet the others, it is joined with its copy and has
+# a new name: in the copy the two tests would be about values with different names, and the read at the head of the inner loop about a third. So there is no copy.
+# f1: the object comes from outside of the region and keeps its name
+# FORM: Prepared
+# RUN(INSIDE): duplicate function=f0 region=b1,b2,b3,b4,b5,b6,b7,b8 redirect=b3.1
+# RUN(OUTSIDE): duplicate function=f1 region=b1,b2,b3,b4,b5,b6,b7,b8 redirect=b3.1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=number}}]
+function f0 name="objectOfTheRegion" parameters=[{type=L0}, {type=i32}, {type=boolean}] results=[{type=number}] {
+  b0(v0: L0, v1: i32, v2: boolean):
+    v3 = Integer integer=0
+    Jump -> next b1(v3, v0)
+  b1(v4, v5):
+    LoopHint
+    v7 = IsSlotFilled v5 key="value" receivers=[L0] level=Proven
+    Branch v7 -> taken b2(| 0), notTaken b9()
+  b2(v8):
+    Jump -> next b3(v8, v3)
+  b3(v9, v10):
+    LoopHint
+    v12 = GetSlot v5, v9 key="value" receivers=[L0] level=Proven
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    Jump -> next b6()
+  b6():
+    v13 = IsSlotFilled v5 key="value" receivers=[L0] level=Proven
+    Branch v13 -> taken b7(| 0), notTaken b9()
+  b7(v14):
+    v15 = Increment v10
+    v16 = Less v15, v1
+    Branch v16 -> taken b3(v14, v15), notTaken b8()
+  b8():
+    v17 = GetSlot v5 key="next" receivers=[L0] level=Proven
+    v18 = Less v15, v1
+    Branch v18 -> taken b1(v15, v17), notTaken b9()
+  b9():
+    Return v3
+}
+function f1 name="objectFromOutside" parameters=[{type=L0}, {type=i32}, {type=boolean}] results=[{type=number}] {
+  b0(v0: L0, v1: i32, v2: boolean):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = IsSlotFilled v0 key="value" receivers=[L0] level=Proven
+    Branch v6 -> taken b2(| 0), notTaken b9()
+  b2(v7):
+    Jump -> next b3(v7, v3)
+  b3(v8, v9):
+    LoopHint
+    v11 = GetSlot v0, v8 key="value" receivers=[L0] level=Proven
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    Jump -> next b6()
+  b6():
+    v12 = IsSlotFilled v0 key="value" receivers=[L0] level=Proven
+    Branch v12 -> taken b7(| 0), notTaken b9()
+  b7(v13):
+    v14 = Increment v9
+    v15 = Less v14, v1
+    Branch v15 -> taken b3(v13, v14), notTaken b8()
+  b8():
+    v16 = Increment v4
+    v17 = Less v16, v1
+    Branch v17 -> taken b1(v16), notTaken b9()
+  b9():
+    Return v3
+}
+# INSIDE: check: OperandMustBeDefinition
+# OUTSIDE: check: CanClone

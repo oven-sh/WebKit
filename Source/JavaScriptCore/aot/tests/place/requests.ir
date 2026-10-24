@@ -1,0 +1,35 @@
+# Equal request records are stored once. Another order of the same parts is another record, and so is the record of another kind of operation
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place requests program
+# STATISTIC: RequestsShared = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}] @10
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}] @20
+    v2 = NewTemplateObject templateStrings=[{cooked="b" raw="b"}, {cooked="a" raw="a"}] @30
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+# A template object record is a count and two words for each part.
+# CHECK: request @4 TemplateObject ["a"/"a" "b"/"b"]
+# CHECK-NEXT: request @24 TemplateObject ["b"/"b" "a"/"a"]
+# CHECK-NEXT: request @44 NewClass L0
+# CHECK-NEXT: requests size=48 shared=1
+# CHECK: v0: {{*}} = NewTemplateObject {{*}} request=4
+# CHECK-NEXT: v1: {{*}} = NewTemplateObject {{*}} request=4
+# CHECK-NEXT: v2: {{*}} = NewTemplateObject {{*}} request=24
+# CHECK: = NewClass {{*}} request=44

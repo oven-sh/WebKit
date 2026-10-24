@@ -1,0 +1,114 @@
+# An append behind the place where the arms of a branch meet always runs, and appends that only may run take no room from those that always do
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoBehindJoinsAndThreeInArms" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    v3 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    AppendElement v3, v0
+    Jump -> next b2()
+  b2():
+    AppendElement v3, v0
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    AppendElement v3, v0
+    AppendElement v3, v0
+    Jump -> next b4()
+  b4():
+    AppendElement v3, v0
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK: [[c1]]: {{*}} = Integer integer=3
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c1]]
+
+function f1 name="bothArmsAppend" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    AppendElement v2, v0
+    Jump -> next b3()
+  b2():
+    AppendElement v2, v0
+    AppendElement v2, v0
+    Jump -> next b3()
+  b3():
+    AppendElement v2, v0
+    AppendElement v2, v0
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: [[c2]]: {{*}} = Integer integer=3
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c2]]
+
+function f2 name="aBranchInsideAnArm" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    v3 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    AppendElement v3, v0
+    AppendElement v3, v0
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    AppendElement v3, v0
+    AppendElement v3, v0
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK: [[c3]]: {{*}} = Integer integer=3
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c3]]
+
+function f3 name="oneArmReturns" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    AppendElement v2, v0
+    AppendElement v2, v0
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: capacity=
+
+function f4 name="oneThatOnlyMayRunIsStillPlannedFor" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    AppendElement v2, v0
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK: [[c4]]: {{*}} = Integer integer=2
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c4]]
+
+function f5 name="onlyAppendsThatMayRun" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    v3 = NewArray v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    AppendElement v3, v0
+    Jump -> next b2()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    AppendElement v3, v0
+    Jump -> next b4()
+  b4():
+    Return v3
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: capacity=

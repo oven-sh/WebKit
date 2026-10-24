@@ -1,0 +1,109 @@
+# Where a read may come before the declaration, the variable goes on saying whether the declaration has run: its store stores a marker, and the test behind each read stays. A new variable beside it stands for the object, which nothing makes at the declaration
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass DeferDefinitions
+# STATISTIC: DeadZonesKeptBesideDefinitions = 3
+# STATISTIC: ClosuresDeferredInVariables = 1
+# STATISTIC: ClassesDeferredInVariables = 1
+# STATISTIC: RegExpsDeferredInVariables = 1
+# CHECK: outcome: Changed
+# CHECK: variable g0 name="helper" module=m0 declared={type={{*}}undefined{{*}}} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g1 name="Plain" module=m0 declared={type={{*}}undefined{{*}}} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g2 name="pattern" module=m0 declared={type={{*}}undefined{{*}}} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g3 name="readWithoutTest" module=m0 declared={type=absent|f4} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g4 name="exported" module=m0 declared={type=absent|f5} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g5 name="helper" module=m0 declared={type=f1} initialization=Function function=f1 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g6 name="Plain" module=m0 declared={type=f2} initialization=Function function=f2 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g7 name="pattern" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: function=f1
+# CHECK: [[first]]: undefined = Undefined
+# CHECK-NEXT: PutModuleVariable [[first]] variable=g0
+# CHECK-NOT: layout=L0
+# CHECK: [[second]]: undefined = Undefined
+# CHECK-NEXT: PutModuleVariable [[second]] variable=g1
+# CHECK-NOT: NewRegExp
+# CHECK: [[third]]: undefined = Undefined
+# CHECK-NEXT: PutModuleVariable [[third]] variable=g2
+# CHECK: = NewClosure function=f4
+# CHECK: = NewClosure function=f5
+# CHECK: Return
+# CHECK-LABEL: function f6 name="reader"
+# CHECK: [[state]]:{{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: = CheckInitialized [[state]] name="helper"
+# CHECK-NEXT: [[helper]]: f1 = GetModuleVariable variable=g5
+# CHECK-NEXT: = Call v0, -, [[helper]]
+# CHECK: [[classState]]:{{*}}= GetModuleVariable variable=g1
+# CHECK-NEXT: = CheckInitialized [[classState]] name="Plain"
+# CHECK-NEXT: [[class]]: f2 = GetModuleVariable variable=g6
+# CHECK-NEXT: = Construct [[class]]
+# CHECK: [[patternState]]:{{*}}= GetModuleVariable variable=g2
+# CHECK-NEXT: = CheckInitialized [[patternState]] name="pattern"
+# CHECK-NEXT: [[held]]:{{*}}= GetModuleVariable variable=g7
+# CHECK-NEXT: = TypeTest [[held]] testedType=absent
+# CHECK: = NewRegExp pattern="a+"
+# CHECK-NEXT: PutModuleVariable {{*}}variable=g7
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 exports=[{name="exported" variable=g4}]
+entry module=m0
+layout L0 kind=Instance name="Plain" module=m0 constructor=f2 flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{key="method" function=f3}] namedMembers=[{key="method" function=f3}]}
+variable g0 name="helper" module=m0 declared={type=absent|f1} flow={writers=AllKnown stores=AtMostOnce}
+variable g1 name="Plain" module=m0 declared={type=absent|f2} flow={writers=AllKnown stores=AtMostOnce}
+variable g2 name="pattern" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
+variable g3 name="readWithoutTest" module=m0 declared={type=absent|f4} flow={writers=AllKnown stores=AtMostOnce}
+variable g4 name="exported" module=m0 declared={type=absent|f5} flow={writers=AllKnown stores=AtMostOnce}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L0 key="method"
+    v6 = FinishClass v3 layout=L0
+    PutModuleVariable v6 variable=g1
+    v8 = NewRegExp pattern="a+"
+    PutModuleVariable v8 variable=g2
+    v10 = NewClosure function=f4
+    PutModuleVariable v10 variable=g3
+    v12 = NewClosure function=f5
+    PutModuleVariable v12 variable=g4
+    Return
+}
+function f1 name="helper" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="readWithoutTest" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="exported" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="helper"
+    v3 = Call v0, -, v2
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="Plain"
+    v6 = Construct v5
+    v7 = GetModuleVariable variable=g2
+    v8 = CheckInitialized v7 name="pattern"
+    v9 = Call v0, -, v8
+    v10 = GetModuleVariable variable=g3
+    v11 = TypeTest v10 testedType=absent
+    Return v11
+}

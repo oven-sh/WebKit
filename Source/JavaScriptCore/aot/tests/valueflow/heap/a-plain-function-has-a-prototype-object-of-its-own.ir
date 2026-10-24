@@ -1,0 +1,45 @@
+# function plain() {}  function method() {}  p = plain.prototype; p.constructor.x; p.method = method; made = new plain(); made.method.x; made.constructor.x
+# A plain function without a layout has one prototype object from the start, an ordinary object that names the function as its constructor, and a construction makes an ordinary object below it.
+# Nobody but the program has either, so the function has not escaped.
+# native-code-looks-up-through-what-a-plain-function-has-constructed.ir hands the new object to code nobody knows
+# RUN: valueflow-why values=f0:v3 values=f0:v4 values=f0:v7 values=f0:v8 values=f0:v10 escaped=f1 escaped=f2
+# CHECK: values=f0:v3
+# CHECK: operand 0 {{*}} 1 members: prototype@f1
+# CHECK: values=f0:v4
+# CHECK: operand 0 {{*}} f1
+# CHECK: values=f0:v7
+# CHECK: operand 0 {{*}} 1 members: constructed@f1
+# CHECK: values=f0:v8
+# CHECK: operand 0 {{*}} f2
+# CHECK: values=f0:v10
+# CHECK: operand 0 {{*}} f1
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = PropGet v0 key="prototype"
+    v3 = PropGet v2 key="constructor"
+    v4 = PropGet v3 key="x"
+    PropSet v2, v1 key="method"
+    v6 = Construct v0
+    v7 = PropGet v6 key="method"
+    v8 = PropGet v7 key="x"
+    v9 = PropGet v6 key="constructor"
+    v10 = PropGet v9 key="x"
+    Return
+}
+function f1 name="plain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="method" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

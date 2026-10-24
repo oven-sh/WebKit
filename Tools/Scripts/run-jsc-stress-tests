@@ -150,6 +150,7 @@ $cloop = false
 $jitTests = true
 $memoryLimited = false
 $asan = false # Bun
+$aot = true # Bun
 $outputDir = Pathname.new("results")
 $verbosity = 0
 $bundle = nil
@@ -193,6 +194,8 @@ def usage
     puts "                            Skip tests tagged with //@skip if $memoryLimited"
     puts "--asan                      Bun: the JavaScriptCore under test is built with AddressSanitizer."
     puts "                            Skip tests tagged with //@skip if $asan"
+    puts "--without-aot               Bun: the JavaScriptCore under test is built with ENABLE_AOT=0."
+    puts "                            Skip tests tagged with //@skip if !$aot"
     puts "--no-jit                    Do not run JIT specific tests."
     puts "--force-collectContinuously Enable the collectContinuously mode even if disabled on this"
     puts "                            platform."
@@ -244,6 +247,7 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
                ['--platform', GetoptLong::REQUIRED_ARGUMENT],
                ['--memory-limited', GetoptLong::NO_ARGUMENT],
                ['--asan', GetoptLong::NO_ARGUMENT],
+               ['--without-aot', GetoptLong::NO_ARGUMENT],
                ['--no-jit', GetoptLong::NO_ARGUMENT],
                ['--force-collectContinuously', GetoptLong::NO_ARGUMENT],
                ['--output-dir', '-o', GetoptLong::REQUIRED_ARGUMENT],
@@ -296,6 +300,8 @@ GetoptLong.new(['--help', '-h', GetoptLong::NO_ARGUMENT],
         $memoryLimited = true
     when '--asan'
         $asan = true
+    when '--without-aot'
+        $aot = false
     when '--no-jit'
         $jitTests = false
     when '--force-collectContinuously'
@@ -1185,6 +1191,13 @@ configKinds = [
     ConfigKind.new("Config", true, configInitializerConfig),
 ]
 
+def isRegExpTest?
+    "#{$collectionName}/#{$benchmark}" =~ /regex/i
+end
+
+REGEXP_IMAGE_MODE_OPTIONS = ["--useRegExpImageMode=true"]
+REGEXP_FLAT_PROGRAM_OPTIONS = ["--useRegExpJIT=false", "--validateRegExpFlatProgram=true"]
+
 # Define base test modes. Each mode is an array of [name, kind,
 # options]. The name is used to derive the ruby method names, the kind
 # is used for reporting (i.e. what you'd see in this script's
@@ -1396,6 +1409,16 @@ BASE_MODES = [
         ]
     ],
     [
+        "RegExpImageMode",
+        "regexp-image-mode",
+        REGEXP_IMAGE_MODE_OPTIONS
+    ],
+    [
+        "RegExpFlatProgram",
+        "regexp-flat-program",
+        REGEXP_FLAT_PROGRAM_OPTIONS
+    ],
+    [
         "LogicalAssignmentOperatorsEnabled",
         "logical-assignment-operators-enabled",
         [
@@ -1589,6 +1612,13 @@ BASE_MODES.each { |mode|
     }
 }
 
+def runRegExpModesConfig(config, *optionalTestSpecificOptions)
+    return unless isRegExpTest?
+
+    runRegExpFlatProgramConfig(config, *optionalTestSpecificOptions)
+    runRegExpImageModeConfig(config, *optionalTestSpecificOptions) if $jitTests && $aot
+end
+
 # Default set of tests to run; propagates the config to every callee.
 def defaultRunConfig(config, subsetOptions, *optionalTestSpecificOptions)
     config.freeze
@@ -1596,6 +1626,7 @@ def defaultRunConfig(config, subsetOptions, *optionalTestSpecificOptions)
         defaultQuickRunConfig(config, *optionalTestSpecificOptions)
     else
         runDefaultConfig(config, *optionalTestSpecificOptions)
+        runRegExpModesConfig(config, *optionalTestSpecificOptions)
         runBytecodeCacheConfig(config, *optionalTestSpecificOptions)
         runMiniModeConfig(config, *optionalTestSpecificOptions) unless $skipMiniMode
         runLockdownConfig(config, *optionalTestSpecificOptions) unless $skipLockdown
@@ -1641,6 +1672,7 @@ end
 
 def defaultQuickRunConfig(config, *optionalTestSpecificOptions)
     runDefaultConfig(config, *optionalTestSpecificOptions)
+    runRegExpModesConfig(config, *optionalTestSpecificOptions)
     if $jitTests
         runNoCJITValidateConfig(config, *optionalTestSpecificOptions)
 
@@ -2313,6 +2345,13 @@ def runLayoutTestFTLEagerNoCJIT
     runLayoutTest("ftl-eager-no-cjit", "--testTheFTL=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS + EAGER_OPTIONS))
 end
 
+def runLayoutTestRegExpModes
+    return unless isRegExpTest?
+
+    runLayoutTest("regexp-flat-program", *REGEXP_FLAT_PROGRAM_OPTIONS)
+    runLayoutTest("regexp-image-mode", *REGEXP_IMAGE_MODE_OPTIONS) if $jitTests
+end
+
 def noFTLRunLayoutTest
     if !$jitTests
         return
@@ -2325,6 +2364,7 @@ end
 
 def defaultQuickRunLayoutTest
     runLayoutTestDefault
+    runLayoutTestRegExpModes
     if $jitTests
         if $isFTLPlatform
             runLayoutTestNoFTL
@@ -2341,6 +2381,7 @@ def defaultRunLayoutTest
         defaultQuickRunLayoutTest
     else
         runLayoutTestDefault
+        runLayoutTestRegExpModes
         if $jitTests
             noFTLRunLayoutTest
 
@@ -2467,7 +2508,15 @@ def runMozillaTestFTLEagerNoCJITValidatePhases(mode, *extraFiles)
     runMozillaTest("ftl-eager-no-cjit-validate-phases", mode, extraFiles, "--validateBytecode=true", "--validateGraphAtEachPhase=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS + EAGER_OPTIONS))
 end
 
+def runMozillaTestRegExpModes(mode, *extraFiles)
+    return unless isRegExpTest?
+
+    runMozillaTest("regexp-flat-program", mode, extraFiles, *REGEXP_FLAT_PROGRAM_OPTIONS)
+    runMozillaTest("regexp-image-mode", mode, extraFiles, *REGEXP_IMAGE_MODE_OPTIONS) if $jitTests
+end
+
 def defaultQuickRunMozillaTest(mode, *extraFiles)
+    runMozillaTestRegExpModes(mode, *extraFiles)
     if $jitTests
         runMozillaTestDefault(mode, *extraFiles)
         runMozillaTestFTLEagerNoCJITValidatePhases(mode, *extraFiles)
@@ -2483,6 +2532,7 @@ def defaultRunMozillaTest(mode, *extraFiles)
     if $mode == :quick
         defaultQuickRunMozillaTest(mode, *extraFiles)
     else
+        runMozillaTestRegExpModes(mode, *extraFiles)
         runMozillaTestNoFTL(mode, *extraFiles)
         if $jitTests
             runMozillaTestLLInt(mode, *extraFiles)

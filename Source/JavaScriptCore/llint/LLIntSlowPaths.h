@@ -85,6 +85,15 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_instanceof_from_instanceof);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_put_by_id);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_in_by_id);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_in_by_val);
+#if ENABLE(AOT)
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_id);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_val);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_get_by_val);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_array);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_jtrue);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_jfalse);
+#endif
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_name);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_brand);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_structure_with_flags);

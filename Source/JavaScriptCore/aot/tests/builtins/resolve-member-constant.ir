@@ -1,0 +1,228 @@
+# A member read from a built-in object becomes a constant when every location the lookup reads is constant: by a lock, or by the flow analysis
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    v6 = CallDirect function=f7
+    v7 = CallDirect function=f8
+    v8 = CallDirect function=f9
+    v9 = CallDirect function=f10
+    v10 = CallDirect function=f11
+    v11 = CallDirect function=f12
+    v12 = CallDirect function=f13
+    v13 = CallDirect function=f14
+    v14 = CallDirect function=f15
+    v15 = CallDirect function=f16
+    v16 = CallDirect function=f17
+    Return
+}
+
+function f1 name="prototypeObject" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = PropGet v0 key="prototype"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="prototypeObject"
+# CHECK: v1: builtin(StringPrototype) = Builtin builtin=StringPrototype
+# FLOW-LABEL: function f1 name="prototypeObject"
+# FLOW: = Builtin builtin=StringPrototype
+
+function f2 name="lockedMember" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=StringPrototype
+    v1 = PropGet v0 key="slice"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="lockedMember"
+# CHECK: v1: builtin(StringPrototypeSlice) = Builtin builtin=StringPrototypeSlice
+# FLOW-LABEL: function f2 name="lockedMember"
+# FLOW: = Builtin builtin=StringPrototypeSlice
+
+function f3 name="integerConstant" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Uint8Array
+    v1 = PropGet v0 key="BYTES_PER_ELEMENT"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="integerConstant"
+# CHECK: v1: 1 = Integer integer=1
+# FLOW-LABEL: function f3 name="integerConstant"
+# FLOW: = Integer integer=1
+
+function f4 name="fractionalConstant" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="PI"
+    Return v1
+}
+# CHECK-LABEL: function f4 name="fractionalConstant"
+# CHECK: v1: {{*}} = Double number=3.14159
+# FLOW-LABEL: function f4 name="fractionalConstant"
+# FLOW: = Double number=3.14159
+
+function f5 name="symbolConstant" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = PropGet v0 key="iterator"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="symbolConstant"
+# CHECK: v1: @@iterator = KeyConstant key=@@iterator
+# FLOW-LABEL: function f5 name="symbolConstant"
+# FLOW: = KeyConstant key=@@iterator
+
+function f6 name="symbolKeyedMember" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=StringPrototype
+    v1 = PropGet v0 key=@@iterator
+    Return v1
+}
+# CHECK-LABEL: function f6 name="symbolKeyedMember"
+# CHECK: v1: builtin(StringPrototypeSymbolIterator) = Builtin builtin=StringPrototypeSymbolIterator
+# FLOW-LABEL: function f6 name="symbolKeyedMember"
+# FLOW: = Builtin builtin=StringPrototypeSymbolIterator
+
+function f7 name="constantUnderHandler" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = Builtin builtin=StringPrototype
+    v1 = PropGet v0 key="slice"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: function f7 name="constantUnderHandler"
+# CHECK: b0() handler=b2():
+# CHECK: v1: builtin(StringPrototypeSlice) = Builtin builtin=StringPrototypeSlice
+# CHECK-NEXT: Jump -> next b1()
+
+function f8 name="accessorOfLockedHolder" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExpPrototype
+    v1 = PropGet v0 key="global"
+    Return v1
+}
+# CHECK-LABEL: function f8 name="accessorOfLockedHolder"
+# CHECK: v1: {{*}} = CallBuiltin v0 overload=RegExpPrototypeGlobal/{{*}} builtinCallForm=AnyReceiver
+
+function f9 name="memberNeverWritten" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Date
+    v1 = PropGet v0 key="now"
+    Return v1
+}
+# CHECK-LABEL: function f9 name="memberNeverWritten"
+# CHECK: v1: anything = PropGet v0 key="now"
+# FLOW-LABEL: function f9 name="memberNeverWritten"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=DateNow
+
+function f10 name="memberWritten" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Date
+    v1 = PropGet v0 key="parse"
+    v2 = Undefined
+    PropSet v0, v2 key="parse" mode=Strict
+    Return v1
+}
+# CHECK-LABEL: function f10 name="memberWritten"
+# CHECK: v1: anything = PropGet v0 key="parse"
+# FLOW-LABEL: function f10 name="memberWritten"
+# FLOW-NOT: Builtin builtin=DateParse
+# FLOW: = PropGet v0 key="parse"
+
+function f11 name="inheritedThroughHolderNeverWritten" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Intl
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+# CHECK-LABEL: function f11 name="inheritedThroughHolderNeverWritten"
+# CHECK: v1: anything = PropGet v0 key="toString"
+# FLOW-LABEL: function f11 name="inheritedThroughHolderNeverWritten"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=ObjectPrototypeToString
+
+function f12 name="inheritedThroughHolderWithAddedName" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=WebAssembly
+    v1 = PropGet v0 key="toString"
+    v2 = Undefined
+    PropSet v0, v2 key="toString" mode=Strict
+    Return v1
+}
+# CHECK-LABEL: function f12 name="inheritedThroughHolderWithAddedName"
+# CHECK: v1: anything = PropGet v0 key="toString"
+# FLOW-LABEL: function f12 name="inheritedThroughHolderWithAddedName"
+# FLOW-NOT: Builtin builtin=ObjectPrototypeToString
+# FLOW: = PropGet v0 key="toString"
+
+function f13 name="inheritedThroughHolderClosedForName" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Uint8Array
+    v1 = PropGet v0 key="from"
+    Return v1
+}
+# CHECK-LABEL: function f13 name="inheritedThroughHolderClosedForName"
+# CHECK: v1: builtin(TypedArrayFrom) = Builtin builtin=TypedArrayFrom
+# FLOW-LABEL: function f13 name="inheritedThroughHolderClosedForName"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=TypedArrayFrom
+
+function f14 name="memberChangingOnItsOwn" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Error
+    v1 = PropGet v0 key="stackTraceLimit"
+    Return v1
+}
+# CHECK-LABEL: function f14 name="memberChangingOnItsOwn"
+# CHECK: v1: anything = PropGet v0 key="stackTraceLimit"
+# FLOW-LABEL: function f14 name="memberChangingOnItsOwn"
+# FLOW: = PropGet v0 key="stackTraceLimit"
+
+function f15 name="holderWithUnlistedMembers" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=IntlSegmentsPrototype
+    v1 = PropGet v0 key="valueOf"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="holderWithUnlistedMembers"
+# CHECK: v1: anything = PropGet v0 key="valueOf"
+# FLOW-LABEL: function f15 name="holderWithUnlistedMembers"
+# FLOW: = PropGet v0 key="valueOf"
+
+function f16 name="unknownName" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=String
+    v1 = PropGet v0 key="notInTable"
+    Return v1
+}
+# CHECK-LABEL: function f16 name="unknownName"
+# CHECK: v1: anything = PropGet v0 key="notInTable"
+# FLOW-LABEL: function f16 name="unknownName"
+# FLOW: = PropGet v0 key="notInTable"
+
+function f17 name="inheritedThroughTwoHolders" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Error
+    v1 = PropGet v0 key="hasOwnProperty"
+    Return v1
+}
+# CHECK-LABEL: function f17 name="inheritedThroughTwoHolders"
+# CHECK: v1: anything = PropGet v0 key="hasOwnProperty"
+# FLOW-LABEL: function f17 name="inheritedThroughTwoHolders"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=ObjectPrototypeHasOwnProperty

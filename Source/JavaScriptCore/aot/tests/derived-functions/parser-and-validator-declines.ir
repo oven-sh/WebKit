@@ -1,0 +1,31 @@
+# A node whose values go to the generic parser or validator is reported once, with its cause and at the declaration of its type, whichever builders meet it; a node that is compiled is not reported
+# FORM: Prepared optimizing
+# OPTIONS: report=Declines
+# RUN: derived-functions ValidatingParser:x0.0 Validator:x0.0 ValidatingParser:x1.0 Validator:x1.0 Parser:g0 ValidatingParser:x4.0 ValidatingParser:x2.0 Validator:x2.0 Parser:g2 Parser:g1 ValidatingParser:x3.0 Validator:x3.0
+# CHECK: decline ResultNodeInterpreted - - None [0] reason=RepeatedRecursion
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=MemberKeyIsNotText
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=LayoutIsNotModeled
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=MemberIsNotNamedField
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=FieldTypeIsNotTestable
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=FieldTypeIsNotTestable
+# CHECK-NOT: decline
+# CHECK-NOT: AssumeType
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0, L1, L2] validation=[{shape=Object{layout=L0 members=[{key="tree" node=1 field=0}]} type=L0}, {shape=Union{arms=[2, 3]} type=L1|L2}, {shape=Object{layout=L1 members=[{key="left" node=1 field=0 isOptional=true}]} type=L1}, {shape=Object{layout=L2 members=[{key="right" node=1 field=0 isOptional=true}]} type=L2}]
+expectedresult x1 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="n" node=1 field=0}, {key=symbol("tag")@m0:35 node=1}]} type=L3}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x2 type=L6 layouts=[L6] validation=[{shape=Object{layout=L6 members=[{key="items" node=1 field=0}]} type=L6}, {shape=Array{element=2} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x3 type=L7 layouts=[L7] validation=[{shape=Object{layout=L7 members=[{key="x" node=1 field=0}]} type=L7}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x4 type=L5 layouts=[L5] validation=[{shape=Object{layout=L5 members=[{key="x" node=1 field=0}, {key="0" node=1}]} type=L5}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="Holder" module=m0 position=10 fields=[{key="tree" declared={type=object}}]
+layout L1 name="LeftNode" module=m0 position=20 fields=[{key="left" declared={type=undefined|object}}]
+layout L2 name="RightNode" module=m0 position=25 fields=[{key="right" declared={type=undefined|object}}]
+layout L3 name="SymbolKey" module=m0 position=30 fields=[{key="n" declared={type=number}}]
+layout L4 name="NeverMade" module=m0 position=40 fields=[{key="x" declared={type=number}}] flow={allocation=NeverAllocated}
+layout L5 name="MemberWithoutField" module=m0 position=50 fields=[{key="x" declared={type=number}}]
+layout L6 name="ProvenArrayField" module=m0 position=60 fields=[{key="items" declared={type=Array<number, proven>}}]
+layout L7 name="Compiled" module=m0 position=70 fields=[{key="x" declared={type=number}}]
+layout L8 name="ContentsProvenNarrowerThanPlainData" module=m0 position=65 fields=[{key="items" declared={type=Array<number, proven>}}]
+variable g0 name="t0" declared={type=L4} initialization=Undefined
+variable g1 name="t1" declared={type=L7} initialization=Undefined
+variable g2 name="t2" declared={type=L8} initialization=Undefined

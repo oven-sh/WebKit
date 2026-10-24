@@ -1,0 +1,259 @@
+# The generic copy comes back, without a test, where the tested code knows nothing more than the copy: the shapes below follow that rule.
+# The program's own test of a condition stands in a copied range behind a use of the same stretch: its proof, the copy of the proof and the proof of the placed test are one variable
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# OPTIONS: check=VerifyEachPass heat=NothingIsHottest
+# STATISTIC: StretchesGuarded = 9
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty]}
+function f0 name="useInFrontOfOwnTest" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v1 key="y" receivers=[L0, ..]
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="useInFrontOfOwnTest"
+# CHECK: [[placed0]]: boolean = TypeTest v1 testedType=L0
+# CHECK-NEXT: Branch [[placed0]] -> taken [[passed0]](| 0), notTaken
+# CHECK-NEXT: b1([[adopted0]]: L0):
+# CHECK: v4: anything = GetSlot [[adopted0]],
+# CHECK: v2: anything = GetSlot [[proven0]],
+# CHECK: Branch v3 -> taken b1(| 0), notTaken b2(v2)
+# CHECK: [[copiedTest0]]: boolean = TypeTest v1 testedType=L0
+# CHECK-NEXT: Branch [[copiedTest0]] -> taken [[copiedTaken0]](| 0), notTaken b2({{*}})
+# CHECK-NEXT: [[copiedTaken0]]([[copiedProof0]]: L0) frequency=Rare:
+# CHECK-NEXT: anything = PropGet v1 key="y"
+# CHECK: [[passed0]]([[proven0]]: L0):
+
+function f1 name="joinBehindOwnTest" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v4 = PropGet v1 key="y" receivers=[L0, ..]
+    Return v4
+}
+# CHECK-LABEL: function f1 name="joinBehindOwnTest"
+# CHECK: b1([[adopted1]]: L0):
+# CHECK-NEXT: Jump -> next b3([[adopted1]])
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3([[proven1]])
+# CHECK-NEXT: b3([[joined1]]: L0):
+# CHECK: v4: anything = GetSlot [[joined1]],
+# CHECK: v2: anything = GetSlot [[proven1]],
+# CHECK: ([[proven1]]: L0):
+
+function f2 name="ownTestInLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6()
+  b2():
+    v4 = PropGet v2 key="y" receivers=[L0, ..]
+    v5 = TypeTest v2 testedType=L0
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    v6 = PropGet v2 key="y" receivers=[L0, ..]
+    Jump -> next b1()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f2 name="ownTestInLoop"
+# CHECK: Jump -> next [[entering2]]()
+# CHECK-NEXT: b1([[header2]]: L0):
+# CHECK: v4: anything = GetSlot [[header2]],
+# CHECK: Branch v5 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3([[adopted2]]: L0):
+# CHECK-NEXT: Jump -> next b5([[adopted2]])
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b5([[header2]])
+# CHECK-NEXT: b5([[joined2]]: L0):
+# CHECK: v6: anything = GetSlot [[joined2]],
+# CHECK-NEXT: Jump -> next b1([[joined2]])
+# CHECK: [[placed2]]: boolean = TypeTest v2 testedType=L0
+# CHECK-NEXT: Branch [[placed2]] -> taken [[passed2]](| 0), notTaken
+# CHECK-NEXT: [[wayBack2]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[entering2]]()
+# CHECK-NEXT: () frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK: Jump -> next [[wayBack2]]()
+# CHECK: [[passed2]]([[proven2]]: L0):
+# CHECK: Jump -> next b1([[proven2]])
+
+function f3 name="ownTestsOnBothArmsInLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = TypeTest v2 testedType=L0
+    Branch v4 -> taken b4(), notTaken b7()
+  b3():
+    v5 = TypeTest v2 testedType=L0
+    Branch v5 -> taken b5(), notTaken b7()
+  b4():
+    Jump -> next b6()
+  b5():
+    Jump -> next b6()
+  b6():
+    v6 = PropGet v2 key="y" receivers=[L0, ..]
+    Jump -> next b1()
+  b7():
+    Return
+}
+# CHECK-LABEL: function f3 name="ownTestsOnBothArmsInLoop"
+# CHECK: b1():
+# CHECK: b4([[first3]]: L0):
+# CHECK-NEXT: Jump -> next b6([[first3]])
+# CHECK-NEXT: b5([[second3]]: L0):
+# CHECK-NEXT: Jump -> next b6([[second3]])
+# CHECK-NEXT: b6([[joined3]]: L0):
+# CHECK: v6: anything = GetSlot [[joined3]],
+# CHECK-NEXT: Jump -> next b1()
+
+function f4 name="proofUsedBehindStretch" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v1 key="y" receivers=[L0, ..]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="sink" [isFreeName]
+    v8 = Call v7, -, v5
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f4 name="proofUsedBehindStretch"
+# CHECK: b1(v4: L0):
+# CHECK: v5: anything = GetSlot v4,
+# CHECK: [[behind4]]({{*}}[[joined4]]: L0{{*}}):
+# CHECK: Return [[joined4]]
+# CHECK: ([[copiedProof4]]: L0) frequency=Rare:
+# CHECK-NEXT: [[genericRead4]]: anything = PropGet v1 key="y"
+# CHECK: Jump -> next [[behind4]]({{*}}[[copiedProof4]]
+
+function f5 name="branchOnOtherCondition" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v3 = PropGet v2 key="y" receivers=[L0, ..]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v2 key="y" receivers=[L0, ..]
+    Return v4
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f5 name="branchOnOtherCondition"
+# CHECK: b1():
+# CHECK: v4: anything = GetSlot [[proven5]],
+# CHECK: v3: anything = GetSlot [[proven5]],
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v3)
+# CHECK: ([[proven5]]: L0):
+
+function f6 name="ownTestOfOtherType" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = TypeTest v1 testedType=undefined
+    Branch v3 -> taken b2(), notTaken b1()
+  b1():
+    v4 = PropGet v1 key="y" receivers=[L0, ..]
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="ownTestOfOtherType"
+# CHECK: b1():
+# CHECK: v4: anything = GetSlot [[proven6]],
+# CHECK: v2: anything = GetSlot [[proven6]],
+# CHECK: Branch v3 -> taken b2(v2), notTaken b1()
+# CHECK: ([[proven6]]: L0):
+
+function f7 name="ownTestBehindLastUse" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1: anything ~ undefined|L0 = Upcast v0 castType=anything
+    v2 = PropGet v1 key="y" receivers=[L0, ..]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = TypeTest v1 testedType=L0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f7 name="ownTestBehindLastUse"
+# CHECK: b1():
+# CHECK: v6: boolean = TypeTest v1 testedType=L0
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
+
+function f8 name="ownTestInCoveredLoop" flags=[IsChecked] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2: anything ~ undefined|L0 = Upcast v0 castType=anything
+    Jump -> next b1()
+  b1() handler=b7():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6()
+  b2() handler=b7():
+    v4 = PropGet v2 key="y" receivers=[L0, ..]
+    v5 = TypeTest v2 testedType=L0
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() handler=b7():
+    Jump -> next b5()
+  b4() handler=b7():
+    Jump -> next b5()
+  b5() handler=b7():
+    v6 = PropGet v2 key="y" receivers=[L0, ..]
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v6
+    Jump -> next b1()
+  b6():
+    Return v0
+  b7() role=CatchHandler:
+    v10 = CatchValue
+    v11 = PropGet v2 key="y" receivers=[L0, ..]
+    Return v11
+}
+# CHECK-LABEL: function f8 name="ownTestInCoveredLoop"
+# CHECK: b1([[header8]]: L0) handler=b7():
+# CHECK-NOT: BelongsToInstance
+# CHECK: b3([[adopted8]]: L0) handler=b7():
+# CHECK-NEXT: Jump -> next b5([[adopted8]])
+# CHECK-NEXT: b4() handler=b7():
+# CHECK-NEXT: Jump -> next b5([[header8]])
+# CHECK-NEXT: b5([[joined8]]: L0) handler=b7():
+# CHECK: v6: anything = GetSlot [[joined8]],
+# CHECK: Jump -> next b1([[joined8]])
+# CHECK: v11: anything = PropGet v2 key="y"
+# CHECK: v4: anything = GetSlot [[header8]],
+# No call ends the proof that the object belongs to this instance, so it is tested once, in front of the loop.
+# CHECK: ([[entered8]]: L0):
+# CHECK-NEXT: = BelongsToInstance [[entered8]]
+# CHECK: Jump -> next b1([[entered8]])

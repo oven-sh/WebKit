@@ -1,0 +1,47 @@
+# ArrayBuffer and SharedArrayBuffer have one cell type, so a test that must tell them apart reads the sharing mode
+# FORM: Selected
+# RUN: type-test-plan t0 JSValue t1 t0 JSValue t2 t3 Cell t1 t3 Cell t2
+# CHECK: t0 JSValue t1: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell SharingModeIs ArrayBuffer
+# CHECK-NEXT: t0 JSValue t2: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell SharingModeIs SharedArrayBuffer
+# CHECK-NEXT: t3 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell SharingModeIs ArrayBuffer
+# CHECK-NEXT: t3 Cell t2: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell SharingModeIs SharedArrayBuffer
+# CHECK-NOT: cell
+# RUN(BOTH): type-test-plan t0 JSValue t3
+# BOTH: t0 JSValue t3: NeedsTest pass=none fail={{*}} objects=NeedTest
+# BOTH-NEXT: cell CellTypeIs ArrayBufferType..ArrayBufferType
+# BOTH-NOT: cell
+# RUN(ONEMODEOCCURS): type-test-plan t4 Cell t1 t5 Cell t2 t4 Cell t3
+# ONEMODEOCCURS: t4 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# ONEMODEOCCURS-NEXT: cell CellTypeIs ArrayBufferType..ArrayBufferType
+# ONEMODEOCCURS-NEXT: t5 Cell t2: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# ONEMODEOCCURS-NEXT: cell CellTypeIs ArrayBufferType..ArrayBufferType
+# ONEMODEOCCURS-NEXT: t4 Cell t3: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# ONEMODEOCCURS-NEXT: cell CellTypeIs ArrayBufferType..ArrayBufferType
+# ONEMODEOCCURS-NOT: cell
+# RUN(LAYOUTOCCURS): type-test-plan t6 Cell t1
+# LAYOUTOCCURS: t6 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# LAYOUTOCCURS-NEXT: cell SharingModeIs ArrayBuffer
+# LAYOUTOCCURS-NOT: cell
+# RUN(SETTLED): type-test-plan t1 Cell t2 t2 Cell t1 t4 Cell t2 t1 Cell t3
+# SETTLED: t1 Cell t2: NeverPasses
+# SETTLED-NEXT: t2 Cell t1: NeverPasses
+# SETTLED-NEXT: t4 Cell t2: NeverPasses
+# SETTLED-NEXT: t1 Cell t3: AlwaysPasses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Pool" flags=[HasHeritage]
+variable g0 name="t0" declared={type=anything} initialization=Undefined
+variable g1 name="t1" declared={type=ArrayBuffer} initialization=Undefined
+variable g2 name="t2" declared={type=SharedArrayBuffer} initialization=Undefined
+variable g3 name="t3" declared={type=ArrayBuffer|SharedArrayBuffer} initialization=Undefined
+variable g4 name="t4" declared={type=ArrayBuffer|Map} initialization=Undefined
+variable g5 name="t5" declared={type=SharedArrayBuffer|Map} initialization=Undefined
+variable g6 name="t6" declared={type=ArrayBuffer|L0} initialization=Undefined
+function f0 name="unused" results=[{type=undefined}] {
+  b0():
+    Return
+}

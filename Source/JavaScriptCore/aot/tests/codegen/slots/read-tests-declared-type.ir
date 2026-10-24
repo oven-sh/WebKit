@@ -1,0 +1,65 @@
+# A read that is not proven to find its slot filled asks one question: does the slot hold a value of the field's type? The markers for absent, undefined and null all answer no,
+# and what is loaded behind the test is the raw integer, number or boolean. A store that only needs a filled slot asks the same question, so `o.d += 1` tests the slot once.
+# Each test is one compare with a constant and one branch. For a number it compares the upper half of the slot, so NaN, which is a number, passes like any other.
+# What it costs: nothing says any more that the loaded number is no NaN, so boxing it (readNumber) purifies it, which the size of f2 shows
+# FORM: Selected
+# RUN: generate-code
+# REQUIRES: x86_64 unsanitized-code
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# CHECK: f1: size=21 frame=none
+# CHECK: f2: size={{*}} frame=none
+# CHECK: f3: size=29 frame=none
+# CHECK: f4: size=39 frame=none
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Numbers" fields=[{key="i" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=boolean} flags=[IsRequired]}]
+function f0 name="allocate" results=[{type=L0}] {
+  b0():
+    v0 = NewObject layout=L0
+    Return v0
+}
+function f1 name="readInteger" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="i" receivers=[L0] level=Proven [holdsDeclaredType]
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="i" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v3
+  b2():
+    v4 = Integer integer=0
+    Return v4
+}
+function f2 name="readNumber" parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="d" receivers=[L0] level=Proven [holdsDeclaredType]
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="d" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v3
+  b2():
+    v4 = Double number=0.5
+    Return v4
+}
+function f3 name="readBoolean" parameters=[{type=L0}] results=[{type=boolean}] {
+  b0(v0: L0):
+    v1 = IsSlotFilled v0 key="b" receivers=[L0] level=Proven [holdsDeclaredType]
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="b" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v3
+  b2():
+    v4 = Boolean boolean=false
+    Return v4
+}
+function f4 name="storeNumber" parameters=[{type=L0}, {type=number}] results=[{type=i32}] {
+  b0(v0: L0, v1: number):
+    v2 = IsSlotFilled v0 key="d" receivers=[L0] level=Proven [holdsDeclaredType]
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    PutSlot v0, v3, v1 key="d" receivers=[L0] level=Proven
+    v5 = Integer integer=1
+    Return v5
+  b2():
+    v6 = Integer integer=0
+    Return v6
+}

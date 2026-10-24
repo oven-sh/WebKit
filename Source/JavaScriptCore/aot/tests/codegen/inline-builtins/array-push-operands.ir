@@ -1,0 +1,119 @@
+# A pushed value stays an unboxed int32, double or optional double and is boxed otherwise
+# FORM: Placed
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# R-LABEL: function f0 name="pushOneToInt32"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: = CallInline v0, v1 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush
+function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# R-LABEL: function f1 name="pushOneToNumbers"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: = CallInline v0, v1 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush
+function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# R-LABEL: function f2 name="pushOneToAnything"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: = CallInline v0, v1 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
+# R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush

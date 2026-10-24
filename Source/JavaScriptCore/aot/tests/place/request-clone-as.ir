@@ -1,0 +1,44 @@
+# A CloneAs request names its layout, the shape of the copy and the replaced fields, and the run time numbers a field by its index among the fields with a slot, not among all fields of the layout
+# FORM: Selected
+# RUN: pass NumberAndEncode
+# RUN(SLOTS): pass PlanSlots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="FirstFieldNeverStored" fields=[{key="neverStored" declared={type=undefined|number} flow={location={writers=AllKnown stores=Never}}}, {key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}]
+layout L1 name="EveryFieldReplaced" fields=[{key="zeroth" declared={type=undefined|number} flow={location={writers=AllKnown stores=Never}}}, {key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = IsPlainDataObject v1
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AssumeType v1 castType=object
+    v6 = CloneAs v5, v4, v2, v2 layout=L0 fields=[1, 2]
+    v7 = CloneAs v5, v4, v2, v2, v2 layout=L1 fields=[0, 1, 2]
+    Jump -> next b2()
+  b2():
+    Return
+}
+
+# A field that a CloneAs fills has a slot, whatever is known of the stores. Nothing is stated about the objects, so each layout has the word for extra properties behind its fields.
+# SLOTS: L0 CompiledObject size=48 fields=2
+# SLOTS-NEXT: .1 "first" {{*}}record=0
+# SLOTS-NEXT: .2 "second" {{*}}record=1
+# SLOTS-NEXT: extra
+# SLOTS-NEXT: L1 CompiledObject size=48 fields=3
+# SLOTS-NEXT: .0 "zeroth" {{*}}record=0
+# SLOTS-NEXT: .1 "first" {{*}}record=1
+# SLOTS-NEXT: .2 "second" {{*}}record=2
+# SLOTS-NEXT: extra
+
+# A request is the shape, the count and one word a field: 16 and 20 bytes after the reserved first word.
+# CHECK: shape [[first]] L0
+# CHECK-NEXT: shape [[every]] L1
+# CHECK: request @4 CloneAs L0 shape=[[first]] fields=[1 2]
+# CHECK-NEXT: request @20 CloneAs L1 shape=[[every]] fields=[0 1 2]
+# CHECK-NEXT: requests size=40 shared=0
+# CHECK: = CloneAs v5, v4, v2, v2 layout=L0 fields=[1, 2] request=4
+# CHECK-NEXT: = CloneAs v5, v4, v2, v2, v2 layout=L1 fields=[0, 1, 2] request=20

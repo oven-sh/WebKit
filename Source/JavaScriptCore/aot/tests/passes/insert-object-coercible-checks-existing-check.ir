@@ -1,0 +1,84 @@
+# A check that another pass left where a resolved read threw narrows every use it dominates, like a check of this pass
+# FORM: Prepared optimizing
+# RUN: pass InsertObjectCoercibleChecks
+# STATISTIC: InsertObjectCoercibleChecksChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="receiverOfResolvedCall" parameters=[{type=undefined|string}] results=[{type=boolean}] {
+  b0(v0: undefined|string):
+    v1 = RequireObjectCoercible v0 name="startsWith"
+    v2 = String string="t1"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeStartsWith/1 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK: v1: string = RequireObjectCoercible v0 name="startsWith"
+# CHECK: v3: boolean = CallBuiltin v1, v2 overload=StringPrototypeStartsWith/1 builtinCallForm=AnyReceiver
+
+function f1 name="dominatedBlock" parameters=[{type=null|string}, {type=boolean}] results=[{type=null|string}] {
+  b0(v0: null|string, v1: boolean):
+    v2 = RequireObjectCoercible v0 name="length"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = PropGet v0 key="length"
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK: v2: string = RequireObjectCoercible v0 name="length"
+# CHECK-NOT: RequireObjectCoercible
+# CHECK: b1():
+# CHECK-NEXT: Return v2
+# CHECK: = PropGet v2 key="length"
+# CHECK-NEXT: Return v2
+
+function f2 name="secondCheckOfSameValue" parameters=[{type=undefined|string}] results=[{type=string}] {
+  b0(v0: undefined|string):
+    v1 = RequireObjectCoercible v0 name="trim"
+    v2 = RequireObjectCoercible v0 name="length"
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: v1: string = RequireObjectCoercible v0 name="trim"
+# CHECK-NEXT: v2: string = RequireObjectCoercible v1 name="length"
+
+function f3 name="useBeforeCheck" parameters=[{type=undefined|string}] results=[{type=boolean}] {
+  b0(v0: undefined|string):
+    v1 = String string="t1"
+    v2 = StrictEq v0, v1
+    v3 = RequireObjectCoercible v0 name="length"
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK: = StrictEq v0, v1
+
+function f4 name="siblingBranch" parameters=[{type=undefined|string}, {type=boolean}] results=[{type=undefined|string}] {
+  b0(v0: undefined|string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = RequireObjectCoercible v0 name="length"
+    Return
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4
+# CHECK: b2():
+# CHECK-NEXT: Return v0
+
+function f5 name="handlerOfCheck" parameters=[{type=undefined|string}] results=[{type=undefined|string}] {
+  b0(v0: undefined|string):
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = RequireObjectCoercible v0 name="length"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Return v0
+}
+# CHECK-LABEL: function f5
+# CHECK: = CatchValue
+# CHECK-NEXT: Return v0

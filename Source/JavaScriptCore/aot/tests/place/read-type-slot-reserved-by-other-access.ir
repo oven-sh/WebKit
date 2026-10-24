@@ -1,0 +1,69 @@
+# Bytes are kept zero for the layout, not for the read that asked: a read that would not reserve them itself needs no test of the shape either, and may see the slot empty
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots padding accesses
+# RUN(PLACED): place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="WithPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="WithoutPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything}}]
+layout L2 name="AlsoWithoutPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything}}]
+layout L3 name="AlsoWithPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="withOrWithout" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="withOrAlsoWithout" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="bothWith" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="oneWithTwoWithout" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = NewObject -, v2 layout=L2 fields=[0]
+    v6 = NewObject -, v2, v1 layout=L3 fields=[0, 1]
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v3 variable=g1
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v6 variable=g2
+    PutModuleVariable v4 variable=g3
+    PutModuleVariable v5 variable=g3
+    PutModuleVariable v6 variable=g3
+    v16 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="first"
+    v2 = PropGet v0 key="payload"
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="first"
+    v5 = PropGet v3 key="payload"
+    v6 = GetModuleVariable variable=g2
+    v7 = PropGet v6 key="first"
+    v8 = PropGet v6 key="payload"
+    v9 = GetModuleVariable variable=g3
+    v10 = PropGet v9 key="payload"
+    Return
+}
+
+# The reads through L0|L1 and L0|L2 reserve the bytes of "payload" in L1 and L2.
+# CHECK: L0 zero []
+# CHECK-NEXT: L1 zero [@16+8]
+# CHECK-NEXT: L2 zero [@16+8]
+# CHECK-NEXT: L3 zero []
+# Two members of L1|L2|L3 would keep bytes zero for the one that has "payload", so this read reserves nothing. It finds them reserved.
+# CHECK: "payload" {L1 L2 L3} read
+# CHECK-NEXT: one location JSValue @16
+# CHECK-NEXT: without slot {L1 L2} zero
+
+# PLACED: "payload" [L0, L1] read EveryMemberHasSlot JSValue @16 {{*}}withField=[L0] test=always contents=anything|absent
+# PLACED: "payload" [L0, L2] read EveryMemberHasSlot JSValue @16 {{*}}withField=[L0] test=always contents=anything|absent
+# PLACED: "payload" [L0, L3] read EveryMember JSValue @16 withField=[L0, L3] test=always contents=anything
+# PLACED-NOT: absent
+# PLACED: "payload" [L1, L2, L3] read EveryMemberHasSlot JSValue @16 {{*}}withField=[L3] test=always contents=anything|absent
+# PLACED-NOT: SomeMembers

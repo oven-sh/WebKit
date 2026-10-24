@@ -1,0 +1,88 @@
+# The classes of a very large program are read off its structure. So in a build that runs to its end the heats in front of CallModules are made without the estimate of activations
+# and without all that is weighed with it. The slots, the places and the names of type tests are weighed with that, behind CallModules: the heat that they read has it.
+# Each of them ends the build where it has not.
+# FORM: AsRead
+# REQUIRES: x86_64
+# OPTIONS: limit=MaxWarmCodeValues:1
+# RUN: generate-code
+# CHECK: f0: size={{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v0 function=f1
+    v6 = CallDirect v0 function=f5
+    v7 = CallDirect v0 function=f6
+    v8 = CallDirect v0 function=f7
+    v9 = CallDirect v0 function=f8
+    v10 = CallDirect v0 function=f9
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f2 name="calledByFourFunctions" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f3 name="calledByThreeFunctionsAndByOneThatRunsOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="calledByThreeFunctionsAndByAnAsyncOne" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f5 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f6 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f7 name="thirdCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f8 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    Return v0
+}
+
+function f9 name="asyncCaller" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f4
+    Return v0
+}

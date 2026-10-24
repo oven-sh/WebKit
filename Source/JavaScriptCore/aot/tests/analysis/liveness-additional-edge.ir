@@ -1,0 +1,30 @@
+# An edge from the suspend block to the resume block extends live ranges
+# FORM: Prepared
+# RUN: analyses liveness
+# RUN(EDGE): analyses liveness additional-edge=b1:b2
+# RUN(BLOCKS): analyses liveness additional-edge=b1:b2 tracked-blocks=b2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resume" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    v2 = Add v1, v1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v2
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v1]
+# CHECK-NEXT: b2 live at head: [v2]
+# EDGE: function f0
+# EDGE-NEXT: liveness:
+# EDGE-NEXT: b0 live at head: []
+# EDGE-NEXT: b1 live at head: [v1 v2]
+# EDGE-NEXT: b2 live at head: [v2]
+# BLOCKS: function f0
+# BLOCKS-NEXT: liveness:
+# BLOCKS-NEXT: b2 live at head: [v2]
+# BLOCKS-NOT: live at head

@@ -29,13 +29,21 @@
 #include "CalleeBits.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
+#include "HeapUtil.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
 #include "JSCellButterfly.h"
 #include "JSString.h"
 #include "MarkedBlockInlines.h"
+#include "Options.h"
+#include "StructureID.h"
 #include "WasmCallee.h"
 #include <wtf/OSAllocator.h>
+
+#if ENABLE(AOT)
+#include "AOTCellFormat.h"
+#include "AOTHeapHooks.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -47,6 +55,8 @@ ConservativeRoots::ConservativeRoots(JSC::Heap& heap)
     , m_capacity(inlineCapacity)
     , m_heap(heap)
 {
+    if (MarkedBlockCage::isRequired())
+        (Options::useNarrowReferenceScan() ? m_narrowReferences : m_narrowReferencesInFrameCells) = heap.cage().usedIndices();
 }
 
 ConservativeRoots::~ConservativeRoots()
@@ -200,8 +210,16 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // We could point into the middle of an object.
     char* alignedPointer = static_cast<char*>(candidate->handle().cellAlign(pointer));
-    if (tryPointer(alignedPointer))
+    if (tryPointer(alignedPointer)) {
+#if ENABLE(AOT)
+        // The cell is alive by now. What an inner cell refers to is alive only if the inner cell is marked itself.
+        if (candidate->hasInnerCells()) [[unlikely]] {
+            if (JSCell* inner = AOT::HeapHooks::innerCellAround(std::bit_cast<JSCell*>(alignedPointer), pointer))
+                markFoundGCPointer(inner, cellKind);
+        }
+#endif
         return;
+    }
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking. As with the
@@ -212,8 +230,154 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
 template<typename MarkHook>
 SUPPRESS_ASAN
+void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, MarkHook& markHook)
+{
+    if (begin > end)
+        std::swap(begin, end);
+
+    RELEASE_ASSERT(isPointerAligned(begin));
+    RELEASE_ASSERT(isPointerAligned(end));
+    // Make a local copy of filters to show the compiler it won't alias, and can be register-allocated.
+    TinyBloomFilter<uintptr_t> jsGCFilter = m_heap.objectSpace().blocks().filter();
+#if ENABLE(WEBASSEMBLY)
+    TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter = m_heap.boxedWasmCalleeFilter();
+#else
+    TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter;
+#endif
+
+    HeapVersion markingVersion = m_heap.objectSpace().markingVersion();
+    HeapVersion newlyAllocatedVersion = m_heap.objectSpace().newlyAllocatedVersion();
+    MarkedSpace& space = m_heap.objectSpace();
+    char* startOfPreciseAllocations = std::bit_cast<char*>(std::numeric_limits<uintptr_t>::max());
+    char* endOfPreciseAllocations = nullptr;
+    if (space.preciseAllocationsForThisCollectionSize()) {
+        PreciseAllocation* last = space.preciseAllocationsForThisCollectionEnd()[-1];
+        startOfPreciseAllocations = std::bit_cast<char*>(space.preciseAllocationsForThisCollectionBegin()[0]->cell());
+        endOfPreciseAllocations = std::bit_cast<char*>(last->cell()) + last->cellSize() + sizeof(IndexingHeader);
+    }
+    const MarkedBlockCage::Indices narrow = m_narrowReferences;
+    // An index names the start of a cell or of an inner cell. genericAddPointer also accepts interior pointers, so both branches check for an exact match first.
+    auto addNarrowReferenceAmong = [&](const MarkedBlockCage::Indices& indices, uint32_t word) ALWAYS_INLINE_LAMBDA {
+        if (word - indices.first >= indices.count)
+            return;
+        char* pointer = std::bit_cast<char*>(MarkedBlockCage::decode(indices.base, word));
+        if (PreciseAllocation::isPreciseAllocation(std::bit_cast<HeapCell*>(pointer))) {
+            if (pointer < startOfPreciseAllocations || pointer > endOfPreciseAllocations)
+                return;
+            PreciseAllocation** allocation = tryBinarySearch<PreciseAllocation*>(
+                space.preciseAllocationsForThisCollectionBegin(),
+                space.preciseAllocationsForThisCollectionSize(),
+                PreciseAllocation::fromCell(pointer),
+                [] (PreciseAllocation** ptr) -> PreciseAllocation* { return *ptr; });
+            if (allocation)
+                genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+            return;
+        }
+        MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
+        if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate)) || !m_heap.objectSpace().blocks().set().contains(candidate))
+            return;
+        void* cell = pointer;
+#if ENABLE(AOT)
+        if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer) && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::NarrowReferenceOnStackNamesNoInnerCell)) [[unlikely]]
+            cell = candidate->outerCellOf(pointer);
+#endif
+        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, cell))
+            genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+    };
+    auto addNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
+        addNarrowReferenceAmong(narrow, word);
+    };
+    auto addNarrowReferencesInHalves = [&](uint64_t word) ALWAYS_INLINE_LAMBDA {
+        addNarrowReference(static_cast<uint32_t>(word));
+        addNarrowReference(static_cast<uint32_t>(word >> 32));
+    };
+    auto addNarrowReferences = [&](char* bits) ALWAYS_INLINE_LAMBDA {
+        if (!narrow.count)
+            return;
+        uint64_t word = std::bit_cast<uintptr_t>(bits);
+        addNarrowReferencesInHalves(word);
+        // Compiled code may keep a reference live as (index << shift) plus an offset into the cell, before it adds the cage base.
+        if (word < MarkedBlockCage::maxSize && (word >> MarkedBlockCage::shift) - narrow.first < narrow.count)
+            genericAddPointer<false>(std::bit_cast<char*>(static_cast<uintptr_t>(narrow.base + word)), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+    };
+    static_assert(!JSCell::structureIDOffset() && JSCell::typeInfoTypeOffset() == 5 && JSCell::cellStateOffset() == 7);
+    // A compiled object that lies in a frame keeps alive what one on the heap does: its Structure and what its fields refer to. Where each half of every word is looked at, the fields have been found by then.
+    auto addFrameCell = [&](char** header) ALWAYS_INLINE_LAMBDA {
+#if ENABLE(AOT)
+        constexpr uint64_t typeAndStateMask = 0xff00ff0000000000ull;
+        constexpr uint64_t typeAndStateOfFrameCell = static_cast<uint64_t>(AOT::frameCellState) << 56 | static_cast<uint64_t>(CompiledObjectType) << 40;
+        uint64_t word = std::bit_cast<uintptr_t>(*header);
+        StructureID structureID = std::bit_cast<StructureID>(static_cast<uint32_t>(word));
+        if ((word & typeAndStateMask) != typeAndStateOfFrameCell || !structureID.decontaminate()) [[likely]]
+            return;
+        Structure* structure = structureID.tryDecode();
+        if (!structure)
+            return;
+        genericAddPointer<false>(std::bit_cast<char*>(structure), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        if (!m_narrowReferencesInFrameCells.count) [[likely]]
+            return;
+        // Any number may look like a header.
+        MarkedBlock* block = MarkedBlock::blockFor(structure);
+        if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(block)) || !space.blocks().set().contains(block) || !block->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, structure))
+            return;
+        size_t bytesUntilEnd = static_cast<char*>(end) - reinterpret_cast<char*>(header);
+        for (uint32_t offset : AOT::HeapHooks::offsetsOfNarrowReferences(structure)) {
+            if (offset + sizeof(uint32_t) <= bytesUntilEnd)
+                addNarrowReferenceAmong(m_narrowReferencesInFrameCells, *reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(header) + offset));
+        }
+#else
+        UNUSED_PARAM(header);
+#endif
+    };
+#if ENABLE(WEBASSEMBLY)
+    if (boxedWasmCalleeFilter.bits()) {
+        constexpr bool lookForWasmCallees = true;
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it)) {
+                addNarrowReferencesInHalves(addressableHalvesForConservativeScan(it));
+                continue;
+            }
+            addNarrowReferences(*it);
+            addFrameCell(it);
+            genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
+    } else {
+#else
+    {
+#endif
+        constexpr bool lookForWasmCallees = false;
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it)) {
+                addNarrowReferencesInHalves(addressableHalvesForConservativeScan(it));
+                continue;
+            }
+            addNarrowReferences(*it);
+            addFrameCell(it);
+            char* pointer = removeArrayPtrTag(*it);
+            if (!HeapUtil::mayBeCellInBlock(jsGCFilter, pointer) && (pointer < startOfPreciseAllocations || pointer > endOfPreciseAllocations)) {
+#if ASSERT_ENABLED
+                size_t sizeBefore = m_size;
+                genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+                ASSERT(m_size == sizeBefore);
+#else
+                markHook.mark(pointer);
+#endif
+                continue;
+            }
+            genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
+    }
+}
+
+template<typename MarkHook>
+SUPPRESS_ASAN
 void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHook)
 {
+    if (Options::runsCompiledImage()) {
+        genericAddSpanOfCompiledProcess(begin, end, markHook);
+        return;
+    }
+
     if (begin > end)
         std::swap(begin, end);
 

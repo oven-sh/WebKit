@@ -1,0 +1,384 @@
+# An append of an element, of a hole and of the elements of another array has code for each representation of the element, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-11: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="appendsToArrayOfInt32" parameters=[{type=Array<i32>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="appendsToArrayOfInt32"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: AppendElement v0, v1
+# R-NEXT: AppendElement v0, v2
+# R-NEXT: AppendElement v0, v3
+# R-NEXT: AppendElement v0, {{*}}
+# R-NEXT: AppendElement v0, v5
+function f1 name="appendsToArrayOfNumbers" parameters=[{type=Array<number>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+# R-LABEL: function f1 name="appendsToArrayOfNumbers"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: AppendElement v0, v1
+# R-NEXT: AppendElement v0, v2
+# R-NEXT: AppendElement v0, v3
+# R-NEXT: AppendElement v0, {{*}}
+# R-NEXT: AppendElement v0, v5
+function f2 name="appendsToArrayOfOptionalNumbers" parameters=[{type=Array<undefined|number>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<undefined|number>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+# R-LABEL: function f2 name="appendsToArrayOfOptionalNumbers"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: AppendElement v0, v1
+# R-NEXT: AppendElement v0, v2
+# R-NEXT: AppendElement v0, v3
+# R-NEXT: AppendElement v0, {{*}}
+# R-NEXT: AppendElement v0, v5
+function f3 name="appendsToArrayOfStrings" parameters=[{type=Array<string>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+# R-LABEL: function f3 name="appendsToArrayOfStrings"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: AppendElement v0, v1
+# R-NEXT: AppendElement v0, v2
+# R-NEXT: AppendElement v0, v3
+# R-NEXT: AppendElement v0, {{*}}
+# R-NEXT: AppendElement v0, v5
+function f4 name="appendsToArrayOfAnything" parameters=[{type=Array<anything>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElement v0, v1
+    AppendElement v0, v2
+    AppendElement v0, v3
+    AppendElement v0, v4
+    AppendElement v0, v5
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+# R-LABEL: function f4 name="appendsToArrayOfAnything"
+# R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
+# R: AppendElement v0, v1
+# R-NEXT: AppendElement v0, v2
+# R-NEXT: AppendElement v0, v3
+# R-NEXT: AppendElement v0, {{*}}
+# R-NEXT: AppendElement v0, v5
+function f5 name="appendsToLiteralOfInt32" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
+    v6 = NewArray contents=i32
+    AppendElement v6, v0
+    AppendElement v6, v1
+    AppendElement v6, v2
+    AppendElement v6, v3
+    AppendElement v6, v4
+    AppendHole v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArray contents=i32
+    AppendElement v14, v0
+    AppendElement v14, v1
+    AppendElement v14, v2
+    AppendElement v14, v3
+    AppendElement v14, v4
+    AppendHole v14
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v21 = NewArray contents=i32
+    AppendElement v21, v0
+    AppendElement v21, v1
+    AppendElement v21, v2
+    AppendElement v21, v3
+    AppendElement v21, v4
+    AppendHole v21
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b1 Fast
+# S: f5 b3 Compact
+function f6 name="appendsToLiteralOfNumbers" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
+    v6 = NewArray contents=number
+    AppendElement v6, v0
+    AppendElement v6, v1
+    AppendElement v6, v2
+    AppendElement v6, v3
+    AppendElement v6, v4
+    AppendHole v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArray contents=number
+    AppendElement v14, v0
+    AppendElement v14, v1
+    AppendElement v14, v2
+    AppendElement v14, v3
+    AppendElement v14, v4
+    AppendHole v14
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v21 = NewArray contents=number
+    AppendElement v21, v0
+    AppendElement v21, v1
+    AppendElement v21, v2
+    AppendElement v21, v3
+    AppendElement v21, v4
+    AppendHole v21
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b1 Fast
+# S: f6 b3 Compact
+function f7 name="appendsToLiteralOfAnything" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
+    v6 = NewArray contents=anything
+    AppendElement v6, v0
+    AppendElement v6, v1
+    AppendElement v6, v2
+    AppendElement v6, v3
+    AppendElement v6, v4
+    AppendHole v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArray contents=anything
+    AppendElement v14, v0
+    AppendElement v14, v1
+    AppendElement v14, v2
+    AppendElement v14, v3
+    AppendElement v14, v4
+    AppendHole v14
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v21 = NewArray contents=anything
+    AppendElement v21, v0
+    AppendElement v21, v1
+    AppendElement v21, v2
+    AppendElement v21, v3
+    AppendElement v21, v4
+    AppendHole v21
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b1 Fast
+# S: f7 b3 Compact
+function f8 name="appendsHole" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: boolean):
+    AppendHole v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendHole v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendHole v0
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b1 Fast
+# S: f8 b3 Compact
+function f9 name="appendsElements" parameters=[{type=Array}, {type=Array<anything, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<anything, pristine[Storage, Names]>, v2: boolean):
+    AppendElements v0, v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElements v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    AppendElements v0, v1
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b1 Fast
+# S: f9 b3 Compact
+function f10 name="appendsElementsUnderGuard" parameters=[{type=Array}, {type=Array}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array, v2: boolean):
+    v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    AppendElements v0, v1, v4
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v8 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    AppendElements v0, v1, v9
+    Jump -> next b5()
+  b5():
+    Branch v2 -> taken b3(), notTaken b6()
+  b6():
+    Branch v2 -> taken b2(), notTaken b7()
+  b7():
+    Branch v2 -> taken b8(), notTaken b10()
+  b8() frequency=Rare:
+    v11 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+    Branch v11 -> taken b9(| 0), notTaken b10()
+  b9(v12) frequency=Rare:
+    AppendElements v0, v1, v12
+    Jump -> next b10()
+  b10():
+    Return
+}
+# S: f10 b1 Balanced
+# S: f10 b4 Fast
+# S: f10 b9 Compact

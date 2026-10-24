@@ -1,0 +1,27 @@
+# the receivers of a slot access are a complete set with a member
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="badOpenSet" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0, ..] level=Proven
+    Return v1
+}
+function f1 name="badEmptySet" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f2 name="good" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}

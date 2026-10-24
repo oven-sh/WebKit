@@ -1,0 +1,43 @@
+# A value that may be unspecified has no bits to check where it is handed on. In front of an operation that looks at it a validating build asks whether it is there
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: validate
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTReportValidationFailure x3
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTReportValidationFailure x1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
+function f0 name="inspected" parameters=[{type=boolean}, {type=L0}] results=[{type=boolean}] {
+  b0(v0: boolean, v1: L0):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Upcast v1 castType=null|L0
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=null|L0
+    Jump -> next b3(v3)
+  b3(v4: null|L0):
+    v5 = TypeTest v4 testedType=L0
+    Return v5
+}
+function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{type=null|L0}] {
+  b0(v0: boolean, v1: L0):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Upcast v1 castType=null|L0
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=null|L0
+    Jump -> next b3(v3)
+  b3(v4: null|L0):
+    Return v4
+}
+function f2 name="makes" results=[{type=L0}] {
+  b0():
+    v0 = Undefined
+    v1 = Upcast v0 castType=anything
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Return v2
+}

@@ -1,0 +1,70 @@
+# A list of literals that is only expected folds nothing: a comparison with a literal outside the list and a condition on an expected `true` stay, because a string outside the list and `false` may arrive. The same list as a proven type folds the comparison
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = Call v1, -
+    v4 = Convert v3 declared={type="a"|"b" flags=[IsExpected]}
+    v5 = CallDirect v4 function=f1
+    v6 = Call v2, -, v5
+    v7 = Call v1, -
+    v8 = Convert v7 declared={type=true flags=[IsExpected]}
+    v9 = CallDirect v8 function=f2
+    v10 = Call v2, -, v9
+    v11 = String string="a"
+    v12 = CallDirect v11 function=f3
+    v13 = Call v2, -, v12
+    v14 = String string="b"
+    v15 = CallDirect v14 function=f3
+    v16 = Call v2, -, v15
+    Return
+}
+function f1 name="expectedList" parameters=[{type="a"|"b" flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ "a"|"b"):
+    v1 = String string="c"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f2 name="expectedTrue" parameters=[{type=true flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ true):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+function f3 name="provenList" parameters=[{type="a"|"b"}] results=[{type=anything}] {
+  b0(v0: "a"|"b"):
+    v1 = String string="c"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# The answer of the proven list is the type of its result, so both calls are the answer and the body is gone
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: function=f3
+# CHECK: [[first]]: false = Boolean
+# CHECK-NEXT: = Call {{*}}, -, [[first]]
+# CHECK-NEXT: [[second]]: false = Boolean
+# CHECK-NEXT: = Call {{*}}, -, [[second]]
+# CHECK-NOT: function=f3
+# CHECK-LABEL: function f1 name="expectedList"
+# CHECK: [[answer]]: boolean = ValueEqualsLiteral v0 literal="c"
+# CHECK-NEXT: Return [[answer]]
+# CHECK-LABEL: function f2 name="expectedTrue"
+# CHECK: TestAndBranch
+# CHECK: integer=1
+# CHECK: integer=2
+# CHECK-LABEL: function f3 name="provenList"
+# CHECK: results=[{type=false}]
+# CHECK-NOT: ValueEqualsLiteral
+# CHECK-LABEL: function f4 name="library"

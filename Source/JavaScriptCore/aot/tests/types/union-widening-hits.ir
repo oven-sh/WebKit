@@ -1,0 +1,25 @@
+# The hits are those of the nine ordered pairs: t0 | t1 and t1 | t0 list nine layouts. The laws unite past the limit again, without widening, and add nothing.
+# FORM: Prepared
+# OPTIONS: limit=MaxLayoutsInType:8
+# RUN: union-widening
+# LOSS: MaxLayoutsInType x2 f0
+# CHECK: t0 | t0 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t0 | t1 = object
+# CHECK-NEXT: t0 | t2 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t1 | t1 = L8
+# CHECK-NEXT: t1 | t2 = L0|L8
+# CHECK-NEXT: t2 | t2 = L0
+# CHECK-NEXT: loss MaxLayoutsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+layout L1
+layout L2
+layout L3
+layout L4
+layout L5
+layout L6
+layout L7
+layout L8
+function f0 name="types" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7}, {type=L8}, {type=L0}] results=[{type=undefined}]

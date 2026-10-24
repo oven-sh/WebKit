@@ -1,0 +1,70 @@
+# Rare blocks are slow paths the engine added: they count toward neither the callee's size nor its receiver accesses, unless the entry block is rare too
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsOnSlowPath" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    v2 = Call v0
+    Return v2
+}
+# CHECK: f0: barrier=None bytes=[[fastPath]] head=[b0 b1] headBytes=28
+
+function f1 name="callsOnOrdinaryPath" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = Call v0
+    Return v2
+}
+# CHECK: f1: barrier=None bytes=[[wholeBody]] head=[b0 b1] headBytes=[[fastPath]]
+
+function f2 name="entryIsRare" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) frequency=Rare:
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    Return v0
+  b2() frequency=Rare:
+    v2 = Call v0
+    Return v2
+}
+# CHECK: f2: barrier=None bytes=[[wholeBody]]
+# CHECK-NOT: head=
+
+function f3 name="accessesReceiverOnSlowPath" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="x"
+    Return v2
+  b2() frequency=Rare:
+    v3 = PropGet v0 key="x"
+    PropSet v0, v3 key="y"
+    Return v3
+}
+# CHECK: f3: barrier=None {{*}} receiver(p0 accesses=1 stores=0)
+
+function f4 name="accessesReceiverOnOrdinaryPath" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="x"
+    Return v2
+  b2():
+    v3 = PropGet v0 key="x"
+    PropSet v0, v3 key="y"
+    Return v3
+}
+# CHECK: f4: barrier=None {{*}} receiver(p0 accesses=3 stores=1)
+# CHECK: outcome: Unchanged

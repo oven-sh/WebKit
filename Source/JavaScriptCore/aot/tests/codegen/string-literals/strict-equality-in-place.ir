@@ -1,0 +1,108 @@
+# In fast code the strict comparison with an 8-bit text of 1 to 32 units reads the length and the characters of a flat 8-bit subject in place, and calls the stub only for a rope and for a 16-bit string. The stub it calls then takes a string, also where the subject was any value. Of the empty text only the length is asked. Balanced and compact code, and every other text, have the call alone
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls StringLiteralsComparedInPlace
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stringAndValueInFastCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: string, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = ValueEqualsLiteral v1 literal="constructor"
+    v4 = StringEqualsLiteral v0 literal="GET"
+    TestAndBranch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# S: f0 b1 Fast
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: stub ValueEqualsLiteral
+# CHECK: stub StringEqualsLiteral x
+# CHECK-NEXT: stub StringEqualsLiteralOfLength{{*}} x
+# CHECK-NOT: stub ValueEqualsLiteral
+
+function f1 name="flatStringInFastCode" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = FlattenString v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = StringEqualsLiteral v1 literal="DELETE"
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# S: f1 b1 Fast
+# CHECK-LABEL: f1: size=
+# CHECK: stub StringEqualsLiteralOfLength{{*}} x
+
+function f2 name="longestTextInFastCode" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = StringEqualsLiteral v0 literal="abcdefghijklmnopqrstuvwxyz012345"
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# S: f2 b1 Fast
+# CHECK-LABEL: f2: size=
+# CHECK: stub StringEqualsLiteral x
+
+function f3 name="inBalancedCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: string, v1: anything):
+    v2 = ValueEqualsLiteral v1 literal="constructor"
+    v3 = StringEqualsLiteral v0 literal="GET"
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v2
+}
+# S: f3 b0 Balanced
+# CHECK-LABEL: f3: size=
+# CHECK: stub StringEqualsLiteralOfLength{{*}} x1
+# CHECK: stub ValueEqualsLiteral x1
+
+function f4 name="inCompactCode" parameters=[{type=string}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = StringEqualsLiteral v0 literal="GET"
+    Return v2
+  b2():
+    Return v1
+}
+# S: f4 b1 Compact
+# CHECK-LABEL: f4: size=
+# CHECK: stub StringEqualsLiteralOfLength{{*}} x1
+
+# A text of 33 units, a text with a unit above 0xFF, and the empty text, which a string equals if its length is 0
+function f5 name="otherTextsInFastCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: string, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = StringEqualsLiteral v0 literal="abcdefghijklmnopqrstuvwxyz0123456"
+    v4 = StringEqualsLiteral v0 literal="\u{100}"
+    v5 = StringEqualsLiteral v0 literal=""
+    v6 = ValueEqualsLiteral v1 literal=""
+    TestAndBranch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Return v5
+}
+# S: f5 b1 Fast
+# CHECK-LABEL: f5: size=
+# CHECK-NOT: OfLength
+# CHECK: stub StringEqualsLiteral x
+# CHECK-NOT: stub ValueEqualsLiteral
+
+# The two of f0, one each of f1 and f2, and the value of f5 that is asked for the length zero
+# CHECK: statistic StringLiteralsComparedInPlace 5

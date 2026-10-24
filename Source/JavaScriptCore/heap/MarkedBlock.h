@@ -155,6 +155,16 @@ public:
         // mistake of making a pop freelist rather than a bump freelist.
         // Takes bitvectorLock().mutate() itself, so callers must not hold it.
         void sweep(FreeList*);
+
+#if ASAN_ENABLED
+        void poisonDeadCells();
+        void poisonDeadCellsIfUnswept();
+        void unpoisonCells();
+        // Every other cell is never allocated and stays poisoned.
+        static bool hasRedZoneCells();
+        bool isRedZoneCell(const void*);
+        void poisonRedZoneCells();
+#endif
         
         // This is to be called by Subspace.
         template<typename DestroyFunc>
@@ -245,6 +255,10 @@ public:
 
         template<bool, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, typename DestroyFunc>
         void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, NOESCAPE const DestroyFunc&);
+
+        void rebuildNewlyAllocatedByWord(const FreeList&);
+        template<typename Func> void forEachFreeIntervalByWord(const WTF::BitSet<atomsPerBlock>& live, NOESCAPE const Func&);
+        JS_EXPORT_PRIVATE void validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>>);
         
         unsigned m_atomsPerCell { std::numeric_limits<unsigned>::max() };
         unsigned m_startAtom { std::numeric_limits<unsigned>::max() }; // Exact location of the first allocatable atom.
@@ -262,6 +276,7 @@ public:
 
         // WeakSet is rarely accessed so keep it after the other members.
         WeakSet m_weakSet;
+        void* m_verifierMemo { nullptr };
     };
 
 private:    
@@ -290,7 +305,8 @@ public:
         // m_vm must remain a pointer (instead of a reference) because JSCLLIntOffsetsExtractor
         // will fail otherwise.
         VM* const m_vm;
-        Subspace* m_subspace;
+        uint32_t m_cellSize { 0 };
+        bool m_hasInnerCells { false };
 
         CountingLock m_lock;
     
@@ -363,7 +379,7 @@ public:
 
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
-        void* m_verifierMemo { nullptr };
+        Subspace* m_subspace;
     };
     
 private:
@@ -389,7 +405,8 @@ public:
     static_assert(endAtom * atomSize == blockSize);
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
-    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    enum class IsFirstInDirectory : bool { No, Yes };
+    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*, IsFirstInDirectory);
         
     Handle& handle();
     const Handle& handle() const;
@@ -427,6 +444,17 @@ public:
     void resetNewlyAllocatedForVersionWrap();
         
     size_t cellSize();
+    size_t cellSizeInHeader();
+
+    // In a block whose cells have inner cells, a cell may hold further cells behind its own fields, each at the start of an atom. An inner cell has a header, a mark bit, which is the bit
+    // of its atom, and a cell state of its own, so marking and barriers treat it as they treat any cell. It is neither allocated nor swept nor counted by itself: it is alive for as long
+    // as the cell that holds it, the outer cell, and whoever visits one of the two appends the other.
+    bool hasInnerCells() const { return header().m_hasInnerCells; }
+    bool isInnerCell(const void*) const;
+    HeapCell* outerCellOf(const void*) const;
+    // Null for a cell that lies in no other.
+    HeapCell* outerCellIfInnerCell(const void*) const;
+    void clearBitsOfInnerCells(WTF::BitSet<atomsPerBlock>&) const;
     CellAttributes attributes() const;
 
     bool hasAnyMarked() const;
@@ -593,6 +621,42 @@ inline size_t MarkedBlock::cellSize()
     return handle().cellSize();
 }
 
+inline size_t MarkedBlock::cellSizeInHeader()
+{
+    return header().m_cellSize;
+}
+
+// The last cell of a block ends where the block ends.
+inline bool MarkedBlock::isInnerCell(const void* p) const
+{
+    if (!hasInnerCells()) [[likely]]
+        return false;
+    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
+    return bytesToEnd % header().m_cellSize;
+}
+
+inline HeapCell* MarkedBlock::outerCellIfInnerCell(const void* p) const
+{
+    if (!hasInnerCells()) [[likely]]
+        return nullptr;
+    uint32_t cellSize = header().m_cellSize;
+    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
+    uint32_t bytesToEndOfCell = bytesToEnd % cellSize;
+    if (!bytesToEndOfCell)
+        return nullptr;
+    return std::bit_cast<HeapCell*>(std::bit_cast<uintptr_t>(p) - (cellSize - bytesToEndOfCell));
+}
+
+inline HeapCell* MarkedBlock::outerCellOf(const void* p) const
+{
+    uint32_t cellSize = header().m_cellSize;
+    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
+    uint32_t bytesToEndOfCell = bytesToEnd % cellSize;
+    if (!bytesToEndOfCell)
+        return std::bit_cast<HeapCell*>(p);
+    return std::bit_cast<HeapCell*>(std::bit_cast<uintptr_t>(p) - (cellSize - bytesToEndOfCell));
+}
+
 inline CellAttributes MarkedBlock::Handle::attributes() const
 {
     return m_attributes;
@@ -736,13 +800,13 @@ inline bool MarkedBlock::hasAnyMarked() const
 
 inline void MarkedBlock::setVerifierMemo(void* p)
 {
-    header().m_verifierMemo = p;
+    handle().m_verifierMemo = p;
 }
 
 template<typename T>
 T MarkedBlock::verifierMemo() const
 {
-    return std::bit_cast<T>(header().m_verifierMemo);
+    return std::bit_cast<T>(header().m_handle.m_verifierMemo);
 }
 
 } // namespace JSC

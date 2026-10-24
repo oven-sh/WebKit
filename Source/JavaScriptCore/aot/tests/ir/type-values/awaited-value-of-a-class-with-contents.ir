@@ -1,0 +1,30 @@
+# Nothing is proven of an awaited object. What is expected of the result comes from what a promise holds. A map, a set or an array that is awaited is the result itself: what it holds says nothing about it
+# FORM: AsRead
+# RUN: pass TypeValues
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=PromiseValue
+function f0 name="awaitsPromise" flags=[IsAsync] parameters=[{type=undefined|null|Promise<undefined|null|number> site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|Promise<undefined|null|number>):
+    v1 = Await v0
+    v2 = Convert v1 declared={type=undefined|null|number site=w1} illTypedCause=ContainerWriterUnseen
+    Return v2
+}
+# CHECK-LABEL: function f0 name="awaitsPromise"
+# CHECK: v1: anything ~ undefined|null|number = Await v0
+# CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
+function f1 name="awaitsMap" flags=[IsAsync] parameters=[{type=undefined|null|Map<undefined|null|string, undefined|null|number> site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|Map<undefined|null|string, undefined|null|number>):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="awaitsMap"
+# CHECK: v1: anything ~ undefined|null|Map<undefined|null|string, undefined|null|number> = Await v0
+function f2 name="awaitsPromiseOrMap" flags=[IsAsync] parameters=[{type=Promise<undefined|null|number>|Map<undefined|null|string, undefined|null|number> site=w0}] results=[{type=anything}] {
+  b0(v0: Promise<undefined|null|number>|Map<undefined|null|string, undefined|null|number>):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="awaitsPromiseOrMap"
+# CHECK: v1: anything ~ undefined|null|number|Map<undefined|null|string, undefined|null|number> = Await v0

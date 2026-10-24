@@ -1,0 +1,106 @@
+# In a handler an event of any value of the covered block may have occurred, and a reset in the covered block does not clear it
+# FORM: Prepared
+# RUN: analyses history-points function=f0
+# RUN(RESET): analyses history-points function=f1 history-uses=WritesContents
+# RUN(OPERAND): analyses history-points function=f2 history-uses=WritesContents
+# RUN(COVERED): analyses history-points function=f3 history-uses=WritesContents
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+function f0 name="escapesInCoveredBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = Call v0, -, v1
+    v5 = Call v0, -, v2
+    Jump -> next b2()
+  b2():
+    v6 = Call v0, -, v3
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+}
+function f1 name="allocationInCoveredBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2() handler=b5():
+    v3 = NewArray contents=anything
+    Jump -> next b3()
+  b3():
+    AppendElement v3, v1
+    v5 = TypeTest v0 testedType=object
+    Branch v5 -> taken b4(), notTaken b1()
+  b4():
+    Return v1
+  b5() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+function f2 name="allocationOperandAlias" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = GetEnvironmentField v2 layout=L1 field=0
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    PutEnvironmentField v2, v4 layout=L1 field=0
+    Return v1
+}
+function f3 name="coveredAllocationOperandAlias" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = GetEnvironmentField v2 layout=L1 field=0
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    Jump -> next b2()
+  b2():
+    PutEnvironmentField v2, v4 layout=L1 field=0
+    Return v1
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+# CHECK: function f0
+# CHECK: history-points:
+# CHECK: b0:0 occurred: [o0]
+# CHECK: b1:0 occurred: [o0]
+# CHECK: b1:1 occurred: [o0 o1]
+# CHECK: b1:2 occurred: [o0 o1 o2]
+# CHECK: b2:0 occurred: [o0 o1 o2]
+# CHECK: b2:1 occurred: [o0 o1 o2 o3]
+# CHECK: b3:0 occurred: [o0 o1 o2]
+# CHECK: b3:0 unknown: []
+# RESET: function f1
+# RESET: history-points:
+# RESET: b0:0 occurred: [o0]
+# RESET: b2:0 occurred: [o0 o1]
+# RESET: b2:1 occurred: [o0]
+# RESET: b3:0 occurred: [o0]
+# RESET: b3:1 occurred: [o0 o1]
+# RESET: b4:0 occurred: [o0 o1]
+# RESET: b5:0 occurred: [o0 o1]
+# RESET: b5:0 unknown: []
+# OPERAND: function f2
+# OPERAND: history-points:
+# OPERAND: b0:3 occurred: [o0]
+# OPERAND: b0:4 occurred: [o0 o2]
+# OPERAND: b0:4 unknown: []
+# OPERAND: b0:5 occurred: [o0 o2]
+# COVERED: function f3
+# COVERED: history-points:
+# COVERED: b1:0 occurred: [o0]
+# COVERED: b1:1 occurred: [o0 o2]
+# COVERED: b2:0 occurred: [o0 o2]
+# COVERED: b2:0 unknown: []
+# COVERED: b2:1 occurred: [o0 o2]
+# COVERED: b3:0 occurred: [o0 o2]

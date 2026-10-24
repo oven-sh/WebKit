@@ -1,0 +1,21 @@
+# A group may not span more values than the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxSelectionGroupSpan:2
+# LOSS: MaxSelectionGroupSpan x1 f0 v7
+# RUN: claim function=f0 group=v1,v3 group=v4,v7
+# CHECK: group 0: Claimed
+# CHECK-NEXT: group 1: SpanLimit
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="spans" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = Integer integer=1
+    v3 = PropGet v1 key="b"
+    v4 = PropGet v0 key="c"
+    v5 = Integer integer=1
+    v6 = Integer integer=1
+    v7 = PropGet v4 key="d"
+    v8 = StrictEq v3, v7
+    Return v8
+}

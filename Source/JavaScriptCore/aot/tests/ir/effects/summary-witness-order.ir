@@ -1,0 +1,39 @@
+# Of several unknown entries a summary names the one the fewest calls away, and among those the one in the function with the lowest number
+# FORM: Prepared
+# OPTIONS: threads=8
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callsBothTheLaterOneFirst" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f1
+    Return v2
+}
+function f1 name="firstUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = ScopeHasBinding v0 key="first"
+    Return v1
+}
+function f2 name="secondUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = Integer integer=1
+    v2 = ScopeHasBinding v0 key="second"
+    Return v2
+}
+function f3 name="oneCallAwayBeatsTwo" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f4
+    v2 = CallDirect v0 function=f2
+    Return v2
+}
+function f4 name="oneCallFromTheFirst" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK: f0 return: {{*}}callsUnknownCode{{*}} unknown code from f1 v1
+# CHECK-NEXT: f1 return: {{*}}callsUnknownCode{{*}} unknown code from f1 v1
+# CHECK-NEXT: f2 return: {{*}}callsUnknownCode{{*}} unknown code from f2 v2
+# CHECK-NEXT: f3 return: {{*}}callsUnknownCode{{*}} unknown code from f2 v2
+# CHECK-NEXT: f4 return: {{*}}callsUnknownCode{{*}} unknown code from f1 v1

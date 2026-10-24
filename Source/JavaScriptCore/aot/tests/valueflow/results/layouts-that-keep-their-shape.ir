@@ -1,0 +1,44 @@
+# An object keeps the layout that it is allocated with whatever happens to it, also where one of its properties is redefined. So a type names the layout of every object that the analysis follows:
+# of the allocation, of the variable that holds the object, of `this` and of the result of a construction. What may happen to the objects is still told layout by layout
+# RUN: valueflow-apply
+# CHECK: variable g0 name="point" {{*}}declared={type=L0}
+# CHECK: variable g1 name="redefined" {{*}}declared={type=L1}
+# CHECK: variable g2 name="made" {{*}}declared={type=L2}
+# CHECK: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: L1 = NewObject -, v0 layout=L1 fields=[0]
+# CHECK: function f1 name="Maker" {{*}}thisType={type=L2}
+# RUN(RESULTS): valueflow-results
+# RESULTS: class C0 layout=L0 impossibleMutations=[{{*}}RedefineProperty
+# RESULTS: class C1 layout=L1 impossibleMutations=[
+# RESULTS-NOT: RedefineProperty
+# RESULTS: class C2 layout=L2 impossibleMutations=[{{*}}RedefineProperty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="point" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="redefined" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="made" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Redefined" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Maker" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="x"
+    v7 = Call v5, -, v3, v6, v1
+    v8 = NewClosure function=f1
+    v9 = Construct v8
+    PutModuleVariable v9 variable=g2
+    Return
+}
+function f1 name="Maker" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="x"
+    Return
+}

@@ -1,0 +1,113 @@
+# The parts of a result meet the whole result, and a way that seldom runs reads the object by name and goes on in the middle of what follows. What follows is copied only where a value that is alive at that place may come in as a parameter
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations
+# STATISTIC: TailsDuplicatedForSinking = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 module=m0 fields=[{key="high" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="low" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation] keys=NeverEnumerated addedKeysAreComplete=true}
+
+function f0 name="worker" parameters=[{type=L0}, {type=int}] results=[{type=i32}, {type=L0}, {type=int}, {type=int}] {
+  b0(v0: L0, v1: int):
+    v2 = Integer integer=1
+    v3 = Results v2, v0, v1, v1
+    Return v3
+}
+
+function f1 name="testedTwice" parameters=[{type=L0}, {type=int}] results=[{type=anything}] {
+  b0(v0: L0, v1: int):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = ResultAt v2 index=2
+    v6 = ResultAt v2 index=3
+    Switch v3 cases=[1, 2] -> case b3(v4), case b1(), otherwise b2()
+  b1():
+    v7 = NewObject -, v5, v6 layout=L0 fields=[1, 0]
+    Jump -> next b3(v7)
+  b2():
+    v8 = Null
+    Jump -> next b3(v8)
+  b3(v9: null|L0):
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(| 0), notTaken b7()
+  b4(v11: L0):
+    v12 = IsSlotFilled v11 key="high" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v12 -> taken b5(| 0), notTaken b6()
+  b5(v13: guard):
+    v14 = GetSlot v11, v13 key="high" receivers=[L0] level=Expected [holdsDeclaredType]
+    Jump -> next b8(v14)
+  b6() frequency=Unlikely:
+    v15 = PropGet v11 key="high" receivers=[L0]
+    v16 = ToBoolean v15
+    Branch v16 -> taken b8(v15), notTaken b7()
+  b7():
+    v17 = Integer integer=0
+    Jump -> next b8(v17)
+  b8(v18: anything):
+    Branch v10 -> taken b9(| 0), notTaken b12()
+  b9(v19: L0):
+    v20 = IsSlotFilled v19 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v20 -> taken b10(| 0), notTaken b11()
+  b10(v21: guard):
+    v22 = GetSlot v19, v21 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v22
+  b11() frequency=Unlikely:
+    v23 = PropGet v19 key="low" receivers=[L0]
+    Return v23
+  b12():
+    Return v18
+}
+# CHECK-LABEL: function f1 name="testedTwice"
+# CHECK: Switch v3 cases=[1, 2] -> case b3(v4), case b1(), otherwise b2()
+# CHECK: Branch v10 -> taken b9(| 0), notTaken b12()
+
+function f2 name="testedAnew" parameters=[{type=L0}, {type=int}] results=[{type=anything}] {
+  b0(v0: L0, v1: int):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = ResultAt v2 index=2
+    v6 = ResultAt v2 index=3
+    Switch v3 cases=[1, 2] -> case b3(v4), case b1(), otherwise b2()
+  b1():
+    v7 = NewObject -, v5, v6 layout=L0 fields=[1, 0]
+    Jump -> next b3(v7)
+  b2():
+    v8 = Null
+    Jump -> next b3(v8)
+  b3(v9: null|L0):
+    v10 = ToBoolean v9
+    Branch v10 -> taken b4(| 0), notTaken b7()
+  b4(v11: L0):
+    v12 = IsSlotFilled v11 key="high" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v12 -> taken b5(| 0), notTaken b6()
+  b5(v13: guard):
+    v14 = GetSlot v11, v13 key="high" receivers=[L0] level=Expected [holdsDeclaredType]
+    Jump -> next b8(v14)
+  b6() frequency=Unlikely:
+    v15 = PropGet v11 key="high" receivers=[L0]
+    v16 = ToBoolean v15
+    Branch v16 -> taken b8(v15), notTaken b7()
+  b7():
+    v17 = Integer integer=0
+    Jump -> next b8(v17)
+  b8(v18: anything):
+    v19 = ToBoolean v9
+    Branch v19 -> taken b9(| 0), notTaken b12()
+  b9(v20: L0):
+    v21 = IsSlotFilled v20 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v21 -> taken b10(| 0), notTaken b11()
+  b10(v22: guard):
+    v23 = GetSlot v20, v22 key="low" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v23
+  b11() frequency=Unlikely:
+    v24 = PropGet v20 key="low" receivers=[L0]
+    Return v24
+  b12():
+    Return v18
+}
+# CHECK-LABEL: function f2 name="testedAnew"
+# CHECK: Switch v3 cases=[1, 2] -> case [[copy]](v4), case b1(), otherwise b2()
+# CHECK: b7([[met]]: null|L0):
+# CHECK: [[copy]]([[cell]]: null|L0):
+# CHECK-NEXT: = ToBoolean [[cell]]

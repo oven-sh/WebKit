@@ -1,0 +1,63 @@
+# The strict comparison of a value with a text is one call of a stub that has the text in a register or gets its number: no cell is made or fetched for the text
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="shortTextAsValue" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ValueEqualsLiteral v0 literal="GET"
+    Return v1
+}
+# CHECK: f0: size={{*}} constants=0
+# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
+
+function f1 name="shortTextAsCondition" parameters=[{type=undefined|string}] results=[{type=i32}] {
+  b0(v0: undefined|string):
+    v1 = ValueEqualsLiteral v0 literal="GET"
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-NEXT: f1: size={{*}} constants=0
+# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
+
+function f2 name="longText" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ValueEqualsLiteral v0 literal="constructor"
+    Return v1
+}
+# CHECK-NEXT: f2: size={{*}} constants=0
+# CHECK-NEXT: stub ValueEqualsLiteral x1
+
+function f3 name="emptyText" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ValueEqualsLiteral v0 literal=""
+    Return v1
+}
+# CHECK-NEXT: f3: size={{*}} constants=0
+# CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
+
+# The operator itself, where no rule has made the row of it: the condition of a branch that passes proofs, for one.
+function f4 name="operatorBesideWrittenText" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1 form=StringAndValue
+    Return v2
+}
+# CHECK-NEXT: f4: size=
+# CHECK: stub ValueEqualsLiteralOfLength{{*}} x1
+
+function f5 name="operatorOnStringBesideWrittenText" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = String string="constructor"
+    v2 = StrictEq v0, v1 form=Strings
+    Return v2
+}
+# CHECK-NEXT: f5: size=
+# CHECK-NOT: StringsAreEqual
+# CHECK: stub StringEqualsLiteral x1
+# CHECK-NOT: StringsAreEqual

@@ -1,0 +1,61 @@
+# A parameter of an opaque kind is bound to the argument itself in the copy, without a cast. (The operations on an iterator state and an enumerator take the defining value, so neither is a parameter.)
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 3
+# CHECK: outcome: Changed
+# CHECK-NOT: Upcast
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Named" fields=[{key="a" declared={type=number}}]
+layout L1 kind=Instance name="Counter" constructor=f6 fields=[{key=#"n"@L1 declared={type=number} flags=[IsPrivate]}]
+
+function f0 name="builder" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = CallDirect v0 function=f1 [isAlwaysInlined]
+    v2 = StringBuilderFinish v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="builder"
+# CHECK: [[builder]]: stringbuilder = StringBuilderBegin
+# CHECK: = StringBuilderFinish [[builder]]
+# CHECK: [[cursor]]: buildercursor = StringBuilderReserve [[builder]] size=8
+# CHECK-NEXT: StringBuilderCommit [[builder]], [[cursor]]
+function f1 name="takesBuilder" parameters=[{type=stringbuilder}] results=[{type=undefined}] {
+  b0(v0: stringbuilder):
+    v1 = StringBuilderReserve v0 size=8
+    StringBuilderCommit v0, v1
+    Return
+}
+
+function f2 name="order" results=[{type=anything}] {
+  b0():
+    v0 = JSONObjectBegin layout=L0
+    v1 = CallDirect v0 function=f3 [isAlwaysInlined]
+    Return
+}
+# CHECK-LABEL: function f2 name="order"
+# CHECK: [[order]]: keyorder = JSONObjectBegin layout=L0
+# CHECK: = JSONObjectKey [[order]] layout=L0
+function f3 name="takesOrder" parameters=[{type=keyorder}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: keyorder):
+    v1 = JSONObjectKey v0 layout=L0 field=0
+    Return
+}
+
+function f4 name="token" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClassToken layout=L1
+    v2 = CallDirect v1, v0 function=f5 [isAlwaysInlined]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="token"
+# CHECK: [[token]]: classtoken = NewClassToken layout=L1
+# CHECK: = PrivateHas v0, [[token]] layout=L1
+function f5 name="takesToken" parameters=[{type=classtoken}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: classtoken, v1: anything):
+    v2 = PrivateHas v1, v0 layout=L1 field=0
+    Return v2
+}
+function f6 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

@@ -1,0 +1,33 @@
+# With SlotStoreRun and PropertyRun disabled every store stays an operation of its own
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot disable=rule:SlotStoreRun,rule:PropertyRun
+# STATISTIC: SlotStoreRunGroups = 0
+# STATISTIC: PropertyRunGroups = 0
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="y" declared={type=number}}, {key="w" declared={type=number}}] flow={members=[L0]}
+function f0 name="two-adding-stores" parameters=[{type=L0}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number, v2: number):
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v2 key="w" receivers=[L0] level=Proven
+    Return v0
+}
+# CHECK-LABEL: function f0 name="two-adding-stores"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="y"
+# CHECK-NEXT: PutSlotOrAdd v0, -, v2 key="w"
+# CHECK-NEXT: Return v0
+function f1 name="three-stores-by-name" parameters=[{type=object}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything, v2: anything, v3: anything):
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v2 key="b" mode=Strict
+    PropSet v0, v3 key="c" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f1 name="three-stores-by-name"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v1 key="a"
+# CHECK-NEXT: PropSet v0, v2 key="b"
+# CHECK-NEXT: PropSet v0, v3 key="c"
+# CHECK-NEXT: Return v0

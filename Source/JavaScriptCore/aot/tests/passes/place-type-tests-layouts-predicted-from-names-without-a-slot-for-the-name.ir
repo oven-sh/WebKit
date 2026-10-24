@@ -1,0 +1,41 @@
+# A field that nothing stores and nothing reads has no slot. A layout that has a name only as such a field is not among the layouts that the name predicts, alone or beside one that holds the name: no access by slot names the field
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Letter" constructor=f3 fields=[{key="note" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Sensor" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=undefined|string} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}, {key="extra" declared={type=undefined|number} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}] flow={baseState=None}
+
+function f0 name="oneLayoutHoldsTheName" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="note"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="oneLayoutHoldsTheName"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: L1
+# CHECK: = GetSlot {{*}} key="note" receivers=[L0] level=Expected
+# CHECK-NOT: L1
+# CHECK: = PropGet v0 key="note"
+
+function f1 name="noLayoutHoldsTheName" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="extra"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="noLayoutHoldsTheName"
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="extra"
+
+function f2 name="theOtherNameIsHeld" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="theOtherNameIsHeld"
+# CHECK: = GetSlot {{*}} key="x" receivers=[L1] level=Expected
+
+function f3 name="Letter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="Sensor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

@@ -1,0 +1,103 @@
+# Summaries decide whether an argument of a direct call escapes, and without them every argument escapes
+# FORM: AsRead
+# RUN(FLOW): analyses escape flow function=f0
+# RUN(NOFLOW): analyses escape function=f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point"
+layout L1 name="Node" fields=[{key="leaf" declared={type=anything}}]
+variable g0 name="retained" declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = CallDirect v0 function=f1
+    v2 = NewObject layout=L0 fields=[]
+    v3 = CallDirect v2 function=f2
+    v4 = NewObject layout=L0 fields=[]
+    v5 = CallDirect v4 function=f3
+    v6 = TypeTest v5 testedType=object
+    v7 = NewObject layout=L1 fields=[]
+    v8 = NewObject layout=L0 fields=[]
+    v9 = CallDirect v7, v8 function=f4
+    v10 = NewObject layout=L1 fields=[]
+    v11 = NewObject layout=L0 fields=[]
+    v12 = CallDirect v10, v11 function=f4
+    PutModuleVariable v10 variable=g0
+    Return v6
+}
+function f1 name="inspects" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=object
+    Return v1
+}
+function f2 name="retains" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="returnsArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="storesArgumentInReceiver" flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="leaf" mode=Strict
+    Return
+}
+# FLOW: function f0
+# FLOW: escape:
+# FLOW: objects: 7
+# FLOW: o0 definition: v0
+# FLOW: o0 state: DoesNotEscape
+# FLOW: o0 reasons: []
+# FLOW: o0 first escape: none
+# FLOW: o0 uses: [Inspects]
+# FLOW: o0 object uses: [v1(0)]
+# FLOW: o0 escaping uses: []
+# FLOW: o1 definition: v2
+# FLOW: o1 state: Escapes
+# FLOW: o1 reasons: [RetainedByCallee]
+# FLOW: o1 first escape: v3(0)
+# FLOW: o1 escaping uses: [v3(0)]
+# FLOW: o2 definition: v4
+# FLOW: o2 state: DoesNotEscape
+# FLOW: o2 uses: [Inspects]
+# FLOW: o2 aliases: [v4 v5]
+# FLOW: o2 escaping uses: []
+# FLOW: o3 definition: v7
+# FLOW: o3 state: DoesNotEscape
+# FLOW: o3 escaping uses: []
+# FLOW: o3 contents: [o4]
+# FLOW: o4 definition: v8
+# FLOW: o4 state: DoesNotEscape
+# FLOW: o4 reasons: []
+# FLOW: o4 first escape: none
+# FLOW: o4 uses: [Inspects Retains]
+# FLOW: o4 escaping uses: []
+# FLOW: o4 containers: [o3]
+# FLOW: o5 definition: v10
+# FLOW: o5 state: Escapes
+# FLOW: o5 reasons: [StoredInUnknownMemory]
+# FLOW: o5 first escape: v13(0)
+# FLOW: o5 contents: [o6]
+# FLOW: o6 definition: v11
+# FLOW: o6 state: Escapes
+# FLOW: o6 reasons: [StoredInEscapingObject]
+# FLOW: o6 first escape: v12(1)
+# FLOW: o6 containers: [o5]
+# FLOW: v5 points to: [o2]
+# FLOW: v5 may be untracked: yes
+# NOFLOW: function f0
+# NOFLOW: objects: 7
+# NOFLOW: o0 state: Escapes
+# NOFLOW: o0 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
+# NOFLOW: o0 first escape: v1(0)
+# NOFLOW: o1 state: Escapes
+# NOFLOW: o1 first escape: v3(0)
+# NOFLOW: o2 state: Escapes
+# NOFLOW: o2 first escape: v5(0)
+# NOFLOW: o3 state: Escapes
+# NOFLOW: o3 first escape: v9(0)
+# NOFLOW: o4 state: Escapes
+# NOFLOW: o4 first escape: v9(1)

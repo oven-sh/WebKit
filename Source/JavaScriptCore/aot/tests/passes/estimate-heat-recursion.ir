@@ -1,0 +1,133 @@
+# A recursive function runs ten times what enters its cycle, however it calls itself, and stays below what a loop kernel calls
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f1 RunsOnce [[percentileOfKernel]] 1
+# CHECK-NEXT: f2 Hot 94 100
+# CHECK-NEXT: f3 Hot 94 100
+# CHECK-NEXT: f4 Warm [[percentileOfInspect]] 10
+# CHECK-NEXT: f5 Warm [[percentileOfFormat]] 10
+# CHECK-NEXT: f6 RunsOnce [[percentileOfInspectOnce]] 1
+# CHECK-NEXT: f7 RunsOnce [[percentileOfFormatOnce]] 1
+# CHECK-NEXT: f8 Warm [[percentileOfLoop]] 10
+# CHECK-NEXT: f9 Warm [[percentileOfIsEven]] 10
+# CHECK-NEXT: f10 Warm [[percentileOfIsOdd]] 5
+# CHECK: hottest: f2 f3 f8 f1 f5 f4 f9 f10 f0 f7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f4
+    v3 = CallDirect v0 function=f6
+    v4 = CallDirect v0 function=f8
+    v5 = CallDirect v0 function=f9
+    Return
+}
+
+function f1 name="kernel" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = CallDirect v0 function=f2
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return v0
+}
+
+function f2 name="step" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+
+function f3 name="score" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="inspect" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f4
+    Jump -> next b2()
+  b2():
+    v3 = CallDirect v0 function=f5
+    Return v3
+}
+
+function f5 name="format" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f6 name="inspectWithoutRecursion" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = LogicalNot v1
+    Jump -> next b2()
+  b2():
+    v3 = CallDirect v0 function=f7
+    Return v3
+}
+
+function f7 name="formatWithoutRecursion" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f8 name="callsItselfInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f8
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+
+function f9 name="isEven" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f10
+    Return v2
+  b2():
+    Return v0
+}
+
+function f10 name="isOdd" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f9
+    Return v2
+  b2():
+    Return v0
+}

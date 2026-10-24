@@ -1,0 +1,32 @@
+# With the pass switched off every environment stays an object
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: disable=pass:PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 0
+# STATISTIC: CapturesPromotedToVariables = 0
+# CHECK-NOT: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key=@"x.0" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v1 function=f1
+    v4 = Call v1, -, v3
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[scope]]: env L0 = NewObject -, v1 layout=L0
+# CHECK-NEXT: = NewClosure [[scope]], v1 function=f1
+
+function f1 name="reads" captures=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = StrictEq v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f1 name="reads"{{*}}captures=[{type=env L0}, {type=

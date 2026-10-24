@@ -1,0 +1,88 @@
+# function fill(key) { const read: Record<string, number> = { a: 1, b: 2 }; const grown: Record<string, number> = { a: 1, b: 2 }; grown[key] = 3; const shrunk: Record<string, number> = { a: 1 }; delete shrunk[key];
+#   const plain = { a: 1 }; plain[key] = 3; const tested: Record<string, number> = { c: 1 }; tested[key] = 3; const beside: Record<string, number> = { a: 1, d: 2 }; beside[key] = 3;
+#   return [read.a, grown.a, shrunk.a, plain.a, isTested(tested), isPlainOrBeside(beside)] }
+# The type allows any name, and the names that the literal has are written: it has their layout, which the front end marks, and its members are defined behind the allocation.
+# Nothing is added to the objects of L0 and nothing is taken from them: they stay records, and `read.a` knows its receiver.
+# A name that nobody knows may be added to those of L1 and taken from those of L2: they are used as the type allows, and their literals make ordinary objects. No access expects the layout from there on, and nothing has it.
+# L3 is not marked: no type says that it is a map, so it stays what it is.
+# A test can find a layout, and nothing of an ordinary object. L5 is marked and grows, and a test looks for it beside L3: its literal makes an ordinary object, and the test stops looking for a layout that nothing has.
+# A test for L3 finds every layout that has its names, and none that is marked: to the program those are maps, whatever names they have.
+# L4 is marked and grows, and a test looks for it alone: the test would look for nothing at all, so the layout stays.
+# RUN: valueflow-apply
+# CHECK: layout L1 {{*}}allocation=NeverAllocated
+# CHECK: layout L2 {{*}}allocation=NeverAllocated
+# CHECK: layout L5 {{*}}allocation=NeverAllocated
+# CHECK: function f1
+# CHECK: [[read]]: L0 = NewObject layout=L0
+# CHECK: L0 = FinishObject [[read]]
+# CHECK: [[grown]]: object = NewDictionary
+# CHECK-NEXT: [[grownObject]]: Object = AssumeType [[grown]] castType=Object
+# CHECK: PropDefine [[grownObject]], {{*}}key="a"
+# CHECK: PropDefine [[grownObject]], {{*}}key="b"
+# CHECK-NOT: FinishObject [[grownObject]]
+# CHECK: [[shrunk]]: object = NewDictionary
+# CHECK: L3 = NewObject {{*}}layout=L3
+# CHECK: L4 = NewObject layout=L4
+# CHECK: [[beside]]: object = NewDictionary
+# CHECK: TypeTest {{*}}testedType=L4
+# CHECK: false = TypeTest {{*}}testedType=L3
+# CHECK: PropGet {{*}}key="a" {{*}}receivers=[L0]
+# CHECK-NOT: receivers=[L1
+# CHECK-NOT: receivers=[L2
+# CHECK: Return
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
+layout L1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
+layout L2 fields=[{key="a" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
+layout L3 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+layout L4 fields=[{key="c" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
+layout L5 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="k"
+    v2 = String string="l"
+    v3 = Add v1, v2
+    v4 = Call v0, -, v3
+    Return
+}
+function f1 name="fill" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = NewObject layout=L0
+    PropDefine v3, v1 key="a"
+    PropDefine v3, v2 key="b"
+    v6 = FinishObject v3
+    v7 = NewObject layout=L1
+    PropDefine v7, v1 key="a"
+    PropDefine v7, v2 key="b"
+    v10 = FinishObject v7
+    ElemSet v10, v0, v2 mode=Strict
+    v12 = NewObject layout=L2
+    PropDefine v12, v1 key="a"
+    v14 = FinishObject v12
+    v15 = ElemDelete v14, v0 mode=Strict
+    v16 = NewObject -, v1 layout=L3 fields=[0]
+    v17 = FinishObject v16
+    ElemSet v17, v0, v2 mode=Strict
+    v19 = NewObject layout=L4
+    PropDefine v19, v1 key="c"
+    v21 = FinishObject v19
+    ElemSet v21, v0, v2 mode=Strict
+    v23 = NewObject layout=L5
+    PropDefine v23, v1 key="a"
+    PropDefine v23, v2 key="d"
+    v26 = FinishObject v23
+    ElemSet v26, v0, v2 mode=Strict
+    v28 = TypeTest v21 testedType=L4
+    v29 = TypeTest v26 testedType=L3|L5
+    v30 = PropGet v6 key="a"
+    v31 = PropGet v10 key="a"
+    v32 = PropGet v14 key="a"
+    v33 = PropGet v17 key="a"
+    v34 = NewArray v30, v31, v32, v33, v28, v29 contents=anything
+    Return v34
+}

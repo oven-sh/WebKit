@@ -1,0 +1,47 @@
+# Inside a function two exact accesses are compared by location; a call is compared by the mask of its summary, so this file needs keys "a" and "b" whose mask bits differ
+# FORM: Prepared
+# RUN: write-overlap summaries f0
+# RUN(PLAIN): write-overlap f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+variable g0 name="total" declared={type=number} initialization=Undefined
+function f0 name="writers" parameters=[{type=L0}, {type=number}, {type=object}] results=[{type=number}] {
+  b0(v0: L0, v1: number, v2: object):
+    v3 = GetSlot v0 key="a" receivers=[L0] level=Proven
+    PutSlot v0, -, v1 key="a" receivers=[L0] level=Proven
+    PutSlot v0, -, v1 key="b" receivers=[L0] level=Proven
+    v6 = CallDirect v0, v1 function=f1
+    v7 = CallDirect v0, v1 function=f2
+    v8 = ScopeHasBinding v2 key="a"
+    PutModuleVariable v1 variable=g0
+    Return v3
+}
+# CHECK: v4 on v3: Exact
+# CHECK-NEXT: v5 on v3: None
+# CHECK-NEXT: v6 on v3: None
+# CHECK-NEXT: v7 on v3: May
+# CHECK-NEXT: v8 on v3: May
+# CHECK-NEXT: v9 on v3: None
+# CHECK-NOT: v3 on
+# CHECK: v6 on v5: May
+# CHECK-NEXT: v7 on v5: None
+# CHECK-NOT: v3 on
+# CHECK: v7 on v9: None
+# CHECK-NEXT: v8 on v9: May
+# PLAIN: v4 on v3: Exact
+# PLAIN-NEXT: v5 on v3: None
+# PLAIN-NEXT: v6 on v3: May
+# PLAIN-NEXT: v7 on v3: May
+# PLAIN-NEXT: v8 on v3: May
+# PLAIN-NEXT: v9 on v3: None
+function f1 name="writesB" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlot v0, -, v1 key="b" receivers=[L0] level=Proven
+    Return
+}
+function f2 name="writesA" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlot v0, -, v1 key="a" receivers=[L0] level=Proven
+    Return
+}

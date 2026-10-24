@@ -1,0 +1,25 @@
+# What the trials of a copied tail cost is not taken from the work of the analysis. This limit is enough for the analysis, which finds that one object is only read; the object that is built behind the merge asks for a trial, and behind it the first object is still removed
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:140
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="oneIsBuiltBehindAMergeAndOneIsOnlyRead" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: number):
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v3
+    v8 = Call v1, -, v4, v7
+    v9 = PropGet v5 key="x" receivers=[L0]
+    Return v9
+}

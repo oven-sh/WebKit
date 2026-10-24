@@ -1,0 +1,123 @@
+# `new` of a callee that nobody knows makes the object of a constructor function and hands it to the general version as `this`, with the mark that its fields are not all stored.
+# So the tests in front of the stores ask the order word, and the mark is taken off behind the store that fills the last field: whatever others have done to the object before,
+# every field of birth has been stored since and none lies outside its slot. Where other code runs between the stores the run time looks. A method is not entered by `new`.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FinishBirths
+# STATISTIC: BirthsFinished = 2
+# STATISTIC: BirthsLeftToRunTime = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Reply" fields=[{key="raw" declared={type=anything} flow={occupancy=FilledAtBirth}}, {key="log" declared={type=anything} flow={occupancy=FilledAtBirth}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="State" fields=[{key="writer" declared={type=anything}}]
+
+function f0 name="enteredByNew" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: L0):
+    v5 = HasNoFieldOutsideSlot v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    PutSlotOrAdd v4, v6, v1 key="raw" receivers=[L0] level=Expected
+    PutSlotOrAdd v4, v6, v1 key="log" receivers=[L0] level=Expected
+    Jump -> next b4()
+  b3():
+    PropSet v0, v1 key="raw"
+    PropSet v0, v1 key="log"
+    Jump -> next b4()
+  b4():
+    Return v2
+}
+# CHECK-LABEL: name="enteredByNew"
+# CHECK: = HasNoFieldOutsideSlot v4 [mayMeetUnfinishedObject]
+# CHECK: PutSlotOrAdd v4, v6, v1 key="log"
+# CHECK-NEXT: FinishBirth v4
+# CHECK-NEXT: Jump
+# CHECK: PropSet v0, v1 key="log"
+# CHECK-NEXT: Jump
+
+function f1 name="otherCodeRunsBetweenTheStores" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4: L0):
+    v5 = HasNoFieldOutsideSlot v4
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6):
+    PutSlotOrAdd v4, v6, v1 key="raw" receivers=[L0] level=Expected
+    v8 = Call v1
+    v9 = HasNoFieldOutsideSlot v4
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    PutSlotOrAdd v4, v10, v8 key="log" receivers=[L0] level=Expected
+    Return v2
+  b4():
+    PropSet v0, v8 key="log"
+    Return v2
+  b5():
+    PropSet v0, v1 key="raw"
+    v14 = Call v1
+    PropSet v0, v14 key="log"
+    Return v2
+}
+# CHECK-LABEL: name="otherCodeRunsBetweenTheStores"
+# CHECK: PutSlotOrAdd v4, v10, v8 key="log"
+# CHECK-NEXT: TryFinishBirth v4
+# CHECK-NEXT: Return v2
+
+function f2 name="aMethod" kind=Method flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: L0):
+    v5 = HasNoFieldOutsideSlot v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    PutSlotOrAdd v4, v6, v1 key="raw" receivers=[L0] level=Expected
+    PutSlotOrAdd v4, v6, v1 key="log" receivers=[L0] level=Expected
+    Return v2
+  b3():
+    PropSet v0, v1 key="raw"
+    PropSet v0, v1 key="log"
+    Return v2
+}
+# CHECK-LABEL: name="aMethod"
+# CHECK: = HasNoFieldOutsideSlot v4
+# CHECK-NOT: mayMeetUnfinishedObject
+# CHECK: PutSlotOrAdd v4, v6, v1 key="log"
+# CHECK-NEXT: Return v2
+
+function f3 name="State" parameters=[{type=anything}] results=[{type=L1}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}
+function f4 name="handsThisToAConstruction" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = CallDirect v0 function=f3 [isConstruction]
+    v4 = TypeTest v0 testedType=L0
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5: L0):
+    v6 = HasNoFieldOutsideSlot v5
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    PutSlotOrAdd v5, v7, v3 key="raw" receivers=[L0] level=Expected
+    PutSlotOrAdd v5, v7, v1 key="log" receivers=[L0] level=Expected
+    Return v2
+  b3():
+    PropSet v0, v3 key="raw"
+    PropSet v0, v1 key="log"
+    Return v2
+}
+# `this.raw = new State(this)`: in front of its test `this` is any value, and nobody looks at that.
+# CHECK-LABEL: name="handsThisToAConstruction"
+# CHECK: = CallDirect v0 function=f3 [isConstruction]
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: PutSlotOrAdd v5, v7, v1 key="log"
+# CHECK-NEXT: FinishBirth v5

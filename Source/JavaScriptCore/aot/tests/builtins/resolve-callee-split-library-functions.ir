@@ -1,0 +1,42 @@
+# A method implemented in JavaScript gets an arm of the split on the callee only where its library function is compiled: without a body behind it the arm would end in the same call as the generic path
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneOfThreeIsCompiled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0 calleeKey="return"
+    Return v2
+}
+# CHECK-LABEL: function f0 name="oneOfThreeIsCompiled"
+# CHECK: v1: anything = PropGet v0 key="return"
+# CHECK-NOT: IteratorHelperPrototypeReturn
+# CHECK: [[isReturn]]: boolean = TypeTest v1 testedType=builtin(WrapForValidIteratorPrototypeReturn)
+# CHECK-NEXT: Branch [[isReturn]] -> taken [[arm]](| 0), notTaken [[rest]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[arm]]({{*}}: builtin(WrapForValidIteratorPrototypeReturn)):
+# CHECK-NEXT: anything = CallBuiltin v0 overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: TypeTest
+# CHECK: [[rest]]([[other]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[other]], v0 calleeKey="return"
+
+function f1 name="noneIsCompiled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="throw"
+    v2 = Call v1, v0 calleeKey="throw"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="noneIsCompiled"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = Call v1, v0 calleeKey="throw"
+# CHECK-NEXT: Return v2
+
+function f2 name="returnOfIteratorHelper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}]
+function f3 name="returnOfWrapper" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+runtimefunction id=87 function=f2
+runtimefunction id=88 function=f3

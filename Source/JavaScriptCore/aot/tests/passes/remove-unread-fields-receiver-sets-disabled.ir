@@ -1,0 +1,20 @@
+# Without flow's receiver sets an access by name says nothing about the layouts it reaches, so no field goes
+# FORM: Prepared
+# OPTIONS: disable=flow:ReceiverSets
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="NeverRead" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="NeverRead" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+
+function f0 name="builds" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutSlot v1, v1, v0 key="id" receivers=[L0] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f0 name="builds"
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PutSlot v1, v1, v0 key="id"

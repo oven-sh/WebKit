@@ -1,0 +1,307 @@
+# Every write at a builder cursor has its bytes reserved, and no cursor is used after an operation that can move the buffer
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: BuilderCapacityExceeded 8
+# DIAGNOSTIC: BuilderCursorUsedAfterMove 11
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodStraightLine" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=40
+    v2 = JSONAppendKey v0, v1 string="x" [opensObject]
+    v3 = Integer integer=1
+    v4 = JSONAppendInteger v0, v2, v3
+    v5 = JSONAppendToken v0, v4 jsonToken=CloseObject
+    StringBuilderCommit v0, v5
+    v7 = StringBuilderFinish v0
+    Return v7
+}
+function f1 name="goodStringRenewsReservation" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2
+    v4 = JSONAppendString v2, v3, v0
+    v5 = JSONAppendNumber v2, v4, v1
+    v6 = JSONAppendNumber v2, v5, v1
+    StringBuilderCommit v2, v6
+    v8 = StringBuilderFinish v2
+    Return v8
+}
+function f2 name="goodValueRenewsReservation" parameters=[{type=anything}, {type=number}] results=[{type=string}] {
+  b0(v0: anything, v1: number):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=40
+    v4 = JSONAppendValue v2, v3, v0 jsonPosition=Element
+    v5 = ResultAt v4 index=1
+    v6 = JSONAppendNumber v2, v5, v1
+    v7 = JSONAppendNumber v2, v6, v1
+    StringBuilderCommit v2, v7
+    v9 = StringBuilderFinish v2
+    Return v9
+}
+function f3 name="goodMergeOfReservations" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = StringBuilderReserve v1 size=64
+    Jump -> next b3(v2)
+  b2():
+    v3 = StringBuilderReserve v1 size=24
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Integer integer=1
+    v6 = JSONAppendInteger v1, v4, v5
+    StringBuilderCommit v1, v6
+    v8 = StringBuilderFinish v1
+    Return v8
+}
+function f4 name="goodLoopReservesInBody" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    StringBuilderCommit v1, v3
+    v6 = StringBuilderReserve v1 size=24
+    v7 = Integer integer=1
+    v8 = JSONAppendInteger v1, v6, v7
+    Branch v0 -> taken b1(v8), notTaken b2()
+  b2():
+    StringBuilderCommit v1, v8
+    v10 = StringBuilderFinish v1
+    Return v10
+}
+function f5 name="goodTwoArmsFromOneCursor" parameters=[{type=boolean}, {type=number}] results=[{type=string}] {
+  b0(v0: boolean, v1: number):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=48
+    v4 = JSONAppendToken v2, v3 jsonToken=OpenArray
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v5 = JSONAppendDate v2, v4, v1
+    Jump -> next b3(v5)
+  b2():
+    v6 = JSONAppendBoolean v2, v4, v0
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = JSONAppendToken v2, v7 jsonToken=CloseArray
+    StringBuilderCommit v2, v8
+    v10 = StringBuilderFinish v2
+    Return v10
+}
+function f6 name="badNothingReserved" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0
+    v2 = JSONAppendToken v0, v1 jsonToken=Null
+    StringBuilderCommit v0, v2
+    v4 = StringBuilderFinish v0
+    Return v4
+}
+function f7 name="badSecondNumberDoesNotFit" parameters=[{type=number}] results=[{type=string}] {
+  b0(v0: number):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=56
+    v3 = JSONAppendNumber v1, v2, v0
+    v4 = JSONAppendNumber v1, v3, v0
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f8 name="badKeyLongerThanReservation" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=8
+    v2 = JSONAppendKey v0, v1 string="abcdefgh" [opensObject]
+    StringBuilderCommit v0, v2
+    v4 = StringBuilderFinish v0
+    Return v4
+}
+function f9 name="badKeyWithoutLatin1Form" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=4096
+    v2 = JSONAppendKey v0, v1 string="\xe6\x97\xa5\xe6\x9c\xac" [opensObject]
+    StringBuilderCommit v0, v2
+    v4 = StringBuilderFinish v0
+    Return v4
+}
+function f10 name="badValueWithoutRoomForNumber" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=24
+    v3 = JSONAppendValue v1, v2, v0 jsonPosition=Element
+    v4 = ResultAt v3 index=1
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f11 name="badMergeTakesMinimum" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = StringBuilderReserve v1 size=64
+    Jump -> next b3(v2)
+  b2():
+    v3 = StringBuilderReserve v1 size=8
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Integer integer=1
+    v6 = JSONAppendInteger v1, v4, v5
+    StringBuilderCommit v1, v6
+    v8 = StringBuilderFinish v1
+    Return v8
+}
+function f12 name="badArmLeavesLess" parameters=[{type=boolean}, {type=number}] results=[{type=string}] {
+  b0(v0: boolean, v1: number):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=40
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = JSONAppendDate v2, v3, v1
+    Jump -> next b3(v4)
+  b2():
+    v5 = JSONAppendBoolean v2, v3, v0
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = JSONAppendToken v2, v6 jsonToken=Comma
+    v8 = JSONAppendToken v2, v7 jsonToken=Null
+    StringBuilderCommit v2, v8
+    v10 = StringBuilderFinish v2
+    Return v10
+}
+function f13 name="badBackEdgeBringsLess" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=4096
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Integer integer=1
+    v6 = JSONAppendInteger v1, v3, v5
+    Branch v0 -> taken b1(v6), notTaken b2()
+  b2():
+    StringBuilderCommit v1, v6
+    v8 = StringBuilderFinish v1
+    Return v8
+}
+function f14 name="badAfterSecondReserve" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=64
+    v2 = StringBuilderReserve v0 size=64
+    v3 = JSONAppendToken v0, v1 jsonToken=Null
+    StringBuilderCommit v0, v3
+    v5 = StringBuilderFinish v0
+    Return v5
+}
+function f15 name="badAfterString" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    v3 = JSONAppendString v1, v2, v0
+    v4 = JSONAppendToken v1, v2 jsonToken=Comma
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f16 name="badAfterValue" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    v3 = JSONAppendValue v1, v2, v0 jsonPosition=Element
+    v4 = JSONAppendToken v1, v2 jsonToken=Comma
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f17 name="badAfterCommit" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=64
+    StringBuilderCommit v0, v1
+    v3 = JSONAppendToken v0, v1 jsonToken=Null
+    v4 = StringBuilderFinish v0
+    Return v4
+}
+function f18 name="badCommittedTwice" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=64
+    StringBuilderCommit v0, v1
+    StringBuilderCommit v0, v1
+    v4 = StringBuilderFinish v0
+    Return v4
+}
+function f19 name="badAfterAppend" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    StringBuilderAppend v1, v0
+    v4 = JSONAppendToken v1, v2 jsonToken=Null
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f20 name="badAfterUnknownCall" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    v3 = Call v0
+    v4 = JSONAppendToken v1, v2 jsonToken=Null
+    StringBuilderCommit v1, v4
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f21 name="badAfterFinish" results=[{type=string}] {
+  b0():
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=64
+    v2 = StringBuilderFinish v0
+    v3 = JSONAppendToken v0, v1 jsonToken=Null
+    Return v2
+}
+function f22 name="badAfterReserveInOneArm" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    StringBuilderCommit v1, v2
+    v4 = StringBuilderReserve v1 size=64
+    StringBuilderCommit v1, v4
+    Jump -> next b2()
+  b2():
+    v6 = JSONAppendToken v1, v2 jsonToken=Null
+    StringBuilderCommit v1, v6
+    v8 = StringBuilderFinish v1
+    Return v8
+}
+function f23 name="badCursorFromBeforeLoop" parameters=[{type=boolean}] results=[{type=string}] {
+  b0(v0: boolean):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=128
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = JSONAppendToken v1, v2 jsonToken=Comma
+    StringBuilderCommit v1, v4
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    v6 = StringBuilderFinish v1
+    Return v6
+}
+function f24 name="badStaleCursorOnEdge" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=64
+    v3 = Call v0
+    Jump -> next b1(v2)
+  b1(v4):
+    v5 = StringBuilderFinish v1
+    Return v5
+}

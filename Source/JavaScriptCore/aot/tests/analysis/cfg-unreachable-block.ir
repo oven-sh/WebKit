@@ -1,0 +1,58 @@
+# An unreachable block is no node and no predecessor and holds no use
+# FORM: Prepared
+# RUN: analyses control-flow dominators use-lists liveness value-dominance
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unreachableBlock" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v1 = Integer integer=2
+    Jump -> next b3(v0)
+  b3(v2):
+    Return v2
+}
+# CHECK: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b3]
+# CHECK-NEXT: unreachable: [b2]
+# CHECK-NEXT: b0 successors: [b1]
+# CHECK-NEXT: b0 predecessors: []
+# CHECK-NEXT: b0 incoming edges: []
+# CHECK-NEXT: b0 single incoming edge: none
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b1 successors: [b3]
+# CHECK-NEXT: b1 predecessors: [b0]
+# CHECK-NEXT: b1 incoming edges: [b0.0]
+# CHECK-NEXT: b1 single incoming edge: b0.0
+# CHECK-NEXT: b1 handler: none
+# CHECK-NEXT: b3 successors: []
+# CHECK-NEXT: b3 predecessors: [b1]
+# CHECK-NEXT: b3 incoming edges: [b1.0]
+# CHECK-NEXT: b3 single incoming edge: b1.0
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b3]
+# CHECK-NEXT: b3 idom: b1
+# CHECK-NEXT: b3 children: []
+# CHECK-NEXT: use-lists:
+# CHECK-NEXT: v0 location: b0 value 0
+# CHECK-NEXT: v0 uses: [b1.0(0)]
+# CHECK-NEXT: v0 use points: [b1:0]
+# CHECK-NEXT: v2 location: b3 parameter 0
+# CHECK-NEXT: v2 uses: [b3.terminator(0)]
+# CHECK-NEXT: v2 use points: [b3:0]
+# CHECK-NEXT: detached: [v1]
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0]
+# CHECK-NEXT: b3 live at head: []
+# CHECK-NEXT: value-dominance:
+# CHECK-NEXT: v0 available at head of: [b1 b3]
+# CHECK-NEXT: v2 available at head of: [b3]

@@ -1,0 +1,75 @@
+# The rest array a direct call creates has what the callee's rest parameter promises. Nothing is tested at the call: where the contents are proven, whoever proved them saw this call, and each element is taken to have their type
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="anything-rest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    Return
+}
+function f1 name="proven-numbers" flags=[HasRestParameter] parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven>):
+    Return
+}
+function f2 name="expected-numbers" flags=[HasRestParameter] parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    Return
+}
+function f3 name="not-an-array" flags=[HasRestParameter] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+
+function f4 name="arguments-past-the-positional-ones" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = Call v0, -, v1, v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="arguments-past-the-positional-ones"
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: [[rest]]: Array = NewArray v2, v1
+# CHECK-NEXT: = CallDirect v1, [[rest]] function=f0
+function f5 name="element-inside-proven-contents" parameters=[{type=f1}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1, v1: number):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="element-inside-proven-contents"
+# CHECK-NEXT: b0(v0: f1, v1: number):
+# CHECK-NEXT: = NewArray v1 contents=number
+# CHECK-NOT: Check
+# CHECK: [[insideRest]]: Array<number, proven> =
+# CHECK-NEXT: = CallDirect [[insideRest]] function=f1
+function f6 name="element-outside-proven-contents" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f1, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="element-outside-proven-contents"
+# CHECK-NEXT: b0(v0: f1, v1: anything):
+# CHECK-NEXT: [[element]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: = NewArray [[element]] contents=number
+# CHECK-NOT: Check
+# CHECK: [[outsideRest]]: Array<number, proven> =
+# CHECK-NEXT: = CallDirect [[outsideRest]] function=f1
+function f7 name="element-outside-expected-contents" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f2, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="element-outside-expected-contents"
+# CHECK-NEXT: b0(v0: f2, v1: anything):
+# CHECK-NEXT: [[unchecked]]: Array<number> = NewArray v1 contents=number
+# CHECK-NEXT: = CallDirect [[unchecked]] function=f2
+function f8 name="rest-type-without-arrays" parameters=[{type=f3}] results=[{type=anything}] {
+  b0(v0: f3):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f8 name="rest-type-without-arrays"
+# CHECK-NEXT: b0(v0: f3):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

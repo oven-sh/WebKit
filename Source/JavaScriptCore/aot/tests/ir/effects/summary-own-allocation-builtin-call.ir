@@ -1,0 +1,21 @@
+# A built-in that writes the contents of its receiver writes nothing a caller sees when the receiver is the activation's own allocation
+# TODO: nobody: a built-in call on a Map that the function itself allocated counts as a write its caller can see
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fillsOwnMap" parameters=[{type=number}] results=[{type=Map}] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = CallBuiltin -, v1 overload=Map/1
+    v3 = CallBuiltin v2, v0, v0 overload=MapPrototypeSet/0
+    Return v2
+}
+# CHECK: f0 return: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects throw: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+function f1 name="fillsParameterMap" parameters=[{type=Map}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Map, v1: number):
+    v2 = CallBuiltin v0, v1, v1 overload=MapPrototypeSet/0
+    Return
+}
+# CHECK: f1 return: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects throw: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects p0: [{{*}}]{{*}} writes(CollectionStorage, CollectionEntries)
+# CHECK-LABEL: function f0

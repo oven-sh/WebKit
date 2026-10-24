@@ -1,0 +1,87 @@
+# Payload fields of selected operations that contradict the allocation or the purpose of their value
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badOtherStorage" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v3 = Integer integer=0
+    v4 = TryPutByValDirect v2, v3, v1 arrayStorage=Double
+    Return
+}
+function f1 name="badNoAllocation" parameters=[{type=Array<anything>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: number):
+    v2 = Integer integer=0
+    v3 = TryPutByValDirect v0, v2, v1 arrayStorage=Double
+    Return
+}
+function f2 name="badOtherAllocation" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewArray contents=anything
+    v2 = Integer integer=0
+    v3 = TryPutByValDirect v1, v2, v0 arrayStorage=Double
+    Return
+}
+function f3 name="goodSameStorage" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = NewArrayWithCapacity v0 arrayStorage=Double
+    v3 = Integer integer=0
+    v4 = TryPutByValDirect v2, v3, v1 arrayStorage=Double
+    Return
+}
+function f4 name="goodThroughCasts" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: Array<anything>, v2: number):
+    v3 = NewArrayLike v0, v1 arrayStorage=Double
+    v4 = Upcast v3 castType=anything
+    v5 = AssumeType v4 castType=Array<anything>
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
+    Return
+}
+function f5 name="goodUnknownStorage" parameters=[{type=Array<anything>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<anything>, v1: number):
+    v2 = Integer integer=0
+    v3 = TryPutByValDirect v0, v2, v1
+    Return
+}
+function f6 name="badComparison" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = IntegerBound v0 comparison=Add
+    Return
+}
+function f7 name="goodComparisons" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = IntegerBound v0 comparison=Less
+    v2 = IntegerBound v0 comparison=LessEq
+    v3 = IntegerBound v0 comparison=Greater
+    v4 = IntegerBound v0 comparison=GreaterEq
+    Return
+}
+function f8 name="goodThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: int[0, 100], v2: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArrayWithCapacity v1 arrayStorage=Double
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArrayWithCapacity v1 arrayStorage=Double
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
+    Return
+}
+function f9 name="allocates" role=OutlinedBody parameters=[{type=int[0, 100]}] results=[{type=Array}] {
+  b0(v0: int[0, 100]):
+    v1 = NewArrayWithCapacity v0 arrayStorage=Double
+    Return v1
+}
+function f10 name="goodThroughOutlinedBody" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = CallDirect v0 function=f9
+    v3 = Integer integer=0
+    v4 = TryPutByValDirect v2, v3, v1 arrayStorage=Double
+    Return
+}
