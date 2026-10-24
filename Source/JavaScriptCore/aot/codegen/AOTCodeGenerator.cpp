@@ -411,8 +411,33 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 void CodeGenerator::finishProcedure()
 {
     m_heaps.computeRangesAndDecorateInstructions();
+    if (m_placesCellsInFrame)
+        keepReadsBehindBirthsOfCellsInFrame();
     m_proc.deleteOrphans();
     m_out.applyBlockOrder();
+}
+
+// A cell in the frame is filled again each time the code that makes it runs, so here a field that a cell keeps for life changes under one address.
+void CodeGenerator::keepReadsBehindBirthsOfCellsInFrame()
+{
+    B3::HeapRange outsideCells[] = { m_heaps.rangeOf(m_heaps.AOTInstance_vm), m_heaps.rangeOf(m_heaps.AOTInstance_fixedFields), m_heaps.rangeOf(m_heaps.AOTImage_tables) };
+    for (B3::BasicBlock* block : m_proc) {
+        for (B3::Value* value : *block) {
+            if (auto* patchpoint = value->as<B3::PatchpointValue>()) {
+                if (!patchpoint->pureFunction)
+                    patchpoint->effects.reads = B3::HeapSet::top();
+                continue;
+            }
+            auto* load = value->as<B3::MemoryValue>();
+            if (!load || !load->isLoad())
+                continue;
+            bool liesOutsideCells = std::ranges::any_of(outsideCells, [&](const B3::HeapRange& range) {
+                return load->range() && range.begin() <= load->range().begin() && load->range().end() <= range.end();
+            });
+            if (!liesOutsideCells)
+                load->setReadsMutability(B3::Mutability::Mutable);
+        }
+    }
 }
 
 LBasicBlock CodeGenerator::blockFor(BlockID id) const

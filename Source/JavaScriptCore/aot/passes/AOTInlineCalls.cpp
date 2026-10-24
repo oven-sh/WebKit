@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayChains.h"
 #include "AOTBuildContext.h"
 #include "AOTCalleeVersions.h"
 #include "AOTCodeSizeEstimate.h"
@@ -112,7 +113,8 @@ public:
 
 private:
     Vector<InlineSite> findCandidates(uint32_t firstFrame) const;
-    bool handsWholeResultToFrequentCode(ValueID call) const;
+    void leaveArrayChains(Vector<InlineSite>&) const;
+    bool handsObjectToFrequentCode(ValueID call) const;
     PassOutcome markNoReturnCallBlocks();
 
     bool canSummarize(FunctionID callee) const;
@@ -180,22 +182,60 @@ PassOutcome CallInliner::run()
     }
 }
 
-// Nothing is gained in rare code by itself. But where the result goes on into code that runs often, it meets the result of the call that runs often, whose parts are put together for as long as this one is a cell.
-bool CallInliner::handsWholeResultToFrequentCode(ValueID call) const
+// Nothing is gained in rare code by itself. But an object that goes on into code that runs often meets the one which that code has taken apart, and that one is put together for as long as this one is a cell:
+// which it is where a call makes it, fills it or takes it.
+bool CallInliner::handsObjectToFrequentCode(ValueID call) const
 {
-    if (m_program.at(m_caller.at(call).function()).role != FunctionRole::ResultWrapper)
-        return false;
     const UseLists& useLists = m_context.analyses.useLists();
-    Vector<ValueID, 4> worklist { call };
+    Vector<ValueID, 4> worklist;
+    BitVector isSeen(m_caller.values.size());
+    auto add = [&](ValueID value) {
+        if (value && !isSeen.quickSet(value.index()) && m_program.typeOf(m_caller, value).hasObjects())
+            worklist.append(value);
+    };
+    if (m_program.at(m_caller.at(call).function()).role == FunctionRole::ResultWrapper)
+        add(call);
+    m_caller.at(call).forEachOperand([&](ValueID operand, uint32_t) {
+        add(sameObjectThroughCasts(m_caller, operand));
+    });
     while (!worklist.isEmpty()) {
         for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-            if (use.kind == Use::Kind::EdgeArgument && m_caller.at(targetOf(m_caller, use.edge()).block).frequency == BlockFrequency::Normal)
-                return true;
+            if (use.kind == Use::Kind::EdgeArgument) {
+                const Block& target = m_caller.at(targetOf(m_caller, use.edge()).block);
+                if (target.frequency == BlockFrequency::Normal)
+                    return true;
+                if (use.operandIndex < target.parameters.size())
+                    add(target.parameters[use.operandIndex]);
+            }
             if (use.kind == Use::Kind::Operand && interpretedOf(m_caller.at(use.user).opcode) == Interpretation::Cast)
-                worklist.append(use.user);
+                add(use.user);
         }
     }
     return false;
+}
+
+// FuseArrayChains comes in front of this pass and has not seen the calls of a body that this run has copied. What it would fuse waits for the next round.
+void CallInliner::leaveArrayChains(Vector<InlineSite>& sites) const
+{
+    bool hasArrayMethod = sites.containsIf([&](const InlineSite& site) {
+        return !!arrayMethodCallOf(m_program, m_caller, site.call);
+    });
+    if (!hasArrayMethod || m_caller.role == FunctionRole::ChainStep || m_caller.enclosingRuntimeFunction || !findChainTraversal(m_program))
+        return;
+
+    BitVector members;
+    for (const ArrayChain& chain : findArrayChains(m_context)) {
+        if (checkInterleaving(m_context, chain) != ArrayChainDeclineReason::None)
+            continue;
+        members.set(chain.lastCall.index());
+        if (chain.rangeCall)
+            members.set(chain.rangeCall.index());
+        for (const ChainCallback& callback : chain.callbacks)
+            members.set(callback.call.index());
+    }
+    sites.removeAllMatching([&](const InlineSite& site) {
+        return members.get(site.call.index());
+    });
 }
 
 Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
@@ -210,16 +250,18 @@ Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
         const Block& block = m_caller.at(blockID);
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
-            if (m_caller.at(id).inlineFrame >= firstFrame && isCandidate(m_caller.at(id)) && (!isRare || handsWholeResultToFrequentCode(id)))
+            if (m_caller.at(id).inlineFrame >= firstFrame && isCandidate(m_caller.at(id)) && (!isRare || handsObjectToFrequentCode(id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
+    if (firstFrame)
+        leaveArrayChains(sites);
     if (sites.isEmpty())
         return sites;
 
     const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block) == BlockFrequency::Rare && !handsWholeResultToFrequentCode(site.call);
+        return frequencies.classOf(site.block) == BlockFrequency::Rare && !handsObjectToFrequentCode(site.call);
     });
     return sites;
 }

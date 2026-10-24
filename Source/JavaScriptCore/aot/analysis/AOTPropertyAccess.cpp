@@ -330,6 +330,14 @@ static bool mayBeReadAsValue(const Program& program, const PropertyAccessQuery& 
     return !query.isPrivate && answer.holder && isEvaluatedOnce(program, program.at(answer.holder));
 }
 
+// A function that takes its callee gets hold of the closure it is entered through, as a read of the value does.
+static bool isReadWithoutLookup(const Program& program, const PropertyAccessQuery& query, const MemberAnswer& answer)
+{
+    if (!program.at(answer.method).captures.isEmpty())
+        return false;
+    return (needsNoClosure(program, answer.method) && query.readIsOnlyCalled()) || mayBeReadAsValue(program, query, answer);
+}
+
 PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm)
 {
     RELEASE_ASSERT(query.access != Access::None);
@@ -353,7 +361,7 @@ PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const Pro
         planFieldArm(context, query, arm, plan);
         break;
     case MemberKind::Method:
-        planKnownValueArm(query, needsNoClosure(program, answer.method) && (query.readIsOnlyCalled() || mayBeReadAsValue(program, query, answer)) ? AccessForm::Method : AccessForm::ByName, plan);
+        planKnownValueArm(query, isReadWithoutLookup(program, query, answer) ? AccessForm::Method : AccessForm::ByName, plan);
         break;
     case MemberKind::Accessor:
         planAccessorArm(query, plan);

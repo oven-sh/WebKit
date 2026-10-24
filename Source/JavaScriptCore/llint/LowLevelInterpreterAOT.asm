@@ -49,9 +49,13 @@ const ObjectLiteralPlanAcceptsDouble = constexpr AOT::Interpreter::ObjectLiteral
 const ObjectLiteralPlanAcceptsString = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsString
 const ObjectLiteralPlanAcceptsObject = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsObject
 const ObjectLiteralPlanAcceptsBoolean = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsBoolean
+const ObjectLiteralPlanAcceptsNull = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsNull
+const ObjectLiteralPlanAcceptsUndefined = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsUndefined
 const ObjectLiteralNotPlannedYet = constexpr AOT::Interpreter::ObjectLiteralPlan::notPlannedYet
 const ObjectLiteralPlanAcceptedValues = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAcceptedValues() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanAcceptedStructureIDs = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAcceptedStructureIDs() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
+const ObjectLiteralPlanFirstAcceptedCellTypes = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfFirstAcceptedCellTypes() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
+const ObjectLiteralPlanLastAcceptedCellTypes = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfLastAcceptedCellTypes() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanInitialWords = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfInitialWords() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanNumberOfInitialWords = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfNumberOfInitialWords() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanAllocator = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAllocator() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
@@ -1273,7 +1277,7 @@ aotOp(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
     btqnz t7, numberTag, .valueIsDouble
     move t7, t6
     andq ~1, t6
-    bqneq t6, ValueFalse, .givesUp
+    bqneq t6, ValueFalse, .valueIsUndefinedOrNull
     move ObjectLiteralPlanAcceptsBoolean, t6
 .testKind:
     btbz ObjectLiteralPlanAcceptedValues[t1, t2, 1], t6, .givesUp
@@ -1294,6 +1298,13 @@ aotOp(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
     move ObjectLiteralPlanAcceptsDouble, t6
     jmp .testKind
 
+.valueIsUndefinedOrNull:
+    move ObjectLiteralPlanAcceptsUndefined, t6
+    bqeq t7, ValueUndefined, .testKind
+    bqneq t7, ValueNull, .givesUp
+    move ObjectLiteralPlanAcceptsNull, t6
+    jmp .testKind
+
 .valueIsCell:
     move ObjectLiteralPlanAcceptsString, t6
     bbeq JSCell::m_type[t7], StringType, .testKindOfCell
@@ -1303,6 +1314,9 @@ aotOp(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
     btbnz ObjectLiteralPlanAcceptedValues[t1, t2, 1], t6, .isAccepted
     loadi JSCell::m_structureID[t7], t6
     bieq t6, [t3, t2, 4], .isAccepted
+    loadb JSCell::m_type[t7], t6
+    bbb t6, ObjectLiteralPlanFirstAcceptedCellTypes[t1, t2, 1], .givesUp
+    bbbeq t6, ObjectLiteralPlanLastAcceptedCellTypes[t1, t2, 1], .isAccepted
 
 .givesUp:
     loadi CallSiteIndex[cfr], PC

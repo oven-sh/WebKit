@@ -140,6 +140,7 @@ public:
     // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
     bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
+    void didPlaceCellInFrame() { m_placesCellsInFrame = true; }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
     // Of an operand: the form in which the operation that is being generated takes it.
@@ -257,6 +258,7 @@ private:
     void dispatch(const ValueContext&);
     void dispatch(const TerminatorContext&);
     void finishProcedure();
+    void keepReadsBehindBirthsOfCellsInFrame();
 
     void generate(const ValueContext&);
     void defineValue(ValueID, Operand);
@@ -293,6 +295,7 @@ private:
     PinnedValues m_pinned;
     Vector<LValue> m_values;
     bool m_valuesOutliveNoSuspension { false };
+    bool m_placesCellsInFrame { false };
     const OperationContext* m_operation { nullptr };
     Vector<ConvertedOperand, 4> m_convertedOperands;
     Vector<SharedForm> m_sharedForms;

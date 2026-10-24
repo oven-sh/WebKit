@@ -290,12 +290,6 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
         }
         isNoField.link(&jit);
         branchUnlessNameIsAbsent(jit, probe, otherwise);
-        if (probe.leavesNowAndThen) {
-            static_assert(hasOneBitSet(AbsenceFilter::readsBetweenMisses));
-            const Address answered(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absentReadsAnswered));
-            jit.add32(TrustedImm32(1), answered);
-            otherwise.append(jit.branchTest32(CCallHelpers::Zero, answered, TrustedImm32(AbsenceFilter::readsBetweenMisses - 1)));
-        }
         if (finishWhereAbsent) {
             (*finishWhereAbsent)();
             return;

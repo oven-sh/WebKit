@@ -186,12 +186,12 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return answerOrCallFunction(RuntimeOperation::EncodeTextToBytes, { boxedArguments[0] });
         if (builtin == Builtins::TextEncoderPrototypeEncodeInto && isCalledOnEncoder && arguments.size() == 2)
             return answerOrCallFunction(RuntimeOperation::EncodeTextIntoBytes, { boxedArguments[0], boxedArguments[1] });
-        // The two below answer for bytes alone. What is known to be something else goes to the door at once.
+        // The first below answers for two views of one kind, the second for bytes alone. What is known to be something else goes to the door at once.
         auto mayBeBytes = [&](ValueID id) {
             const Type& type = typeOf(id);
             return type.overlaps(Type::builtinClass(BuiltinClasses::Uint8Array), m_program) || type.overlaps(Type::builtinClass(BuiltinClasses::Buffer), m_program);
         };
-        if (builtin == Builtins::TypedArrayPrototypeSet && isCall && receiver && (arguments.size() == 1 || arguments.size() == 2) && mayBeBytes(receiver) && mayBeBytes(arguments[0]))
+        if (builtin == Builtins::TypedArrayPrototypeSet && isCall && receiver && (arguments.size() == 1 || arguments.size() == 2) && typeOf(receiver).overlaps(typeOf(arguments[0]), m_program))
             return answerOrCallFunction(RuntimeOperation::TypedArraySetOfAnyValue, { *boxedReceiver, boxedArguments[0], argumentOrUndefined(1) });
         if (builtin == Builtins::TypedArrayPrototypeSubarray && isCall && receiver && arguments.size() <= 2 && mayBeBytes(receiver))
             return answerOrCallFunction(RuntimeOperation::TypedArraySubarrayOfAnyValue, { *boxedReceiver, argumentOrUndefined(0), argumentOrUndefined(1) });

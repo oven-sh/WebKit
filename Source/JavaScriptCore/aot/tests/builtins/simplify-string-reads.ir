@@ -156,16 +156,7 @@ function f7 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]},
 # CHECK-LABEL: function f7 name="inUnlikelyCode"
 # CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
 
-function f8 name="readOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
-    v3 = Substring v0, v1, v2
-    v4 = CallBuiltin v3, v1 overload=StringPrototypeCharCodeAt/0
-    Return v4
-}
-# CHECK-LABEL: function f8 name="readOfARange"
-# CHECK: v4: number = CallBuiltin v3, v1 overload=StringPrototypeCharCodeAt/0
-
-function f9 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
+function f8 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
   b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[0, 100]):
     v4 = Substring v0, v1, v2
     v5 = GetStringLength v4
@@ -178,5 +169,6 @@ function f9 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 10
     v8 = Integer
     Return v8
 }
-# CHECK-LABEL: function f9 name="provenReadOfARange"
-# CHECK: v7: number = CallBuiltin v4, v3 overload=StringPrototypeCharCodeAt/0
+# CHECK-LABEL: function f8 name="provenReadOfARange"
+# CHECK-NOT: CallBuiltin
+# CHECK: = GetStringCodeUnit v4, v3

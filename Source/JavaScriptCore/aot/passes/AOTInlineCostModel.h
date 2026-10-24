@@ -43,7 +43,6 @@ struct InlineVerdict {
     uint32_t costBytes { 0 };
     uint32_t benefitBytes { 0 };
     uint32_t budgetBytes { 0 };
-    bool introducesHandlers { false };
 };
 
 InlineVerdict computeInlineVerdict(FunctionPassContext&, const InliningSummary& callee, BlockID blockOfCall, ValueID call);

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTResolveCallsDirectCall.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
@@ -97,6 +98,34 @@ Vector<Iteration> collectIterations(FunctionPassContext& pass)
     return iterations;
 }
 
+static PassOutcome callGeneratorMethods(FunctionPassContext& pass, IRBuilder& builder)
+{
+    Function& function = pass.function;
+    for (const Iteration& iteration : collectIterations(pass)) {
+        ValueID iterable = function.at(iteration.open).iterableOperand();
+        FunctionID method = iteration.kind == IteratorKind::Sync ? findGeneratorMethodOpening(pass, iterable) : FunctionID();
+        if (!method)
+            continue;
+
+        ProgramPoint point = pass.analyses.useLists().pointOf(iteration.open);
+        auto insertBeforeOpen = [&](auto&& value) {
+            return builder.insertBefore(point, WTF::move(value));
+        };
+        InsertValue insert = insertBeforeOpen;
+        ValueInsertion insertion { pass.analyses.context(), function, pass.types, function.at(iteration.open).origin(), insert };
+        Value closure = IRBuilder::make(Opcode::NewClosure);
+        closure.setFunction(method);
+        closure.setIsHeldByClosureTable(true);
+        closure.setOrigin(insertion.origin);
+        ValueID generator = insert(makeDirectCall(insertion, { .callee = method, .thisValue = iterable, .calleeValue = insert(WTF::move(closure)) }));
+        function.edit(iteration.open, ValueEdit::Definition).setOperand(OperandIndex::IteratorOpen::iterable, generator);
+    }
+    if (!builder.hasInsertions())
+        return PassOutcome::Unchanged;
+    builder.applyInsertions();
+    return PassOutcome::Changed;
+}
+
 PassOutcome expandIteration(FunctionPassContext& pass)
 {
     OptionSet<ExpansionStep> steps = findStepsWithWork(pass);
@@ -113,6 +142,8 @@ PassOutcome expandIteration(FunctionPassContext& pass)
     Vector<ValueID> opensOfSpreads;
     if (steps.contains(ExpansionStep::Spreads))
         outcome |= expandSpreads(pass, builder, opensOfSpreads);
+    if (steps.contains(ExpansionStep::Iterations))
+        outcome |= callGeneratorMethods(pass, builder);
     if (steps.contains(ExpansionStep::Iterations) || !opensOfSpreads.isEmpty())
         outcome |= expandIterations(pass, builder, opensOfSpreads.span(), ExpandedIterations::All);
     return outcome;

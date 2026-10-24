@@ -134,6 +134,7 @@ private:
     bool fitsTypeWithoutCasts(VirtualObjectID, TypeID) const;
     void assumeTypeOfAlias(VirtualObjectID, TypeID);
     void storeField(VirtualObjectID, uint32_t field, ValueID stored);
+    void deleteField(VirtualObjectID, uint32_t namedField);
     void appendElement(VirtualObjectID, ValueID stored);
     void replaceRead(ValueID read, ValueID replacement);
     ValueID emitUndefined();
@@ -224,12 +225,13 @@ private:
 
 inline constexpr OpcodeSet interpretedReads {
     Opcode::GetEnvironmentField, Opcode::GetMappedArgument, Opcode::PropGet, Opcode::ElemGet, Opcode::PrivateGet, Opcode::GetSlot,
-    Opcode::GetSlotOrUndefined, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::GetCapture, Opcode::GetStringLength,
+    Opcode::GetSlotOrUndefined, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::GetCapture, Opcode::GetStringLength, Opcode::GetStringCodeUnit,
 };
 
 inline constexpr OpcodeSet interpretedStores {
     Opcode::PutEnvironmentField, Opcode::AppendElement, Opcode::AppendHole, Opcode::SetMappedArgument, Opcode::PropSet, Opcode::PropDefine,
     Opcode::ElemSet, Opcode::ElemDefine, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PutArrayElement,
+    Opcode::PropDelete,
 };
 
 inline constexpr OpcodeSet interpretedCasts {

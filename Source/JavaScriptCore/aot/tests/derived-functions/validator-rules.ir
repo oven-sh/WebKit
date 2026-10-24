@@ -1,7 +1,6 @@
-# Rules on numbers and lengths are compares (the characters of a string are counted, on a rare path, where the number of its units does not decide), patterns and formats are shared regexp literals, and a rule the builder cannot write is one call of a helper with the text of the rule
+# Rules on numbers and lengths are compares (the characters of a string are counted, on a rare path, where the number of its units does not decide), and a rule the builder cannot write is one call of a helper with the text of the rule. So are patterns and formats here, where nothing says that the program never reads RegExp.$1 (passes/select-typed-results-patterns-*.ir)
 # FORM: Prepared optimizing
 # RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
-# RUN(POSITION): derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
 # STATISTIC: ValidatorsCreated = 6
 
 module m0 path="main.js" displayPath="main.js"
@@ -44,19 +43,17 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NEXT: [[maximumLength1]]: 8 = Integer integer=8
 # CHECK-NEXT: [[unitsFit1]]: boolean = LessEq [[lengthAgain1]], [[maximumLength1]]
 # CHECK-NEXT: Branch [[unitsFit1]] -> taken {{*}}(), notTaken [[counted1]]()
-# CHECK: [[pattern1]]:{{*}}= SharedRegExpLiteral pattern="^a" @
-# CHECK-NEXT: = CallBuiltin [[pattern1]], [[string1]] overload=RegExpPrototypeTest/0
+# CHECK: [[pattern1]]:{{*}}= String string="{\"rule\":\"Pattern\",\"source\":\"^a\"}"
+# CHECK-NEXT: [[preparedAt1]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string1]], [[pattern1]], [[preparedAt1]] overload=CompilerHelpersHoldsRule/0
 # CHECK: [[counted1]]() frequency=Rare:
 # CHECK-NEXT: [[characters1]]:{{*}}= CallBuiltin -, [[string1]] overload=CompilerHelpersCountCodePoints/0
 # CHECK-NEXT: [[maximumAgain1]]: 8 = Integer integer=8
 # CHECK-NEXT: = LessEq [[characters1]], [[maximumAgain1]]
-# CHECK: [[format1]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$" @
-# CHECK-NEXT: = CallBuiltin [[format1]], [[string1]] overload=RegExpPrototypeTest/0
-# CHECK-NOT: CompilerHelpersHoldsRule
-# POSITION: function {{*}}expectedResult=x1}
-# POSITION: = SharedRegExpLiteral pattern="^a" @[[positionOfFirstLiteral]]
-# POSITION-NOT: = SharedRegExpLiteral {{*}} @[[positionOfFirstLiteral]]
-# POSITION: function {{*}}expectedResult=x2}
+# CHECK: [[format1]]:{{*}}= String string="{\"rule\":\"Format\",\"format\":\"uuid\",\"source\":\"^([0-9a-fA-F]{8}-
+# CHECK-NEXT: [[preparedAt2]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string1]], [[format1]], [[preparedAt2]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NOT: SharedRegExpLiteral
 
 # CHECK: function {{*}}expectedResult=x2}
 # CHECK: ([[array2]]: Array):
@@ -75,13 +72,17 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NOT: SharedRegExpLiteral
 # CHECK: ([[string3]]: string):
 # CHECK-NEXT: [[url3]]:{{*}}= String string="{\"rule\":\"Format\",\"format\":\"url\",\"source\":\"\"}"
-# CHECK-NEXT: = CallBuiltin -, [[string3]], [[url3]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: [[preparedAt3]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[url3]], [[preparedAt3]] overload=CompilerHelpersHoldsRule/0
 # CHECK: [[template3]]:{{*}}= String string="{\"rule\":\"Template\",\"texts\":[\"id-\",\"-\",\"!\"],\"placeholders\":\"ns\"}"
-# CHECK-NEXT: = CallBuiltin -, [[string3]], [[template3]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: [[preparedAt4]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[template3]], [[preparedAt4]] overload=CompilerHelpersHoldsRule/0
 # CHECK: [[minimum3]]:{{*}}= String string="{\"rule\":\"Minimum\",\"bound\":1}"
-# CHECK-NEXT: = CallBuiltin -, [[string3]], [[minimum3]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: [[preparedAt5]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[minimum3]], [[preparedAt5]] overload=CompilerHelpersHoldsRule/0
 # CHECK: [[invalid3]]:{{*}}= String string="{\"rule\":\"Pattern\",\"source\":\"(\"}"
-# CHECK-NEXT: [[holds3]]: boolean = CallBuiltin -, [[string3]], [[invalid3]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: [[preparedAt6]]: anything = GetPreparedPlans
+# CHECK-NEXT: [[holds3]]: boolean = CallBuiltin -, [[string3]], [[invalid3]], [[preparedAt6]] overload=CompilerHelpersHoldsRule/0
 # CHECK-NEXT: Branch [[holds3]] -> taken
 # CHECK-NOT: SharedRegExpLiteral
 # CHECK-NOT: GreaterEq
@@ -103,5 +104,6 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NOT: SharedRegExpLiteral
 # CHECK: ([[string5]]: string):
 # CHECK-NEXT: [[deep5]]:{{*}}= String string="{\"rule\":\"Pattern\",\"source\":\"(?:(?:(?:
-# CHECK-NEXT: = CallBuiltin -, [[string5]], [[deep5]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: [[preparedAt7]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[string5]], [[deep5]], [[preparedAt7]] overload=CompilerHelpersHoldsRule/0
 # CHECK-NOT: SharedRegExpLiteral

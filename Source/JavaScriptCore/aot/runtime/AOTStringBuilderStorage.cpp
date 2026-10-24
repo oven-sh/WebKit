@@ -431,22 +431,6 @@ Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObje
     return storage->m_characters + storage->m_position;
 }
 
-extern "C" uint8_t* JSC__AOT__StringBuilderStorage__tryReserve(StringBuilderStorage* storage, size_t maxLength)
-{
-    return byteCast<uint8_t>(storage->tryReserve(maxLength));
-}
-
-extern "C" void JSC__AOT__StringBuilderStorage__commit(StringBuilderStorage* storage, size_t written)
-{
-    if (written)
-        storage->commit(storage->tryReserve(0) + written);
-}
-
-extern "C" bool JSC__AOT__StringBuilderStorage__appendUTF16(StringBuilderStorage* storage, JSGlobalObject* globalObject, const char16_t* characters, size_t length)
-{
-    return storage->append(globalObject, std::span { characters, length }) == StringBuilderStorage::AppendResult::Appended;
-}
-
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

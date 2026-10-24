@@ -26,7 +26,6 @@
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
 #include "AOTRegExpRequests.h"
-#include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSummarizeForInlining.h"
@@ -334,6 +333,7 @@ std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Pr
     PassRunner runner(build, last);
     auto output = runPasses(WTF::move(program), runner);
     if (build.diagnostics().hasErrors()) {
+        output->waitForRegExps();
         build.diagnostics().finish(output->program.get());
         return nullptr;
     }
@@ -429,9 +429,6 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
         return;
     case PassID::AllocateInFrames:
         output.frameAllocation->dump(out, m_program);
-        return;
-    case PassID::ReuseEnvironments:
-        output.environmentReuse->dump(out, m_program);
         return;
     case PassID::NumberLiteralStrings:
         output.literalStrings->dump(out, m_program);

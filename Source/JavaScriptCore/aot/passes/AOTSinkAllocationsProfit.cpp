@@ -90,7 +90,7 @@ void AllocationSinking::resetCounters()
         candidate.needsGuard = false;
         candidate.diesVirtual = false;
         candidate.diesOutsideJoins = false;
-        candidate.isStoredLate = false;
+        candidate.holdersThatStoreItLate.shrink(0);
         candidate.numberOfBuilds = 0;
         candidate.numberOfRarerBuilds = 0;
         candidate.numberOfBorrowingBuilds = 0;
@@ -184,8 +184,15 @@ bool AllocationSinking::paysToSink(const Candidate& candidate) const
     unsigned numberOfFrequentBuilds = candidate.numberOfBuilds - candidate.numberOfRarerBuilds;
     if (candidate.numberOfRarerBuilds && candidate.numberOfBorrowingBuilds && numberOfFrequentBuilds == candidate.numberOfBorrowingBuilds && isFrameAllocatable(*this, candidate))
         return true;
+    if (candidate.numberOfBuilds != 1)
+        return false;
+    auto foldsStores = [](const Candidate& object) {
+        return object.numberOfFoldedStores > object.numberOfRepeatedStores;
+    };
     // An object that refers to its holder is stored late. As a cell it would have its holder built where it is allocated, in front of the stores that follow.
-    return candidate.numberOfBuilds == 1 && (candidate.numberOfFoldedStores > candidate.numberOfRepeatedStores || candidate.isStoredLate);
+    return foldsStores(candidate) || std::ranges::any_of(candidate.holdersThatStoreItLate, [&](VirtualObjectID holder) {
+        return foldsStores(at(holder));
+    });
 }
 
 // An object that several paths would build is not given up: it is built once, in front of the first branch it reaches, and keeps the stores that were folded until there.
@@ -221,7 +228,7 @@ void AllocationSinking::abandonJoinsThatOnlyFeedAbandonedJoins()
 
     auto goesOnlyIntoAbandonedJoins = [&](VirtualObjectID object) {
         const Candidate& candidate = at(object);
-        if (!candidate.isJoin || candidate.isAbandoned || candidate.diesOutsideJoins || candidate.isStoredLate || candidate.numberOfFoldedStores)
+        if (!candidate.isJoin || candidate.isAbandoned || candidate.diesOutsideJoins || !candidate.holdersThatStoreItLate.isEmpty() || candidate.numberOfFoldedStores)
             return false;
         bool hasAbandonedSource = std::ranges::any_of(std::ranges::equal_range(m_entriesIntoJoins, object.index(), { }, indexOfJoin), [&](const EntryIntoJoin& entry) {
             return at(entry.source).isAbandoned;

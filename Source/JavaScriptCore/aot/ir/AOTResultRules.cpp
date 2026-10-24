@@ -644,7 +644,8 @@ Type ResultRules::unknown(const Value& value)
     if (value.opcode != Opcode::Call && value.opcode != Opcode::CallResolved)
         return Type::anything();
     const Type& callee = context.typeOf(value.operand(OperandIndex::Call::callee));
-    if (callee.isNever())
+    // What is no object cannot be called: the call throws.
+    if (!callee.hasObjects() && callee.isJavaScriptValue())
         return Type::never();
     if (FunctionID only = onlyCalleeOf(context.program, callee))
         return declared(value, only, 0);
@@ -784,7 +785,7 @@ struct ResultRulesWithoutType {
         if (value.opcode != Opcode::Call && value.opcode != Opcode::CallResolved)
             return TypeTable::anything;
         const Type& callee = context.typeOf(value.operand(OperandIndex::Call::callee));
-        if (callee.isNever())
+        if (!callee.hasObjects() && callee.isJavaScriptValue())
             return TypeTable::never;
         // Only a callee that is one function says more.
         FunctionID only = onlyCalleeOf(context.program, callee);

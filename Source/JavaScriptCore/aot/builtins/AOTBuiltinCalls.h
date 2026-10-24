@@ -99,8 +99,6 @@ bool isCallThatRequiredPassRemoves(const Program&, const Value& call);
 bool overloadTakesOperands(const TypingContext&, const Value& call);
 bool overloadTakesOperands(const TypingContext&, const Terminator& call);
 bool overloadTakesOperands(const Program&, const Function&, const Value& call);
-bool overloadCanAppend(const TypingContext&, const Value& append);
-bool overloadCanAppend(const Program&, const Function&, const Value& append);
 
 } } } // namespace JSC::AOT::Typed
 

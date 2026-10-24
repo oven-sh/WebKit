@@ -49,7 +49,6 @@ void applyVariableUpdates(const FlowApplyContext&);
 
 void applySignatureUpdates(const FlowApplyContext&);
 void removeUnreachedBodies(const FlowApplyContext&, ProgramEditor&);
-void cutCallsOfUnreachedVersions(const FlowApplyContext&);
 void dropDataOfUnreachedCode(const FlowApplyContext&);
 void narrowContentsOfData(const FlowApplyContext&);
 

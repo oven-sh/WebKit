@@ -55,7 +55,6 @@
 # CHECK-NOT: statistic RemoveUnusedParametersChanges
 # CHECK-NOT: statistic RemoveUnreachableFunctionsChanges
 # CHECK-NOT: statistic AllocateInFramesChanges
-# CHECK-NOT: statistic ReuseEnvironmentsChanges
 # CHECK-NOT: statistic SelectChanges
 # CHECK-NOT: Groups release=
 

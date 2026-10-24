@@ -827,7 +827,6 @@ const entryColumnKeys = [
   "loads",
   "callsFunctions",
   "appendForm",
-  "hostAppendSymbol",
   "jsonTextForm",
   "literalPartsForm",
   "bodyBytesForm",

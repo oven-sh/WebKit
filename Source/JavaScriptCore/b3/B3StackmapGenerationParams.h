@@ -37,10 +37,6 @@ namespace JSC {
 
 class CCallHelpers;
 
-namespace AOT { namespace Typed {
-class DirectCodeGenerator;
-} }
-
 namespace B3 {
 
 class CheckSpecial;
@@ -124,7 +120,6 @@ public:
 private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
-    friend class AOT::Typed::DirectCodeGenerator;
     
     StackmapGenerationParams(StackmapValue*, const Vector<ValueRep>& reps, Air::GenerationContext&);
     StackmapGenerationParams(StackmapValue*, Reps&& reps, Air::GenerationContext&);
@@ -134,8 +129,6 @@ private:
     Vector<GPRReg, 4> m_gpScratch;
     Vector<FPRReg, 4> m_fpScratch;
     Air::GenerationContext& m_context;
-    const Vector<Box<MacroAssembler::Label>>* m_labelsOfSuccessors { nullptr };
-    uint32_t m_successorsFallenThroughTo { 0 };
 };
 
 } } // namespace JSC::B3

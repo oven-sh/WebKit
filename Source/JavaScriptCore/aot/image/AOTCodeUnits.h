@@ -118,7 +118,6 @@ public:
 
     void willGenerateBlock(bool isCold, bool isRarelyRun);
     void didGenerateInBlock(MacroAssembler::Label begin, MacroAssembler::Label end, CodeUnit::Kind);
-    void didGenerateTrappingAccess(MacroAssembler::Label instruction, B3::Origin origin) { m_traps.append({ instruction, origin }); }
 
     void addPlain(MacroAssembler::Label begin, MacroAssembler::Label end, const RegisterSet& named);
     void addEnd(MacroAssembler::Label begin, MacroAssembler::Label end);

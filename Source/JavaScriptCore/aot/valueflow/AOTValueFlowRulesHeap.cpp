@@ -832,11 +832,12 @@ void HeapRule::runData()
     struct Pending {
         const DataNode* node;
         ValueFlowNodeID holder;
+        bool isMember { false };
     };
     // The sites are numbered in preorder, and a primitive takes a number too.
     Vector<Pending, 32> pending { Pending { &m_program.at(operation().data()).root, { } } };
     for (uint32_t ordinal = 0; !pending.isEmpty(); ++ordinal) {
-        auto [node, holder] = pending.takeLast();
+        auto [node, holder, isMember] = pending.takeLast();
         switch (node->kind()) {
         case DataNode::Kind::Array: {
             ClimbingSet array(only(m_universe.siteObject(m_statement, ordinal)));
@@ -852,7 +853,7 @@ void HeapRule::runData()
             add(holder, object);
             const Vector<DataMember>& members = node->as<DataNode::Object>().members;
             for (size_t index = members.size(); index--;)
-                pending.append({ &members[index].value, m_context.written(object, writtenName(keyNamed(members[index].key), HeapPropertyPart::Value)) });
+                pending.append({ &members[index].value, m_context.written(object, writtenName(keyNamed(members[index].key), HeapPropertyPart::Value)), true });
             break;
         }
         case DataNode::Kind::Undefined:
@@ -868,9 +869,12 @@ void HeapRule::runData()
         case DataNode::Kind::Number:
             add(holder, kinds(static_cast<uint16_t>(primitiveOfNumber(node->as<DataNode::Number>().value))));
             break;
-        case DataNode::Kind::String:
-            add(holder, kinds(Primitive::String));
+        case DataNode::Kind::String: {
+            // As for the operation String: the tag of a union is told from the other tags. A list may hold any number of texts, and is left with their kind.
+            std::optional<PropertyKeyID> key = isMember ? m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = node->as<DataNode::String>().value }) : std::nullopt;
+            add(holder, key ? only(m_universe.keyConstant(*key)) : kinds(Primitive::String));
             break;
+        }
         case DataNode::Kind::BigInt:
             add(holder, kinds(Primitive::BigInt));
             break;

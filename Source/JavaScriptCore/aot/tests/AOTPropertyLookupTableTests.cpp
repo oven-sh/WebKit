@@ -766,6 +766,13 @@ void secondInstanceClearsOnce()
     fill();
     createInstance(2);
     AOT_TEST_CHECK(caches.isSharedByInstances() && isFilled());
+
+    // A change of an object on some chain takes the places for reads away where one of them says that nothing is found.
+    caches.didChangeObjectOnSomeChain(nullptr, nullptr);
+    AOT_TEST_CHECK(isFilled());
+    storage[0]->propertyCaches.placesSayAbsence = 1;
+    caches.didChangeObjectOnSomeChain(nullptr, nullptr);
+    AOT_TEST_CHECK(!places.front().structureID && places.back().structureID && !storage[0]->propertyCaches.placesSayAbsence);
     instances.clear();
 }
 

@@ -67,7 +67,7 @@ operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArray
 operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> natural(number | bigint | undefined) ; Allocates reads(TypedArrayStorage, TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemGet ; accessClass = Slot
 operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read
-operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes
+operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read
 
 family Arguments Prepared..Placed ; boundTo = Frame
 operation GetArgument (argumentIndex: UInt32) -> unknown ; none
@@ -80,8 +80,6 @@ operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTa
 family Environment Prepared..Placed
 operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; interpreted = Read
 operation MaterializeEnvironment (environment: Environment/inspects+returns, layout: Layout, from Placed allocation?: Allocation) -> natural(same(environment)) ; Allocates reads(EnvironmentFields) ; runtime = MaterializeEnvironment ; allocatesInline = true ; boundTo = Frame
-operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
-operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 
 family BuiltinCall Prepared..Placed
 operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDemotedTailCall] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
@@ -137,7 +135,6 @@ operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/
 family StringBuilder Prepared..Placed
 operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin
 operation StringBuilderAppend (builder: StringBuilder/inspects, parts...: Any/inspects) -> none ; AppendsToBuilder ; Prepared..Prepared ; runtime = StringBuilderAppend
-operation StringBuilderAppendBuiltin (overload: BuiltinOverload, builder: StringBuilder/inspects, receiver?: Any/inspects, arguments...: Any/inspects) -> none ; AppendsToBuilder reads(ArrayStorage, Elements, TypedArrayStorage, TypedArrayElements) ; runtime = StringBuilderAppendByHost
 operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
 operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
 operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString

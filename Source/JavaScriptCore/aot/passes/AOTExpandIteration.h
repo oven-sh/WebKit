@@ -224,6 +224,7 @@ private:
 
 IterationPlan planIteration(FunctionPassContext&, const Iteration&);
 IterationPlan planSpread(FunctionPassContext&, ValueID appendSpread);
+FunctionID findGeneratorMethodOpening(FunctionPassContext&, ValueID iterable);
 ArmDispatch chooseArmDispatch(FunctionPassContext&, const Iteration&, const IterationPlan&, std::span<const BlockID> liveRegion);
 Vector<BlockID> findLiveRegion(FunctionPassContext&, ValueID open);
 // What a passed test leaves of a type may lie outside it: beside a class that may be related, the part of the tested class loses what it proves.

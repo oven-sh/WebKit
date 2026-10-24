@@ -32,8 +32,10 @@ operation JSONAddExtraMember (layout: Layout, extra: Any/returns, memberName: St
 
 family Validation Prepared..Placed
 operation IsPlainDataObject (value: Any/inspects) -> natural(boolean) ; reads(ShapeWords, NamedProperties, PrototypeLinks) ; proves = PlainData ; branches = May ; runtime = IsPlainDataObject
-operation GetOwnDataProperty (object: Object/inspects, guard: Guard/inspects, key: PropertyKey) -> unknown ; CreatesConstant reads(NamedProperties[key], ObjectFields[key]) ; relies = PlainData ; guarded = object ; runtime = GetOwnDataProperty
+operation GetOwnDataProperty (object: Object/inspects, guard: Guard/inspects, key: PropertyKey) -> unknown ; Allocates UsesRuntime reads(NamedProperties[key], ObjectFields[key]) ; relies = PlainData ; guarded = object ; runtime = GetOwnDataProperty
 operation CloneAs (source: Object/inspects, guard: Guard/inspects, layout: Layout, fields: List<Field>, values...: Declared/retains(result), allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(layout) ; Allocates ReadsObjectGraph ; relies = PlainData ; guarded = source ; runtime = CloneObjectAs ; interpreted = Allocation
+operation GetPreparedPlans () -> unknown ; CreatesConstant ; runtime = GetPreparedPlans
+operation IsThrownValueIgnored () -> natural(boolean) ; UsesRuntime throws ; branches = May ; runtime = IsThrownValueIgnored
 operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows
 
 family JSONWrite Prepared..Placed ; base = builder

@@ -10,6 +10,8 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTStringEmitter.h"
+#include "AOTStringRangeReadEmitter.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTStubsPrimitiveFastPaths.h"
 #include "AOTTypeTable.h"
@@ -377,6 +379,14 @@ void OperatorEmitter::generateConversionToNumber(const ValueContext& value, cons
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
     generateConversionToNumber(value, [&](Boxed operand) -> Operand {
+        const Type& type = typeOf(value->valueOperand());
+        if (type.primitives & Primitive::AnyString && type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull)) {
+            return either<Number>(isCell(operand), [&] {
+                return emitter<StringRangeReadEmitter>().toNumber(emitter<StringEmitter>().viewOfString(value, unboxCell(operand)));
+            }, [&] {
+                return asNumberLikeOperand(value->valueOperand());
+            });
+        }
         return Number(callStub(value, toNumberAsDouble(), { operand.value() }).first);
     });
 }

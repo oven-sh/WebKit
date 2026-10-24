@@ -101,6 +101,8 @@ public:
     static constexpr ptrdiff_t offsetOfLimit() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limit); }
     static constexpr ptrdiff_t offsetOfLengthOutsideBuffer() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOutsideBuffer); }
     static constexpr ptrdiff_t offsetOfNextFree() { return OBJECT_OFFSETOF(StringBuilderStorage, m_nextFree); }
+    static constexpr ptrdiff_t offsetOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lastString); }
+    static constexpr ptrdiff_t offsetOfLengthOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOfLastString); }
     static constexpr ptrdiff_t offsetOfMinLengthAppendedByReference() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAppendedByReference); }
 
 private:
@@ -229,12 +231,6 @@ ALWAYS_INLINE size_t writeUpToEightDigits(uint32_t value, Latin1Character* to)
 }
 
 bool tryWriteShortKey(std::span<const EncodedJSValue> primitives, ShortKeyCharacters&);
-
-extern "C" JS_EXPORT_PRIVATE uint8_t* JSC__AOT__StringBuilderStorage__tryReserve(StringBuilderStorage*, size_t maxLength);
-extern "C" JS_EXPORT_PRIVATE void JSC__AOT__StringBuilderStorage__commit(StringBuilderStorage*, size_t written);
-extern "C" JS_EXPORT_PRIVATE bool JSC__AOT__StringBuilderStorage__appendUTF16(StringBuilderStorage*, JSGlobalObject*, const char16_t*, size_t length);
-
-using HostAppendForm = bool (*)(JSGlobalObject*, StringBuilderStorage*, EncodedJSValue thisValue, const EncodedJSValue* arguments, size_t count);
 
 } } // namespace JSC::AOT
 

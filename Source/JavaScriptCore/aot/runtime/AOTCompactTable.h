@@ -395,6 +395,37 @@ public:
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
     static void clear(JSGlobalObject*, JSObject* owner);
     static CompactStorage::Position next(VM&, JSCell* storage, uint32_t entry);
+    // The keys, or the values, that a walk by next() from the entry on finds. Of the other column nothing is made.
+    template<typename Functor>
+    static void forEachInColumn(VM& vm, JSCell* storage, uint32_t entry, bool wantsKeys, NOESCAPE const Functor& functor)
+    {
+        auto* table = uncheckedDowncast<CompactTable>(storage);
+        if (!table->isLive()) [[unlikely]] {
+            for (CompactStorage::Position position = next(vm, storage, entry); position.storage; position = next(vm, position.storage, position.entry + 1))
+                functor(wantsKeys ? position.key : position.value);
+            return;
+        }
+        uint32_t used = table->m_used;
+        if (entry < used)
+            table->m_keysShiftAndFlags |= wasWalked;
+        // No entry of a table in the image is deleted: the table moves to the heap first.
+        if (table->isInImage()) {
+            for (; entry < used; ++entry)
+                functor(wantsKeys ? table->keyAt(entry) : table->valueAt(entry));
+            return;
+        }
+        auto columnAt = [table](size_t offset, bool isWide) {
+            return [table, isWide, narrow = table->at<uint32_t>(offset), wide = table->at<EncodedJSValue>(offset)](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+                return isWide ? JSValue::decode(wide[entry]) : table->decodeNarrow(narrow[entry]);
+            };
+        };
+        auto keyAt = columnAt(table->offsetOfKeys(), table->m_keysShiftAndFlags & keysAreWide);
+        auto valueAt = columnAt(table->offsetOfValues(), table->m_valueWidth == Width::Wide);
+        for (; entry < used; ++entry) {
+            if (JSValue key = keyAt(entry))
+                functor(wantsKeys ? key : valueAt(entry));
+        }
+    }
 
     template<typename Visitor> ALWAYS_INLINE static void visitFields(CompactTable*, Visitor&);
 

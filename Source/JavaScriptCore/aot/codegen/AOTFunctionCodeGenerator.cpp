@@ -199,10 +199,10 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
 #endif
 }
 
-std::unique_ptr<FunctionCodeGenerator> FunctionCodeGenerator::create(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals, DirectCodeAttempt attempt)
+std::unique_ptr<FunctionCodeGenerator> FunctionCodeGenerator::create(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID id, CodeGenerationTotals& totals)
 {
     std::unique_ptr<FunctionCodeGenerator> generator(new FunctionCodeGenerator(worker, inputs, id, totals));
-    if (!generator->generateB3(attempt))
+    if (!generator->generateB3())
         return nullptr;
     return generator;
 }
@@ -218,7 +218,7 @@ FunctionCodeGenerator::FunctionCodeGenerator(const CodeGenerationWorker& worker,
 {
 }
 
-bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
+bool FunctionCodeGenerator::generateB3()
 {
     BuildContext& build = m_worker.build;
     const AOT::CompileOptions& options = build.options();
@@ -275,11 +275,6 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
         dataLogLn("AOT B3:\n", proc);
         proc.setShouldDumpIR();
     }
-
-    bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
-    bool checksAir = options.validatesBackEnd || options.validatesReferences;
-    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function)
-        m_directCode = planDirectCode(proc, attempt);
     return true;
 }
 
@@ -288,12 +283,6 @@ CompiledCode FunctionCodeGenerator::finish()
     CompiledCode code;
     if (!m_procedure->report().failure)
         code = emitCode();
-    if (m_didFailToGenerateDirectly) {
-        m_worker.build.statistics().count(StatisticID::DirectGenerationsAbandoned);
-        return { };
-    }
-    if (generatesDirectly())
-        m_worker.build.statistics().count(StatisticID::FunctionsGeneratedDirectly);
     if (reportBackEnd())
         return { };
     return code;
@@ -305,25 +294,14 @@ CompiledCode FunctionCodeGenerator::emitCode()
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
 
-    if (!generatesDirectly()) {
-        ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
-        m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
-        proc.code().setInstObserver(&m_records.observer);
-    }
+    ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
+    m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
+    proc.code().setInstObserver(&m_records.observer);
 
     readTagsFromInstance(m_jit);
     emitEntryPreambles(m_jit, m_inputs, m_id, m_records);
     CCallHelpers::Label bodyStart = m_jit.label();
-    if (generatesDirectly()) {
-        BlockColdnessRule coldness(m_inputs, m_id);
-        m_records.frameMaps.anotherGeneratorCanTry = true;
-        bool isGenerated = generateDirectCode(*m_directCode, m_jit, m_records, coldness);
-        if (!isGenerated || m_records.frameMaps.hasSiteWithoutWord) {
-            m_didFailToGenerateDirectly = true;
-            return { };
-        }
-    } else
-        B3::generate(proc, m_jit);
+    B3::generate(proc, m_jit);
     RELEASE_ASSERT(!CCallHelpers::differenceBetween(bodyStart, proc.code().entrypointLabel(0)));
     bool preamblesHavePrimaryEntry = m_records.entries.containsIf([](const RecordedEntry& entry) {
         return entry.id == primaryEntry;

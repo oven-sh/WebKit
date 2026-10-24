@@ -2,8 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 3
-# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+# STATISTIC: InlineDecisionInline = 4
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -42,8 +41,12 @@ function f3 name="callerWithoutHandlers" parameters=[{type=anything}] results=[{
     Return v1
 }
 # CHECK-LABEL: name="callerWithoutHandlers"
-# CHECK: = CallDirect v0 function=f0
-# CHECK-NEXT: Return
+# CHECK-NOT: CallDirect
+# CHECK: [[covered3]]() handler=[[inner3]]():
+# CHECK-NEXT: = PropGet v0 key="p"
+# CHECK: [[inner3]]() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NOT: CallDirect
 
 function f4 name="callerWithHandlers" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

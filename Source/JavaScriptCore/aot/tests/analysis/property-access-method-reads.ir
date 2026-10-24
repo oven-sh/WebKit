@@ -119,7 +119,7 @@ function f20 name="method-names-itself" parameters=[{type=L0}] results=[{type=an
     v2 = Call v1, v0 calleeKey="recursive"
     Return v2
 }
-# CHECK-NEXT: F20 v1 PropGet [[recursive]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F3)
+# CHECK-NEXT: F20 v1 PropGet [[recursive]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F3)
 
 function f21 name="deferred-closure-over-the-object-called" parameters=[{type=L1}] results=[{type=anything}] {
   b0(v0: L1):

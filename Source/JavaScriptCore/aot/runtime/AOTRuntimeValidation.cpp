@@ -42,113 +42,6 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(static_cast<unsigned>(ValidationFailureKind::CallCollected) + 1 == numberOfValidationFailureKinds);
-
-ASCIILiteral nameOf(ValidationFailureKind kind)
-{
-    switch (kind) {
-    case ValidationFailureKind::ValueType:
-        return "ValueType"_s;
-    case ValidationFailureKind::UnreachableValue:
-        return "UnreachableValue"_s;
-    case ValidationFailureKind::FrameCellEscaped:
-        return "FrameCellEscaped"_s;
-    case ValidationFailureKind::SavedFrameRootMissing:
-        return "SavedFrameRootMissing"_s;
-    case ValidationFailureKind::VisitedCellsDiffer:
-        return "VisitedCellsDiffer"_s;
-    case ValidationFailureKind::OperationEnteredVM:
-        return "OperationEnteredVM"_s;
-    case ValidationFailureKind::OperationCollected:
-        return "OperationCollected"_s;
-    case ValidationFailureKind::CacheHitDiffers:
-        return "CacheHitDiffers"_s;
-    case ValidationFailureKind::CacheEntryDropped:
-        return "CacheEntryDropped"_s;
-    case ValidationFailureKind::ImpossibleMutation:
-        return "ImpossibleMutation"_s;
-    case ValidationFailureKind::TypeTestsDiffer:
-        return "TypeTestsDiffer"_s;
-    case ValidationFailureKind::BarrierWasNeeded:
-        return "BarrierWasNeeded"_s;
-    case ValidationFailureKind::BuiltinNotImmutable:
-        return "BuiltinNotImmutable"_s;
-    case ValidationFailureKind::ArrayNotPristine:
-        return "ArrayNotPristine"_s;
-    case ValidationFailureKind::ShapeWordInvalid:
-        return "ShapeWordInvalid"_s;
-    case ValidationFailureKind::StackTraceDiffers:
-        return "StackTraceDiffers"_s;
-    case ValidationFailureKind::FastPathResultDiffers:
-        return "FastPathResultDiffers"_s;
-    case ValidationFailureKind::OperationPreconditionBroken:
-        return "OperationPreconditionBroken"_s;
-    case ValidationFailureKind::NativeCallChangedOperand:
-        return "NativeCallChangedOperand"_s;
-    case ValidationFailureKind::NativeCallWroteHeap:
-        return "NativeCallWroteHeap"_s;
-    case ValidationFailureKind::NativeCallRanCode:
-        return "NativeCallRanCode"_s;
-    case ValidationFailureKind::NativeCallThrew:
-        return "NativeCallThrew"_s;
-    case ValidationFailureKind::NativeCallCollected:
-        return "NativeCallCollected"_s;
-    case ValidationFailureKind::NativeCallKeptOperand:
-        return "NativeCallKeptOperand"_s;
-    case ValidationFailureKind::AssumedType:
-        return "AssumedType"_s;
-    case ValidationFailureKind::UnlistedCallee:
-        return "UnlistedCallee"_s;
-    case ValidationFailureKind::SecondRun:
-        return "SecondRun"_s;
-    case ValidationFailureKind::ReadsDiffer:
-        return "ReadsDiffer"_s;
-    case ValidationFailureKind::ContainerContents:
-        return "ContainerContents"_s;
-    case ValidationFailureKind::ArrayStorageKind:
-        return "ArrayStorageKind"_s;
-    case ValidationFailureKind::RemovedFieldNamed:
-        return "RemovedFieldNamed"_s;
-    case ValidationFailureKind::ReceiverShape:
-        return "ReceiverShape"_s;
-    case ValidationFailureKind::CallChangedKeptRegister:
-        return "CallChangedKeptRegister"_s;
-    case ValidationFailureKind::UnwindingChangedKeptRegister:
-        return "UnwindingChangedKeptRegister"_s;
-    case ValidationFailureKind::ArrayElementsNotOrdinary:
-        return "ArrayElementsNotOrdinary"_s;
-    case ValidationFailureKind::KeysListed:
-        return "KeysListed"_s;
-    case ValidationFailureKind::LegacyRegExpStaticRead:
-        return "LegacyRegExpStaticRead"_s;
-    case ValidationFailureKind::GuardNoLongerHolds:
-        return "GuardNoLongerHolds"_s;
-    case ValidationFailureKind::BindingReadBeforeStore:
-        return "BindingReadBeforeStore"_s;
-    case ValidationFailureKind::SlotEmpty:
-        return "SlotEmpty"_s;
-    case ValidationFailureKind::LookupDiffers:
-        return "LookupDiffers"_s;
-    case ValidationFailureKind::HeapSlotType:
-        return "HeapSlotType"_s;
-    case ValidationFailureKind::MaskCutKnownValue:
-        return "MaskCutKnownValue"_s;
-    case ValidationFailureKind::FamilyNotClosed:
-        return "FamilyNotClosed"_s;
-    case ValidationFailureKind::FunctionCellInFrameGotProperties:
-        return "FunctionCellInFrameGotProperties"_s;
-    case ValidationFailureKind::OperationConvertedCell:
-        return "OperationConvertedCell"_s;
-    case ValidationFailureKind::OperationWroteHeap:
-        return "OperationWroteHeap"_s;
-    case ValidationFailureKind::UnspecifiedValueInspected:
-        return "UnspecifiedValueInspected"_s;
-    case ValidationFailureKind::CallCollected:
-        return "CallCollected"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void willReadLegacyRegExpStatics(VM& vm)
 {
     if (validatesRuntime(vm) && vm.aotState().image->programTables().flags & ProgramTables::neverReadsLegacyRegExpStatics)
@@ -156,6 +49,19 @@ void willReadLegacyRegExpStatics(VM& vm)
 }
 
 static constexpr unsigned maxNumberOfTestedElements = 64;
+
+static void dumpClassOf(PrintStream&, JSValue);
+
+// Numbers and kinds only: what a program holds is not for a log.
+static bool holdsType(const RuntimeLayoutTable& layouts, const RuntimeType& type, JSValue held, unsigned position)
+{
+    if (layouts.valueHasType(type, held))
+        return true;
+    dataLog("AOT: number ", position, " of what the container holds is outside a type of ", type.literalStrings().size(), " texts and ", type.cellTests().size(), " tests of cells: ");
+    dumpClassOf(WTF::dataFile(), held);
+    dataLogLn();
+    return false;
+}
 
 template<typename Collection>
 static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
@@ -167,7 +73,7 @@ static bool entriesHaveType(Instance& instance, Collection* collection, Typed::C
         auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
         if (!next.storage)
             return true;
-        if (!layouts.valueHasType(type, slot == Typed::ContentsSlot::Value ? next.value : next.key))
+        if (!holdsType(layouts, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
             return false;
         storage = next.storage;
         entry = next.entry + 1;
@@ -263,11 +169,12 @@ bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot
         return true;
 
     const RuntimeLayoutTable& layouts = instance.state->objects->layouts;
-    unsigned length = array->length();
-    unsigned stride = std::max(1u, length / maxNumberOfTestedElements);
-    for (unsigned index = 0; index < length; index += stride) {
+    uint64_t length = array->length();
+    uint64_t stride = std::max<uint64_t>(1, length / maxNumberOfTestedElements);
+    for (uint64_t position = 0; position < length; position += stride) {
+        unsigned index = static_cast<unsigned>(position);
         JSValue element = array->tryGetIndexQuickly(index);
-        if (element && !layouts.valueHasType(type, element))
+        if (element && !holdsType(layouts, type, element, index))
             return false;
     }
     return true;
@@ -404,6 +311,8 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
         dataLogLn(CalledCodeDump(failure.found));
     else
         dataLogLn(ClassDump(failure.found));
+    if (ASCIILiteral word = disableOf(failure.kind); !word.isEmpty())
+        dataLogLn("AOT: the check belongs to --aot-disable=", word);
     writeCheckedNativeCalls();
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }

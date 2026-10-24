@@ -23,6 +23,7 @@ runtime GetOwnProperty : EncodedJSValue (EncodedJSValue object, uint32_t key) ; 
 
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
+runtime GetSparseElement : EncodedJSValue (JSCell* base, EncodedJSValue index) ; reads(all)
 runtime InByValGeneric : size_t (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
 runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, StringStorage, RuntimeState)
 
@@ -38,9 +39,7 @@ runtime DidCreateFieldAt, DidCreateFieldOutOfLineAt : void (JSCell* object, uint
 runtime DidCreateFieldsAt : void (JSCell* object, uint64_t offsets) ; RuntimeCreatesField
 runtime EnsureExtensionGranules : void (JSCell* object, uint64_t granuleBits) ; RuntimeCreatesField
 runtime EnsureExtensionGranulesWithoutCollecting : void (JSCell* object, uint64_t granuleBits) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState)
-runtime GetExtraProperty : EncodedJSValue (JSCell* object, uint32_t key) ; unknownCode
 runtime HasExtraProperty : size_t (JSCell* object, uint32_t key) ; reads(all)
-runtime PutExtraProperty : void (JSCell* object, uint32_t key, EncodedJSValue) ; unknownCode
 runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
 runtime MakeFlattenedObjectAt : JSCell* (JSCell* object, uint32_t distance) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects

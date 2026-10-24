@@ -18,6 +18,7 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTStubProgramTables.h"
 #include "AOTStubsCallLists.h"
+#include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsCalls.h"
 #include "JSCell.h"
 #include "StackAlignment.h"
@@ -26,12 +27,6 @@
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {
-
-#if CPU(X86_64)
-static constexpr StubRegister methodSiteCacheRegister = StubRegister::T11;
-#else
-static constexpr StubRegister methodSiteCacheRegister = readSiteCacheRegister;
-#endif
 
 static constexpr bool isFreeBeforeCall(StubRegister stubRegister)
 {
@@ -44,7 +39,7 @@ static constexpr bool isFreeBeforeCall(StubRegister stubRegister)
 }
 
 static_assert(!exists(callMethodById(numberOfArgumentGPRs + 1)));
-static_assert(isFreeBeforeCall(StubRegister::T9) && isFreeBeforeCall(StubRegister::T11) && isFreeBeforeCall(StubRegister::T13) && isFreeBeforeCall(methodSiteCacheRegister));
+static_assert(isFreeBeforeCall(StubRegister::T9) && isFreeBeforeCall(StubRegister::T11) && isFreeBeforeCall(StubRegister::T13));
 static_assert(sizeof(PackedSlot) == sizeof(uint64_t));
 static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
 
@@ -90,32 +85,26 @@ static void readMethodByCell(StubAssembler& jit, GPRReg cell, GPRReg method, GPR
 {
     RELEASE_ASSERT(noOverlap(thisGPR, calleeGPR, cell, method, scratch));
     otherwise.append(branchIfCellNameDiffers(jit, calleeGPR, cell, scratch));
-    otherwise.append(branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Value, scratch));
+    Jump isNoValue = branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Value, scratch);
     loadValueBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::Value, cell, InvalidGPRReg), thisGPR, method, scratch, method);
+    Jump hasMethod = jit.jump();
+
+    isNoValue.link(&jit);
+    otherwise.append(branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::ExtraProperty, scratch));
+    loadExtraPropertyBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::ExtraProperty, cell, InvalidGPRReg), thisGPR, method, scratch, otherwise);
+    hasMethod.link(&jit);
 }
 
 // finish takes the register with a cell that an own field of the receiver holds. Falls through with every operand as it was where there is none.
-static void emitProbeMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry, std::optional<uint32_t> boundName, bool requiresCallable, const ScopedLambda<void(GPRReg method)>& finish, GPRReg site = InvalidGPRReg)
+static void emitProbeMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry, std::optional<uint32_t> boundName, const ScopedLambda<void(GPRReg method)>& finish)
 {
     JumpList otherwise;
-    if (site != InvalidGPRReg)
-        otherwise.append(branchIfSiteIsFilled(jit, site));
     const GPRReg method = index;
     readFieldByTable(jit, { thisGPR, calleeGPR, index, entry, boundName }, method, otherwise, [&] {
         otherwise.append(jit.branchIfNotCell(method));
-        if (requiresCallable)
-            otherwise.append(branchIfNotFunctionType(jit, method, entry));
         finish(method);
     });
     otherwise.link(&jit);
-}
-
-static void returnMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry, bool requiresCallable, GPRReg site = InvalidGPRReg)
-{
-    emitProbeMethodInField(jit, index, entry, std::nullopt, requiresCallable, [&](GPRReg method) {
-        jit.move(method, calleeGPR);
-        jit.returnToCaller();
-    }, site);
 }
 
 static void emitProbeMethod(StubAssembler& jit, const MethodProbeRegisters& registers, MethodProbeExits& exits)
@@ -142,104 +131,6 @@ static void linkMethodProbeExits(StubAssembler& jit, const MethodProbeExits& exi
     });
 }
 
-static void emitMethodValueCheck(StubAssembler& jit, GPRReg value)
-{
-    Jump exception;
-    jit.emitFunctionPrologue();
-    preservingThisAndArguments(jit, value, [&] {
-        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
-        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
-        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        jit.move(calleeGPR, A2);
-        jit.move(value, A1);
-        jit.move(instanceGPR, A0);
-        jit.callOperation(Entry::operationAOTThrowUnlessCallableNamed, jit.reuseScratch(StubRegister::Operation));
-        exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
-    });
-    jit.emitFunctionEpilogue();
-    jit.move(value, calleeGPR);
-    jit.returnToCaller();
-
-    exception.link(&jit);
-    jit.emitFunctionEpilogue();
-    jit.jumpToExceptionHandler();
-}
-
-void generateFindMethodById(StubAssembler& jit)
-{
-    const bool requiresCallable = static_cast<FoundMethod>(jit.key().form()) == FoundMethod::Callable;
-    const MethodProbeRegisters registers = MethodProbeRegisters::allocate(jit);
-    const GPRReg method = registers.method;
-    MethodProbeExits exits;
-    JumpList needsCheck;
-
-    returnMethodInField(jit, registers.cell, registers.scratch, requiresCallable);
-    emitProbeMethod(jit, registers, exits);
-    if (requiresCallable)
-        needsCheck.append(branchIfNotFunctionType(jit, method, registers.scratch));
-    jit.move(method, calleeGPR);
-    jit.returnToCaller();
-
-    linkMethodProbeExits(jit, exits);
-    jit.emitFunctionPrologue();
-    preservingThisAndArguments(jit, calleeGPR, [&] {
-        const GPRReg R0 = jit.reuseScratch(firstStubOperandRegister);
-        jit.move(calleeGPR, jit.reuseScratch(slotNameRegister));
-        jit.move(thisGPR, R0);
-        jit.callStub(getByIdInStubFrame());
-        jit.move(R0, method);
-    });
-    jit.emitFunctionEpilogue();
-    needsCheck.append(jit.branchIfNotCell(method));
-    if (requiresCallable)
-        needsCheck.append(branchIfNotFunctionType(jit, method, registers.scratch));
-    jit.move(method, calleeGPR);
-    jit.returnToCaller();
-
-    needsCheck.link(&jit);
-    if (requiresCallable) {
-        emitMethodValueCheck(jit, method);
-        return;
-    }
-    // The error belongs to the call, which has a site of its own and no name.
-    jit.add32(TrustedImm32(1), calleeGPR);
-    jit.store32(calleeGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.nameOfUncallableMethod)));
-    jit.move(method, calleeGPR);
-    jit.returnToCaller();
-}
-
-void generateFindMethodByIdAtSite(StubAssembler& jit)
-{
-    const GPRReg site = jit.clobberOperand(2);
-    const GPRReg header = jit.allocateScratch(StubRegister::T13);
-    const GPRReg method = jit.allocateScratch(StubRegister::T9);
-    const StubKey findMethod = findMethodById(FoundMethod::Cell);
-    JumpList isDue;
-
-    returnMethodInField(jit, header, method, false, site);
-    jit.linkToStub(jit.branchIfNotCell(thisGPR), findMethod);
-    jit.loadPair64(site, header, method);
-    Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, header, Address(thisGPR, JSCell::structureIDOffset()));
-    jit.linkToStub(branchIfSlotKindDiffers(jit, { SlotForm::Slot, header, method }, Slot::Kind::Value, site), findMethod);
-    loadValueBySlot(jit, CachedSlot(SlotForm::Slot, Slot::Kind::Value, header, method), thisGPR, method, site, method);
-    jit.linkToStub(jit.branchIfNotCell(method), findMethod);
-    jit.move(method, calleeGPR);
-    jit.returnToCaller();
-
-    hasOtherStructure.link(&jit);
-    Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, header);
-    countSiteCacheMiss(jit, site, header, isDue);
-    jit.jumpToStub(findMethod);
-
-    isEmpty.link(&jit);
-    countMissOfEmptySite(jit, site, header, isDue);
-    jit.jumpToStub(findMethod);
-
-    isDue.link(&jit);
-    refillSiteCache(jit, thisGPR, calleeGPR, site, SlotAccess::Read);
-    jit.jumpToStub(findMethod);
-}
-
 // The code that calls a method does not know the callee, so what it expects of the call waits for the callee's name.
 static void callFoundMethod(StubAssembler& jit, unsigned count)
 {
@@ -253,7 +144,7 @@ static void emitCallMethodWithBoundName(StubAssembler& jit, uint32_t number, con
     RELEASE_ASSERT(RowDisplacementTable::hasColumn(number));
     JumpList otherwise;
 
-    emitProbeMethodInField(jit, registers.cell, registers.scratch, number, false, [&](GPRReg method) {
+    emitProbeMethodInField(jit, registers.cell, registers.scratch, number, [&](GPRReg method) {
         jit.move(method, calleeGPR);
         callFoundMethod(jit, jit.key().count());
     });
@@ -431,7 +322,7 @@ void generateCallMethodById(StubAssembler& jit)
     }
 
     MethodProbeExits exits;
-    emitProbeMethodInField(jit, registers.cell, registers.scratch, std::nullopt, false, [&](GPRReg method) {
+    emitProbeMethodInField(jit, registers.cell, registers.scratch, std::nullopt, [&](GPRReg method) {
         jit.move(method, calleeGPR);
         callFoundMethod(jit, count);
     });
@@ -491,25 +382,6 @@ void generateGetSuperBaseOfClass(StubAssembler& jit)
     callsOperation.link(&jit);
     jit.move(TrustedImm32(static_cast<int32_t>(Typed::HomeObjectKind::ClassPrototype)), rank);
     jit.tailCallOperation(Entry::operationAOTGetSuperBase, OperationCall::FirstArgument::Instance);
-}
-
-static StubSignature findMethodSignature()
-{
-    StubSignature signature;
-    signature.addOperand(thisGPR);
-    signature.addOperand(calleeGPR);
-    signature.result = StubResult::GPR;
-    signature.firstResult = calleeGPR;
-    return signature;
-}
-
-StubSignature signatureOfFindMethodById(StubKey) { return findMethodSignature(); }
-
-StubSignature signatureOfFindMethodByIdAtSite(StubKey)
-{
-    StubSignature signature = findMethodSignature();
-    signature.addOperand(gprOf(methodSiteCacheRegister));
-    return signature;
 }
 
 StubSignature signatureOfCallMethodById(StubKey)

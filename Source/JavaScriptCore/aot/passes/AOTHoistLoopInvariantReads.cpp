@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGenericCopy.h"
 #include "AOTHoistLoopInvariantReads.h"
 #include "AOTIRBuilder.h"
 #include "AOTMemoryLocation.h"
@@ -31,6 +32,7 @@ namespace {
 struct LoopClobbers {
     Vector<MemoryLocation> locations;
     LocationMasks writes;
+    bool maySuspend { false };
 };
 
 struct HoistableLoop {
@@ -72,6 +74,7 @@ static bool isClobbered(const LoopClobbers& clobbers, const Program& program, co
 static void addEffects(const EffectsOnEdges& effects, LoopClobbers& clobbers)
 {
     Effects any = effects.onAnyEdge();
+    clobbers.maySuspend |= any.maySuspend;
     if (any.mayRunOtherCode()) {
         clobbers.writes = LocationMasks::top();
         return;
@@ -118,10 +121,16 @@ static std::optional<BlockID> findPreheader(FunctionPassContext& context, const 
 static std::optional<HoistableLoop> describeHoistableLoop(FunctionPassContext& context, const NaturalLoop& loop)
 {
     const Function& function = context.function;
-    BlockID header = loop.header();
-    bool hasRead = std::ranges::any_of(function.at(header).values, [&](ValueID id) {
-        return isVariableRead(function, function.at(id));
-    });
+    if (isClosedOnlyByWaysBack(context.analyses, loop))
+        return std::nullopt;
+    bool hasRead = false;
+    BitVector body(function.blocks.size());
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        body.quickSet(loop.at(i).index());
+        hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
+            return isVariableRead(function, function.at(id));
+        });
+    }
     if (!hasRead)
         return std::nullopt;
 
@@ -129,11 +138,10 @@ static std::optional<HoistableLoop> describeHoistableLoop(FunctionPassContext& c
     if (!preheader)
         return std::nullopt;
 
-    BitVector body(function.blocks.size());
-    for (unsigned i = 0; i < loop.size(); ++i)
-        body.quickSet(loop.at(i).index());
     LoopClobbers clobbers = findClobbers(context, body);
-    return HoistableLoop { header, *preheader, WTF::move(body), WTF::move(clobbers) };
+    if (clobbers.maySuspend)
+        return std::nullopt;
+    return HoistableLoop { loop.header(), *preheader, WTF::move(body), WTF::move(clobbers) };
 }
 
 static bool hasInvariantOperands(const Value& value, const BitVector& body, const Vector<BlockID>& definingBlock)
@@ -146,7 +154,7 @@ static bool hasInvariantOperands(const Value& value, const BitVector& body, cons
     return result;
 }
 
-static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, const LoopClobbers& clobbersBeforeRead, const Vector<BlockID>& definingBlock, const BitVector& keptReads, ValueID id)
+static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bool isInHeader, const LoopClobbers& clobbersBeforeRead, const Vector<BlockID>& definingBlock, const BitVector& keptReads, ValueID id)
 {
     const Program& program = context.program;
     const Value& value = context.function.at(id);
@@ -161,6 +169,9 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, co
         return false;
 
     LocationStability stability = stabilityOfRead(program, value, access);
+    // That a location is stored before it is read may hang on a test in front of the read, and a block that is not the header may not run at all.
+    if (!isInHeader && stability != LocationStability::UnchangedDuringActivation)
+        return false;
     if (stability != LocationStability::UnchangedDuringActivation && isClobbered(clobbersBeforeRead, program, location))
         return false;
     if (stability == LocationStability::Unknown && isClobbered(loop.clobbers, program, location))
@@ -169,33 +180,36 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, co
     return hasInvariantOperands(value, loop.body, definingBlock);
 }
 
+// In the header what stands in front of a read is known. Anything in the loop may have run in front of a read in another block.
 static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& loop, Vector<BlockID>& definingBlock)
 {
     Function& function = context.function;
-    Block& header = function.edit(loop.header);
-    Block& preheader = function.edit(loop.preheader);
-
     unsigned numberOfHoistedReads = 0;
-    LoopClobbers clobbersBeforeRead;
-    BlockValues remaining;
-    remaining.reserveInitialCapacity(header.values.size());
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
-    for (ValueID id : header.values) {
-        if (!canHoist(context, loop, clobbersBeforeRead, definingBlock, keptReads, id)) {
-            addClobbers(context, id, clobbersBeforeRead);
-            remaining.append(id);
+    for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
+        if (!loop.body.get(blockID.index()) || context.analyses.blockFrequencies().classOf(blockID) == BlockFrequency::Rare)
             continue;
+        LoopClobbers clobbersInHeader;
+        unsigned numberOfReadsBefore = numberOfHoistedReads;
+        BlockValues remaining;
+        remaining.reserveInitialCapacity(function.at(blockID).values.size());
+        for (ValueID id : function.at(blockID).values) {
+            if (!canHoist(context, loop, blockID == loop.header, blockID == loop.header ? clobbersInHeader : loop.clobbers, definingBlock, keptReads, id)) {
+                addClobbers(context, id, clobbersInHeader);
+                remaining.append(id);
+                continue;
+            }
+            function.edit(loop.preheader).values.append(id);
+            definingBlock[id.index()] = loop.preheader;
+            ++numberOfHoistedReads;
+            appendKeptReadForValidation(builder, remaining, id);
         }
-        preheader.values.append(id);
-        definingBlock[id.index()] = loop.preheader;
-        ++numberOfHoistedReads;
-        appendKeptReadForValidation(builder, remaining, id);
+        if (numberOfHoistedReads > numberOfReadsBefore)
+            function.edit(blockID).values = WTF::move(remaining);
+        while (definingBlock.size() < function.values.size())
+            definingBlock.append(blockID);
     }
-    if (numberOfHoistedReads)
-        header.values = WTF::move(remaining);
-    while (definingBlock.size() < function.values.size())
-        definingBlock.append(loop.header);
     return numberOfHoistedReads;
 }
 

@@ -39,6 +39,7 @@ static void resetAnalysis(AllocationSinking& sinking)
         Candidate& candidate = sinking.at(VirtualObjectID(index));
         if (candidate.abandonedBy == LimitID::None && !candidate.isLeftOut)
             candidate.isAbandoned = false;
+        candidate.isBuiltBeforeBranches = false;
     }
     sinking.decisions() = SinkingDecisions { };
 }
@@ -172,7 +173,8 @@ void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> r
 }
 
 // A callee that hands over the parts of its result hands over the object itself on some of its ways. The caller puts the parts together only to have one value where the two meet.
-bool AllocationSinking::meetsWholeResultOfCallee(const Candidate& join) const
+// A way that seldom runs and makes the object counts the same, where it is a read or a test behind the meeting that wants the cell.
+bool AllocationSinking::meetsObjectMadeOnAnotherWay(const Candidate& join) const
 {
     if (join.isLeftOut || m_function.at(join.block).frequency != BlockFrequency::Normal)
         return false;
@@ -181,10 +183,14 @@ bool AllocationSinking::meetsWholeResultOfCallee(const Candidate& join) const
     });
     if (!isMadeOnEveryPath)
         return false;
+    std::optional<Opcode> cause = join.firstCause ? join.firstCause->opcode : std::nullopt;
+    bool isBuiltForRead = cause && (interpretedOf(*cause) == Interpretation::Read || interpretedOf(*cause) == Interpretation::Test);
     size_t parameterIndex = m_function.at(join.block).parameters.find(join.definition);
     return std::ranges::any_of(m_analyses.cfg().incomingEdges(join.block), [&](Edge edge) {
         ValueID incoming = valuePassedOn(m_function, edge, parameterIndex);
-        return incoming && m_function.at(sameObjectThroughCasts(m_function, incoming)).opcode == Opcode::ResultAt;
+        if (!incoming)
+            return false;
+        return (isBuiltForRead && m_function.at(edge.from).frequency != BlockFrequency::Normal) || m_function.at(sameObjectThroughCasts(m_function, incoming)).opcode == Opcode::ResultAt;
     });
 }
 
@@ -285,7 +291,7 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
         const Candidate& candidate = m_candidates[index];
         if (candidate.abandonedBy != LimitID::None)
             continue;
-        if (candidate.isJoin ? meetsWholeResultOfCallee(candidate) : !!candidate.mergeBlock)
+        if (candidate.isJoin ? meetsObjectMadeOnAnotherWay(candidate) : !!candidate.mergeBlock)
             plans.append(DuplicationPlan { VirtualObjectID(index), candidate.isJoin ? candidate.block : candidate.mergeBlock, { } });
     }
     if (plans.isEmpty() || hasSpentItsWork())

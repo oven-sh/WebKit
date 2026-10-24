@@ -28,6 +28,9 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLa
 // A copy that comes back in front of the tests it has failed closes a cycle through them. The tested code never goes around it, so it is no loop to move a test out of.
 bool isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 
+// That a counter stays on this side of its bound makes it an integer once the bound is one, which typed code may find out rounds from now. A copy counts without a bound, and what it hands back would undo that for good, so it hands back only what passes a test for this type. By parameter of the head, none for one that is no such counter; empty where there is none at all.
+Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
+
 struct ValuesNarrowedByTests {
     std::span<const ValueID> asExpected;
     std::span<const ValueID> inUnknownWay;
@@ -82,6 +85,7 @@ private:
         unsigned depthOfLoop { 0 };
         Vector<ValueID, 4> narrowedLiveValues;
         Vector<ValueID, 4> valuesThatMayBeUnspecified;
+        Vector<TypeID, 4> typesOfCounters;
     };
 
     struct RejoinTest {

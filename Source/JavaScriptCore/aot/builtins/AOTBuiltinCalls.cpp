@@ -24,8 +24,6 @@ static_assert(maxArgumentCount <= BuiltinOperand::maxArgumentIndex);
 
 static constexpr OptionSet<BuiltinPrimitive> nullishPrimitives { BuiltinPrimitive::Undefined, BuiltinPrimitive::Null };
 
-static constexpr Effects appendEffects = declaredBoundOf(Opcode::StringBuilderAppendBuiltin);
-
 template<typename Carrier>
 static BuiltinCall inlineCallOf(const BuiltinTable& table, const Carrier& carrier)
 {
@@ -266,46 +264,6 @@ bool overloadTakesOperands(const Program& program, const Function& function, con
 {
     ScratchTypeArena scratch(program.types);
     return overloadTakesOperands(TypingContext { program, function, scratch.arena() }, call);
-}
-
-static bool isAlwaysString(const BuiltinType& type)
-{
-    return !type.isNever() && !type.mayBeObject() && !(primitivesOfBuiltinType(type) & ~Primitive::AnyString);
-}
-
-bool overloadCanAppend(const TypingContext& context, const Value& append)
-{
-    RELEASE_ASSERT(append.opcode == Opcode::StringBuilderAppendBuiltin);
-    const Program& program = context.program;
-    const BuiltinTable& table = program.builtins();
-    if (!table.contains(append.overload()))
-        return false;
-
-    const BuiltinOverload& overload = table.at(append.overload());
-    const BuiltinForms* forms = table.formsOf(overload.builtin);
-    if (!forms || !forms->hasHostAppendFunction)
-        return false;
-    if (!overload.result.type || !isAlwaysString(table.at(overload.result.type)))
-        return false;
-
-    BuiltinCall call { append.overload(), BuiltinCallForm::Whole, 0, append.receiverOperand(), append.argumentsOperands() };
-    if (call.arguments.size() > maxArgumentCount)
-        return false;
-
-    if (!operandsLieInParameters(context, overload, call))
-        return false;
-
-    BuiltinOperandTypes types = operandTypesOf(context, call);
-    const Type* receiver = types.receiver ? &program.at(types.receiver) : nullptr;
-    EffectSummaries unknownSummaries;
-    EffectsOnEdges effects = effectsOfOverload({ program, unknownSummaries }, call.overload, receiver, types.arguments.span());
-    return effects.onAnyEdge().isSubsetOf(appendEffects);
-}
-
-bool overloadCanAppend(const Program& program, const Function& function, const Value& append)
-{
-    ScratchTypeArena scratch(program.types);
-    return overloadCanAppend(TypingContext { program, function, scratch.arena() }, append);
 }
 
 } } } // namespace JSC::AOT::Typed

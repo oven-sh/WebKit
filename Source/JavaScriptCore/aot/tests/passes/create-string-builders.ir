@@ -634,7 +634,6 @@ function f21 name="keepsSubstringPart" parameters=[{type=string}, {type=number},
 # CHECK: [[h23]]: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1([[h23]], v4)
 # CHECK: b1(v5: stringbuilder, v6: int|whole):
-# CHECK-NOT: StringBuilderAppendBuiltin
 # CHECK: v10: string = Substring v0, v4, v9
 # CHECK-NEXT: StringBuilderAppend v5, v10
 # CHECK: [[r23]]: string = StringBuilderFinish v5
@@ -655,7 +654,6 @@ function f22 name="keepsJoinWithoutAppendFunction" parameters=[{type=Array<strin
 # CHECK-LABEL: name="keepsJoinWithoutAppendFunction"
 # CHECK: [[h24]]: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: StringBuilderAppend [[h24]], v1, v1
-# CHECK-NOT: StringBuilderAppendBuiltin
 # CHECK: v8: string = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0
 # CHECK-NEXT: StringBuilderAppend [[h24]], v3, v8, v4
 # CHECK-NEXT: [[r24]]: string = StringBuilderFinish [[h24]]
@@ -675,7 +673,6 @@ function f23 name="keepsJoinBeforeStore" parameters=[{type=Array<string, proven>
     Return v11
 }
 # CHECK-LABEL: name="keepsJoinBeforeStore"
-# CHECK-NOT: StringBuilderAppendBuiltin
 # CHECK: v9: string = CallBuiltin v0, v3
 # CHECK: StringBuilderAppend {{*}}, v4, v9, v5
 
@@ -903,10 +900,8 @@ function f33 name="keepsUntypedArrayJoin" parameters=[{type=Array<anything, prov
 }
 # CHECK-LABEL: name="keepsUntypedArrayJoin"
 # CHECK: [[h35]]: stringbuilder = StringBuilderBegin
-# CHECK-NOT: StringBuilderAppendBuiltin
 # CHECK: v8: string = CallBuiltin v0, v2
 # CHECK-NEXT: StringBuilderAppend [[h35]], v3, v8, v4
-# CHECK-NOT: StringBuilderAppendBuiltin
 # CHECK: [[r35]]: string = StringBuilderFinish [[h35]]
 # CHECK-NEXT: Return [[r35]]
 

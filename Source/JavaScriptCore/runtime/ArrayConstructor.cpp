@@ -24,6 +24,10 @@
 #include "config.h"
 #include "ArrayConstructor.h"
 
+#if ENABLE(AOT)
+#include "AOTCompactTable.h"
+#endif
+
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
 #include "BuiltinNames.h"
@@ -377,17 +381,7 @@ static NEVER_INLINE JSArray* tryCreateArrayFromCompactStorage(JSGlobalObject* gl
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto forEachElement = [&](const auto& functor) ALWAYS_INLINE_LAMBDA {
-        JSCell* storage = storageCell;
-        typename Helper::Entry entry = startEntry;
-        while (true) {
-            auto next = Helper::transitAndNext(vm, *storage, entry);
-            if (!next.storage)
-                break;
-
-            functor(kind == IterationKind::Keys ? next.key : next.value);
-            storage = next.storage;
-            entry = next.entry + 1;
-        }
+        AOT::CompactTable::forEachInColumn(vm, storageCell, startEntry, kind == IterationKind::Keys, functor);
     };
 
     IndexingType indexingType = IsArray;

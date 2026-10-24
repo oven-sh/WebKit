@@ -27,7 +27,6 @@ class BuildContext;
 namespace Typed {
 
 class CallGraph;
-class EnvironmentReuse;
 class FlowResults;
 class FrameAllocation;
 class Heat;
@@ -144,7 +143,6 @@ struct PlannedLayout {
     uint32_t size { 0 };
     uint32_t sizeWithInnerObjects { 0 };
     uint32_t extensionSize { 0 };
-    std::optional<uint32_t> isEscapedOffset;
     Vector<PlacedSlot> slots;
     Vector<ReservedBytes> bytesKeptZero;
     Vector<PlacedInnerObject> innerObjects;
@@ -212,7 +210,6 @@ struct SlotPlanInputs {
     const CallGraph& callGraph;
     const Heat& heat;
     const FrameAllocation& frameAllocation;
-    const EnvironmentReuse& environmentReuse;
 };
 
 class SlotPlan {

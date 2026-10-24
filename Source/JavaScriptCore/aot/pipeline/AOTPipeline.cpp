@@ -129,9 +129,9 @@ constexpr InvalidatedAnalyses nothing = InvalidatedAnalyses::None;
 constexpr InvalidatedAnalyses values = InvalidatedAnalyses::Values;
 constexpr InvalidatedAnalyses everything = InvalidatedAnalyses::All;
 
-constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation, EnvironmentReuse };
-constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
-constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
+constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation };
+constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
+constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
 
 constexpr std::array rows {
     verifiedAfterNextPass(programPass(AllocateTaggedLayouts, Required, { AsRead, AsRead }, { }, { }, { })),
@@ -170,7 +170,6 @@ constexpr std::array rows {
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
     programPass(FlattenInnerObjects, Optional, { Prepared, Prepared }, { Flow, Heat }, { }, resultsAboutBodies),
     addingOnly({ }, programPass(AllocateInnerObjects, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, { })),
-    addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
     countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
@@ -298,6 +297,7 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(CallThroughMethodTable),
         ScheduleStep::run(ResolveCalls),
         ScheduleStep::run(ResolveAccesses),
+        ScheduleStep::run(HoistLoopInvariantReads),
         ScheduleStep::run(SplitUnions),
         ScheduleStep::run(PlaceTypeTests),
         ScheduleStep::run(ExpandIteration),
@@ -325,6 +325,7 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(StartGeneratorsAtFirstStep),
     ScheduleStep::run(SeparateUnlikelyLoopPaths),
     ScheduleStep::run(ConvertCountersToIntegers),
+    ScheduleStep::run(SimplifyCasts),
     ScheduleStep::run(SimplifyBuiltinCalls),
     ScheduleStep::run(ReduceIntegerDivisions),
     ScheduleStep::run(FoldConstantRegExps),
@@ -344,9 +345,6 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ExpandIteration),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
-    // Below a bound that has just been tested.
-    ScheduleStep::run(ConvertCountersToIntegers),
-    ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RemoveDeadCountedLoops),
     ScheduleStep::run(HoistLoopInvariantReads),
     ScheduleStep::run(EliminateRedundantReads),
@@ -415,7 +413,6 @@ constexpr PassesLeftIdle passesLeftIdle[] {
 constexpr PassesLeftIdle passesThatCanWait[] {
     { CreateStringBuilders, { PlaceTypeTests } },
     { EliminateDeadCode, { ResolveBuiltins, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, FoldConstants, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateDeadCode, EliminateRedundantReads } },
-    { EliminateGuards, { RetypeValues } },
     { EliminateRedundantReads, { RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { FoldConstants, { RemoveTrivialParameters, EliminateRedundantReads } },
     { FuseConcatenations, { EliminateRedundantReads } },

@@ -165,7 +165,7 @@ void AccessRewriter::becomeMethodClosure(const NamedAccessSite& site, const Acce
     value.become(Opcode::NewClosure);
     value.setFunction(method);
     // A closure that is only called is nobody's object. Any other use may compare it with what another read of the member gave.
-    value.setIsHeldByClosureTable(plan.member.kind == MemberKind::Method && !site.query.isOnlyCalled);
+    value.setIsHeldByClosureTable(plan.member.kind == MemberKind::Method && (!site.query.isOnlyCalled || program.at(method).has(FunctionFlags::TakesCallee)));
     if (capturedReceiver)
         value.appendVariadicOperand(capturedReceiver);
     finish(site.site, replaced);

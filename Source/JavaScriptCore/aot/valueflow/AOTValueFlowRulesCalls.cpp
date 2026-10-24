@@ -204,55 +204,6 @@ static ValueSetID objectsAnsweredTo(ValueFlowRuleContext& context, ClimbingSet c
     return context.maker().unite(ValueSets::complement(universe.instancesOfClasses()), context.maker().of(instances.span()));
 }
 
-bool mayHaveOtherLayoutThanItsClass(ValueFlowRuleContext& context, ClimbingSet value)
-{
-    const ValueFlowUniverse& universe = context.universe();
-    ClimbingSet instances = context.restrict(value, universe.instancesOfRootClasses());
-    if (!context.meet(instances, ValueSets::anything))
-        return false;
-    ClimbingSet newTargets = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands));
-    if (context.contains(newTargets, ValueFlowUniverse::unknownObject()) || context.contains(newTargets, ValueFlowUniverse::untrackedObject()))
-        return true;
-    bool answer = false;
-    context.forEachMember(instances, [&](ValueFlowObjectID instance) {
-        answer |= context.contains(newTargets, universe.closureOf(context.program().at(universe.layoutOf(instance)).constructor));
-    });
-    return answer;
-}
-
-// Whether one of the tests at the entry of the function may turn away what this call passes. What no operand of the call decides, a captured value or the array of the other arguments, is asked of the function itself.
-static bool mayFailEntryChecks(ValueFlowRuleContext& context, const ValueFlowStatement& statement, FunctionID tests)
-{
-    const Program& program = context.program();
-    const ValueFlowUniverse& universe = context.universe();
-    const Function& function = program.at(tests);
-    std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    std::span<const ValueFlowOperand> arguments = operands.subspan(2);
-    const auto& parameters = function.at(entryBlock).parameters;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
-            const Value& test = function.at(id);
-            if (test.opcode != Opcode::TypeTest)
-                continue;
-            size_t index = parameters.find(test.valueOperand());
-            RELEASE_ASSERT(index != notFound);
-            ClimbingSet given = context.valueOf(context.nodes().entryParameter(tests, index));
-            EntryParameter kind = function.entryParameterKind(index);
-            if (kind == EntryParameter::This)
-                given = program.at(statement.function).at(statement.site).operand(1) ? context.valueOf(operands[1]) : ClimbingSet(universe.undefinedValue());
-            else if (kind == EntryParameter::Parameter && index - function.firstParameterIndex() < function.numberOfPositionalParameters()) {
-                if (passesList(statement.opcode))
-                    return true;
-                size_t position = index - function.firstParameterIndex();
-                given = position < arguments.size() ? context.valueOf(arguments[position]) : ClimbingSet(universe.undefinedValue());
-            }
-            if (context.meet(given, ValueSets::complement(universe.membersInsideUnlessNewTargetDiffers(context.maker(), program, test.testedType()))) || mayHaveOtherLayoutThanItsClass(context, given))
-                return true;
-        }
-    }
-    return false;
-}
-
 static bool throwsInsteadOfRunning(const Function& callee, bool isConstruction);
 
 // What the call gets back from a function that returns some of its parameters as they came: what else the function returns, and the call's own operands in the place of those parameters.
@@ -300,14 +251,6 @@ static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFl
             answer = false;
             return;
         }
-        if (const auto* entryChecks = program.at(function).creator.tryAs<CreatorRecord::EntryChecks>()) {
-            if (mayFailEntryChecks(context, statement, function)) {
-                answer = false;
-                return;
-            }
-            function = entryChecks->body;
-            gainsSomething = true;
-        }
         if (throwsInsteadOfRunning(program.at(function), false))
             return;
         gainsSomething |= !!nodes.resultSummaryOf(function);
@@ -323,64 +266,6 @@ static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFl
             takeResultThroughSummary(context, statement, function, *summary);
         else if (!program.at(function).results.isEmpty())
             context.connect(nodes.result(function, 0), statement.result);
-    }
-    return true;
-}
-
-// A call whose operands pass all the tests of all its callees runs their typed bodies and nothing else.
-static bool callsTypedBodies(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees, const ReceiversOfEveryCallee& passedReceivers)
-{
-    const Program& program = context.program();
-    const ValueFlowUniverse& universe = context.universe();
-    const ValueFlowProgramNodes& nodes = context.nodes();
-    if (passesList(statement.opcode))
-        return false;
-
-    Vector<ValueFlowObjectID, 8> closures;
-    bool answer = true;
-    context.forEachMember(callees, [&](ValueFlowObjectID closure) {
-        FunctionID function = universe.closureFunction(closure);
-        if (!answer || !function || closures.size() >= context.mostMembersToldApart()) {
-            answer = false;
-            return;
-        }
-        const Function& tests = program.at(function);
-        answer = tests.role == FunctionRole::EntryChecks && !tests.has(FunctionFlags::HasRestParameter) && !tests.hiddenRestParameterIndex() && !mayFailEntryChecks(context, statement, function);
-        closures.append(closure);
-    });
-    if (!answer || closures.isEmpty())
-        return false;
-
-    std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    std::span<const ValueFlowOperand> arguments = operands.subspan(2);
-    for (ValueFlowObjectID closure : closures) {
-        FunctionID function = universe.closureFunction(closure);
-        const Function& tests = program.at(function);
-        FunctionID body = tests.creator.as<CreatorRecord::EntryChecks>().body;
-        // The function that tests hands on what the closure has captured, and it enters the typed body.
-        context.reach(function);
-        if (auto index = tests.calleeParameterIndex())
-            context.add(nodes.entryParameter(body, *index), only(context, closure));
-        if (auto index = tests.argumentCountParameterIndex())
-            context.add(nodes.entryParameter(body, *index), universe.anyPrimitive());
-        if (auto index = tests.newTargetParameterIndex())
-            context.add(nodes.entryParameter(body, *index), universe.undefinedValue());
-        if (auto index = tests.thisParameterIndex())
-            passThis(context, statement, operands[1], passedReceivers, nodes.entryParameter(body, *index));
-        unsigned first = tests.firstParameterIndex();
-        for (unsigned position = 0; position < tests.numberOfPositionalParameters(); ++position) {
-            ValueFlowNodeID parameter = nodes.entryParameter(body, first + position);
-            if (position < arguments.size())
-                context.connect(arguments[position], parameter);
-            else
-                context.add(parameter, universe.undefinedValue());
-        }
-        if (statement.thrown)
-            context.connect(nodes.thrown(body), statement.thrown);
-    }
-    if (statement.result) {
-        bool takesResults = takesResultOfEachCallee(context, statement, callees);
-        RELEASE_ASSERT(takesResults);
     }
     return true;
 }
@@ -450,8 +335,6 @@ static bool passRestArrayByPosition(ValueFlowRuleContext& context, const ValueFl
 // The operands of all six operations: the callee, then this or new.target, then the arguments or the list of them. They go into the group of the callees, and what the callees answer and throw comes out of it.
 static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees, ValueFlowCallKind kind, const ReceiversOfEveryCallee& passedReceivers = { }, ValueFlowCalleeOrigin origin = ValueFlowCalleeOrigin::Value)
 {
-    if (kind == ValueFlowCallKind::Call && callsTypedBodies(context, statement, callees, passedReceivers))
-        return;
     // Without the operand the callee is new.target: each callee its own, and none that of another.
     if (kind == ValueFlowCallKind::Construct && !context.program().at(statement.function).at(statement.site).operand(1)) {
         Vector<ValueFlowObjectID, 8> members;

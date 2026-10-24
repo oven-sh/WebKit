@@ -11,8 +11,10 @@
 #include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEliminateGuards.h"
+#include "AOTInlineBuiltinForms.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
+#include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTValueSubstitution.h"
@@ -1206,6 +1208,9 @@ bool GuardEliminator::canReplaceTests(const ExistingProof& allocationProof, Proo
 {
     const TestCondition& condition = m_conditions.at(allocationProof.condition);
     const Value& allocation = m_function.at(allocationProof.value);
+    // Select gives such a call an inline way and a slow one, and the parameter that joins the two proves nothing. So a call that is named as a guard keeps the slow way alone.
+    if (!reliedOn.isEmpty() && allocation.opcode == Opcode::CallBuiltin && inlineImplementationOf(m_context.program, allocation) && overloadOf(m_context.program, allocation).code.implementation.otherwise)
+        return false;
 
     AbstractHeapSet heapsDependedOn;
     for (const MemoryLocation& location : condition.dependsOn)

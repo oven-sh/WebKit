@@ -405,7 +405,7 @@ static bool covers(const Program& program, FunctionID id, const FunctionSummaryV
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         if (!mayBeReference(program.typeOf(function, parameters[index])))
             continue;
-        // An operation that a pass adds looks at its operand, which may be a parameter that the body only handed on: MarkEnvironmentEscaped.
+        // An operation that a pass adds looks at its operand, which may be a parameter that the body only handed on.
         if (!summary.operand(index).uses.contains(OperandUse::Inspects))
             return false;
         OperandMemory memoryOfParameter = summary.memory(index);

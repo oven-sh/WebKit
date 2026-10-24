@@ -35,6 +35,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/UnalignedAccess.h>
+#include <wtf/text/ASCIIFastPath.h>
 
 namespace JSC {
 
@@ -204,6 +205,16 @@ inline JSString* JSONCache::tryMakeLongJSString(VM& vm, std::span<const Characte
 {
     // Null if the characters cannot be allocated: JSON text can hold a string of any length.
     auto create = [&]() -> JSString* {
+        if constexpr (std::is_same_v<CharacterType, char16_t>) {
+            if (WTF::charactersAreAllLatin1(characters)) {
+                std::span<Latin1Character> narrowBuffer;
+                auto impl = StringImpl::tryCreateUninitialized(characters.size(), narrowBuffer);
+                if (!impl) [[unlikely]]
+                    return nullptr;
+                WTF::copyElements(narrowBuffer, characters);
+                return jsNontrivialString(vm, String(WTF::move(impl)));
+            }
+        }
         std::span<CharacterType> buffer;
         auto impl = StringImpl::tryCreateUninitialized(characters.size(), buffer);
         if (!impl) [[unlikely]]

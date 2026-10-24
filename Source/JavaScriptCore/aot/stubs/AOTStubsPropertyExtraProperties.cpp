@@ -26,7 +26,6 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(exists(getExtraPropertyFrontEnd()) && exists(putExtraPropertyFrontEnd()));
 static_assert(widthOf(hiddenReferenceRepresentation(false)) == sizeof(uint32_t) && widthOf(hiddenReferenceRepresentation(true)) == sizeof(uint64_t));
 static_assert(representsAbsentAsZero(hiddenReferenceRepresentation(false)) && representsAbsentAsZero(hiddenReferenceRepresentation(true)));
 static_assert(sizeof(StructureID) == sizeof(uint32_t) && sizeof(WriteBarrierStructureID) == sizeof(StructureID));
@@ -82,6 +81,18 @@ void readExtraPropertyAndReturn(StubAssembler& jit, const CachedSlot& slot, cons
     locateExtraProperty(jit, slot, r, miss);
     jit.load64(BaseIndex(r.extraProperties, r.wordIndex, CCallHelpers::TimesEight), result);
     jit.returnToCaller();
+}
+
+void loadExtraPropertyBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg object, GPRReg result, GPRReg scratch, JumpList& miss)
+{
+    RELEASE_ASSERT(Slot::payloadOf(slot.kind()) == SlotPayload::ExtraProperty && noOverlap(slot.header(), object, result, scratch));
+    slot.loadHiddenWordOffset(jit, scratch);
+    loadExtraProperties(jit, object, scratch, result, miss);
+    loadWordIndex(jit, slot, scratch);
+    Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(result, JSObject::butterflyOffset()), result);
+    isInline.link(&jit);
+    jit.load64(BaseIndex(result, scratch, CCallHelpers::TimesEight), result);
 }
 
 void storeExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, const StoreFinish& finish, JumpList& miss)
@@ -225,136 +236,6 @@ void addExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraPro
 
     hasNone.link(&jit);
     createExtraProperties(jit, slot, r, value, finish, exits.cannot);
-}
-
-// payload is not slotPayloadRegister: on x86-64 that one is callee-saved for an operation, and a front end stands in for one.
-struct ExtraPropertyProbe {
-    CachedSlot slot(SlotForm form, Slot::Kind kind) const { return CachedSlot(form, kind, header, form == SlotForm::Slot ? payload : InvalidGPRReg); }
-
-    ExtraPropertyRegisters access;
-    GPRReg identifierNumber;
-    GPRReg header;
-    GPRReg payload;
-};
-
-static ExtraPropertyProbe allocateProbe(StubAssembler& jit)
-{
-    ExtraPropertyProbe probe {
-        .access = { jit.operand(0), jit.allocateScratch(StubRegister::T10), jit.allocateScratch(StubRegister::T11), jit.allocateScratch(StubRegister::T9) },
-        .identifierNumber = jit.clobberOperand(1),
-        .header = jit.allocateScratch(slotHeaderRegister),
-        .payload = jit.result(),
-    };
-    jit.zeroExtend32ToWord(probe.identifierNumber, probe.identifierNumber);
-    return probe;
-}
-
-static void probeFront(StubAssembler& jit, SlotAccess access, const ExtraPropertyProbe& probe, JumpList& isNotInFront)
-{
-    const GPRReg structureID = probe.access.wordIndex;
-    const GPRReg row = probe.access.scratch;
-    const GPRReg scratch = probe.access.extraProperties;
-    isNotInFront.append(jit.branch32(CCallHelpers::Above, probe.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)));
-    jit.load32(Address(probe.access.object, JSCell::structureIDOffset()), structureID);
-    loadFrontCell(jit, access, { structureID, probe.identifierNumber, row, probe.header, scratch });
-    isNotInFront.append(branchIfCellNameDiffers(jit, probe.identifierNumber, probe.header, scratch));
-}
-
-static void probeHashedTable(StubAssembler& jit, SlotAccess access, const ExtraPropertyProbe& probe, JumpList& miss)
-{
-    const GPRReg structureID = probe.access.wordIndex;
-    const GPRReg uid = probe.access.extraProperties;
-    const GPRReg entry = probe.access.scratch;
-    jit.load32(Address(probe.access.object, JSCell::structureIDOffset()), structureID);
-    loadIdentifier(jit, probe.identifierNumber, uid, miss);
-    findHashedSlot(jit, access, { structureID, uid, entry, probe.header, probe.payload, probe.payload }, miss);
-}
-
-static void callWriteBarrier(StubAssembler& jit, GPRReg owner)
-{
-    static_assert(gprOf(firstStubOperandRegister) == GPRInfo::returnValueGPR);
-    jit.move(owner, jit.result());
-#if CPU(ARM64)
-    jit.pushToSave(CCallHelpers::linkRegister);
-    jit.callStub(writeBarrier());
-    jit.popToRestore(CCallHelpers::linkRegister);
-#else
-    jit.subPtr(TrustedImm32(sizeof(CPURegister)), CCallHelpers::stackPointerRegister);
-    jit.callStub(writeBarrier());
-    jit.addPtr(TrustedImm32(sizeof(CPURegister)), CCallHelpers::stackPointerRegister);
-#endif
-}
-
-StubSignature signatureOfGetExtraPropertyFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(2);
-}
-
-static void returnExtraProperty(StubAssembler& jit, SlotForm form, const ExtraPropertyProbe& probe, JumpList& hasOtherKind, JumpList& callsOperation)
-{
-    hasOtherKind.append(branchIfSlotKindDiffers(jit, { form, probe.header }, Slot::Kind::ExtraProperty, probe.access.scratch));
-    locateExtraProperty(jit, probe.slot(form, Slot::Kind::ExtraProperty), probe.access, callsOperation);
-    jit.load64(BaseIndex(probe.access.extraProperties, probe.access.wordIndex, CCallHelpers::TimesEight), jit.result());
-    jit.move(TrustedImm32(0), jit.secondResult());
-    jit.returnToCaller();
-}
-
-void generateGetExtraPropertyFrontEnd(StubAssembler& jit)
-{
-    const ExtraPropertyProbe probe = allocateProbe(jit);
-    JumpList isNotInFront;
-    JumpList callsOperation;
-    probeFront(jit, SlotAccess::Read, probe, isNotInFront);
-    returnExtraProperty(jit, SlotForm::PackedSlot, probe, isNotInFront, callsOperation);
-
-    isNotInFront.link(&jit);
-    probeHashedTable(jit, SlotAccess::Read, probe, callsOperation);
-    returnExtraProperty(jit, SlotForm::Slot, probe, callsOperation, callsOperation);
-
-    callsOperation.link(&jit);
-    jit.tailCallOperation(Entry::RawGetExtraProperty, OperationCall::FirstArgument::Instance);
-}
-
-StubSignature signatureOfPutExtraPropertyFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(3);
-}
-
-void generatePutExtraPropertyFrontEnd(StubAssembler& jit)
-{
-    const ExtraPropertyProbe probe = allocateProbe(jit);
-    const GPRReg value = jit.operand(2);
-    const GPRReg kind = probe.access.scratch;
-    JumpList isNotInFront;
-    JumpList callsOperation;
-    ExtraPropertyAdditionExits additionExits;
-    auto finish = [&](GPRReg owner, bool valueMayNeedBarrier) {
-        if (valueMayNeedBarrier) {
-            Jump isNotCell = jit.branchIfNotCell(value);
-            callWriteBarrier(jit, owner);
-            isNotCell.link(&jit);
-        }
-        jit.move(TrustedImm32(0), jit.result());
-        jit.returnToCaller();
-    };
-    probeFront(jit, SlotAccess::Store, probe, isNotInFront);
-    isNotInFront.append(branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, probe.header }, Slot::Kind::ExtraProperty, kind));
-    storeExtraProperty(jit, probe.slot(SlotForm::PackedSlot, Slot::Kind::ExtraProperty), probe.access, value, finish, callsOperation);
-
-    isNotInFront.link(&jit);
-    probeHashedTable(jit, SlotAccess::Store, probe, callsOperation);
-    Jump isNotReplacement = branchIfSlotKindDiffers(jit, { SlotForm::Slot, probe.header }, Slot::Kind::ExtraProperty, kind);
-    storeExtraProperty(jit, probe.slot(SlotForm::Slot, Slot::Kind::ExtraProperty), probe.access, value, finish, callsOperation);
-
-    isNotReplacement.link(&jit);
-    callsOperation.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, probe.header }, Slot::Kind::ExtraPropertyAddition, kind));
-    addExtraProperty(jit, probe.slot(SlotForm::Slot, Slot::Kind::ExtraPropertyAddition), probe.access, value, finish, additionExits);
-
-    additionExits.isNotExtensible.link(&jit);
-    additionExits.growsStorage.link(&jit);
-    additionExits.cannot.link(&jit);
-    callsOperation.link(&jit);
-    jit.tailCallOperation(Entry::RawPutExtraProperty, OperationCall::FirstArgument::Instance);
 }
 
 } } // namespace JSC::AOT

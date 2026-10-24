@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsValues.h"
@@ -196,6 +197,7 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
 
 static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow)
 {
+    JumpList isOutsideVector;
     const GPRReg storage = registers.storage;
     const GPRReg index = registers.index;
     const GPRReg shape = registers.type;
@@ -203,11 +205,21 @@ static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRe
     static_assert(ArrayStorageShape > DoubleShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask - 2);
     slow.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));
     slow.append(jit.branch32(CCallHelpers::Above, shape, TrustedImm32(SlowPutArrayStorageShape)));
-    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, ArrayStorage::vectorLengthOffset())));
+    isOutsideVector.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, ArrayStorage::vectorLengthOffset())));
     jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight, ArrayStorage::vectorOffset()), storage);
-    slow.append(jit.branchTest64(CCallHelpers::Zero, storage));
+    isOutsideVector.append(jit.branchTest64(CCallHelpers::Zero, storage));
     jit.move(storage, jit.result());
     jit.returnToCaller();
+
+    isOutsideVector.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::LessThan, registers.key, TrustedImm32(0)));
+    callLeafLookup(jit, Entry::operationAOTGetSparseElement, registers.key, std::nullopt, storage);
+    Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, jit.result());
+    jit.returnToCaller();
+
+    hasNoAnswer.link(&jit);
+    jit.move(storage, registers.base);
+    slow.append(jit.jump());
 }
 
 static Label emitAbsentElement(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow)

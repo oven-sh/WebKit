@@ -410,6 +410,7 @@ void JSONRuntime::dropSourcesBelow(void* stackPointer)
 
 void JSONRuntime::clear()
 {
+    m_finishedObjects.fill({ });
     if (m_learnedNames)
         m_learnedNames->clear();
     if (m_recordPlanCache)

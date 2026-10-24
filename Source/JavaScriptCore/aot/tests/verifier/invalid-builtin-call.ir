@@ -1,7 +1,7 @@
 # a Builtin value names an object of the table, and the operands of a built-in call lie in the parameters of its overload
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidBuiltinCall 19
+# DIAGNOSTIC: InvalidBuiltinCall 18
 
 module m0 path="main.js" displayPath="main.js"
 layout L0
@@ -152,10 +152,3 @@ function f27 name="goodPrefix" parameters=[{type=string}] results=[{type=undefin
     Return
 }
 function f28 name="callee" results=[{type=undefined}]
-function f29 name="badAppendWithoutHostFunction" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: string, v1: number):
-    v2 = StringBuilderBegin
-    StringBuilderAppendBuiltin v2, v0, v1 overload=StringPrototypeSlice/0
-    v4 = StringBuilderFinish v2
-    Return
-}

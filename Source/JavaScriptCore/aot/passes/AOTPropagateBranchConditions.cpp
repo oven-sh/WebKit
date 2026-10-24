@@ -11,8 +11,10 @@
 #include "AOTDecidedBranches.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -32,6 +34,12 @@ struct DecidedUse {
     unsigned edgeIndex;
 };
 
+struct TruthinessTest {
+    ValueID tested;
+    ValueID test;
+    BlockID block;
+};
+
 class BranchConditionPropagator {
 public:
     explicit BranchConditionPropagator(FunctionPassContext& context)
@@ -43,9 +51,10 @@ public:
 
     PassOutcome run()
     {
+        bool hasMergedTests = mergeRepeatedTruthinessTests();
         collectDecidedUses();
         if (m_uses.isEmpty())
-            return PassOutcome::Unchanged;
+            return hasMergedTests ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         insertConstants();
         for (const DecidedUse& decided : m_uses)
@@ -56,6 +65,47 @@ public:
     }
 
 private:
+    // Whether a value is truthy never changes, so a test that another test of the same value dominates is that test.
+    bool mergeRepeatedTruthinessTests()
+    {
+        if (!m_analyses.opcodesOfValues().contains(Opcode::ToBoolean))
+            return false;
+        Vector<TruthinessTest, 16> tests;
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                if (m_function.at(id).opcode == Opcode::ToBoolean)
+                    tests.append({ m_function.at(id).operand(0), id, block });
+            }
+        }
+        if (tests.size() < 2)
+            return false;
+        AOT::stableSort(tests, { }, &TruthinessTest::tested);
+
+        bool hasMerged = false;
+        size_t firstKept = 0;
+        size_t endOfKept = 0;
+        for (const TruthinessTest& test : tests) {
+            if (endOfKept == firstKept || tests[firstKept].tested != test.tested)
+                firstKept = endOfKept;
+            auto kept = tests.span().subspan(firstKept, endOfKept - firstKept);
+            auto dominating = std::ranges::find_if(kept, [&](const TruthinessTest& earlier) {
+                return m_analyses.dominators().dominates(earlier.block, test.block);
+            });
+            if (dominating == kept.end()) {
+                tests[endOfKept++] = test;
+                continue;
+            }
+            for (const Use& use : m_analyses.useLists().usesOf(test.test))
+                replaceUse(m_function, use, dominating->test);
+            hasMerged = true;
+        }
+        if (hasMerged) {
+            m_analyses.didChangeValues();
+            m_context.keptAnalyses = allAnalyses;
+        }
+        return hasMerged;
+    }
+
     void collectDecidedUses()
     {
         BitVector visitedConditions;

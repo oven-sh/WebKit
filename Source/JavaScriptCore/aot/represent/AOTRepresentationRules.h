@@ -33,9 +33,6 @@ struct RepresentationInputs {
     const Type& typeOf(ValueID value) const { return program.typeOf(function, value); }
 };
 
-// Only where a testing switch asks for it: the code of the function is made without the optimizing back end.
-bool isGeneratedWithoutOptimizing(const BuildContext&, const Heat&, const Program&, FunctionID);
-
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };
 inline constexpr RepresentationSet optionalRepresentations { Representation::OptionalInt64, Representation::OptionalDouble };

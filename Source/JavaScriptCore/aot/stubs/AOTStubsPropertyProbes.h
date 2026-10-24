@@ -167,8 +167,6 @@ struct FieldTableProbe {
     bool receiverIsCell { false };
     // Where the layout has no field of the name, and neither the object nor what is above it can have the name, the read gives undefined.
     bool answersAbsent { false };
-    // For a probe behind the tables: what it answers is never filed, so one answer in AbsenceFilter::readsBetweenMisses is left to otherwise, where a pair that comes again and again gets its slot.
-    bool leavesNowAndThen { false };
     // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
 };
@@ -182,7 +180,6 @@ void answerMissingField(StubAssembler&, CallerFrame, GPRReg object, GPRReg name,
 void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise, JumpList* isSampled = nullptr);
 void findHashedSlot(StubAssembler&, SlotAccess, const HashedProbeRegisters&, JumpList& miss);
 
-#if CPU(X86_64)
 enum class ObjectLookupQuestion : uint8_t { Read, In, HasOwn };
 // By number: name holds the number of the name and is kept. By uid: name is one more scratch register.
 enum class ObjectLookupName : bool { IsGivenByNumber, IsGivenByUID };
@@ -199,6 +196,16 @@ struct ObjectLookupRegisters {
     GPRReg index;
 };
 
+// The eighth register of a lookup. x86-64 has no stub register left for it. Elsewhere the macro assembler writes its scratch registers itself.
+inline GPRReg indexRegisterOfObjectLookup(StubAssembler& jit)
+{
+#if CPU(X86_64)
+    return jit.scratchRegister();
+#else
+    return jit.reuseScratch(StubRegister::T15);
+#endif
+}
+
 // Asks the receiver and then the objects above it, each for what it has at this moment.
 // willReturnValue: what to do in front of the return of a plain value that the property table of object has listed. structure has the offset above the eight bits of the attributes and is kept. size, vector and index are free.
 void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown, const ScopedLambda<void()>* willReturnValue = nullptr);
@@ -210,7 +217,6 @@ void locateFieldOfObject(StubAssembler&, const ObjectLookupRegisters&, ObjectLoo
 void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot);
 // What the objects answer is never filed, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
 void countMissOfPair(StubAssembler&, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling);
-#endif
 
 inline Jump branchIfSlotKindDiffers(StubAssembler& jit, const ProbedSlot& slot, Slot::Kind kind, GPRReg scratch)
 {

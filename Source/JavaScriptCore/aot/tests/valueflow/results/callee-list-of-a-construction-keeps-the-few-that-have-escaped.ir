@@ -1,7 +1,7 @@
 # publish(Handed); const callee = flag ? unknown : other ? Handed : Kept; new callee(); callee()
 # A callee that may be anything. The unknown object stands for `Handed`, which has escaped.
 # The construction keeps it in the list that is not complete: whoever allocates for the constructor and tests it at run time finds there which one to expect.
-# The call of the same value leaves it out: nobody tests the callee of a call against such a list, and a list that names a function keeps the passes away that go by the name of a method.
+# It has come by a way that passes through nothing made for the unknown object. The call of the same value leaves it out.
 # The same program where one is many: callee-list-of-a-construction-leaves-out-the-many-that-have-escaped.ir
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0 name="main"

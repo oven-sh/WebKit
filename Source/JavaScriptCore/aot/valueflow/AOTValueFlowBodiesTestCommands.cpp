@@ -164,8 +164,6 @@ private:
         switch (kind) {
         case ValueFlowStatementKind::ModuleEvaluation:
             return "ModuleEvaluation"_s;
-        case ValueFlowStatementKind::EntryChecks:
-            return "entry checks"_s;
         case ValueFlowStatementKind::Coroutine:
             return "Coroutine"_s;
         case ValueFlowStatementKind::HostRoots:

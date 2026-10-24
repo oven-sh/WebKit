@@ -65,6 +65,7 @@ private:
     ValueID emitParseOf(const TypedResultSite&, ValueID textOrBytes, BlockID generic, BlockID rejected);
     ValueID emitValidationOf(const TypedResultSite&, ValueID value);
     ValueID emitGeneralValidation(const TypedResultSite&, ValueID value, ValueID isRefused = { });
+    void emitThrowUnlessErrorIsLookedAt();
     ValueID appendOriginalCall(const TypedResultSite&);
 
     FunctionPassContext& m_pass;

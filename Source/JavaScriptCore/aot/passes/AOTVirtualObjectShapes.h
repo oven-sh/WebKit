@@ -120,6 +120,7 @@ bool hasUnprovenField(const VirtualFamily&, const VirtualShape&);
 
 VirtualShape shapeAtAllocation(const VirtualObjectContext&, VirtualFamily&, KeyOrderTable&, uint32_t descriptionIndex);
 VirtualShape shapeAfterStore(const VirtualFamily&, KeyOrderTable&, const VirtualShape&, uint32_t field);
+VirtualShape shapeAfterDelete(const VirtualFamily&, KeyOrderTable&, const VirtualShape&, uint32_t namedField);
 VirtualShape shapeAfterAppend(VirtualFamily&, const VirtualShape&, bool isHole, uint32_t& appendedField);
 
 enum class CastOutcome : uint8_t { Unknown, Passes, Throws };

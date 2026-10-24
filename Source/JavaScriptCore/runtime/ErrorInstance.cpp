@@ -388,6 +388,13 @@ String ErrorInstance::sanitizedMessageString(JSGlobalObject* globalObject)
 
     JSValue messageValue;
     auto messagePropertName = vm.propertyNames->message;
+    if (structure()->hasAnyKindOfGetterSetterProperties()) [[unlikely]] {
+        // A custom value is a message that the engine makes when it is first read. An inquiry may not make it.
+        PropertySlot deferredSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+        if (JSObject::getOwnPropertySlot(this, globalObject, messagePropertName, deferredSlot) && deferredSlot.isCustom())
+            deferredSlot.getValue(globalObject, messagePropertName);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     PropertySlot messageSlot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
     if (JSObject::getOwnPropertySlot(this, globalObject, messagePropertName, messageSlot) && messageSlot.isValue())
         messageValue = messageSlot.getValue(globalObject, messagePropertName);

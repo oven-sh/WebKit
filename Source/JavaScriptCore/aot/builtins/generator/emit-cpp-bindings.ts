@@ -33,7 +33,6 @@ interface BindingLists {
   classes: readonly string[];
   cachedGetters: readonly string[];
   customGetters: readonly string[];
-  appendFunctions: readonly string[];
   directFunctions: readonly string[];
   nativeFunctions: readonly string[];
   hostNumbers: readonly string[];
@@ -117,9 +116,6 @@ const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "Web
 
 // The declaration of a thunk spells the types of its parameters with these.
 const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.h"];
-
-const appendFunctionParameters =
-  "(JSC::JSGlobalObject*, JSC::AOT::StringBuilderStorage*, JSC::EncodedJSValue, const JSC::EncodedJSValue*, size_t)";
 
 function inTokenOrder<Item extends { token: string }>(items: readonly Item[]): Item[] {
   return items.toSorted((left, right) => compareBytes(left.token, right.token));
@@ -221,17 +217,6 @@ function formatHostEntryPointRecord(
 const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) =>
   parameters[0]?.value === "Realm" ? "Throw" : "Abort";
 
-function formatAppendFunctionBinding(builtin: ModelBuiltin): string[] {
-  const { hostAppendSymbol } = builtin.attachments;
-  if (hostAppendSymbol === null) return [];
-  return [
-    formatAggregate([
-      ["builtin", formatId("BuiltinID", builtin)],
-      ["function", `reinterpret_cast<const void*>(${hostAppendSymbol})`],
-    ]),
-  ];
-}
-
 // Nobody calls a native binding. The entry of the function that it makes has the same overloads.
 function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
   return model.overloads.flatMap(overload => {
@@ -276,7 +261,6 @@ function emitBindings(declaration: string, lists: BindingLists): string {
     ["classes", "static constexpr BuiltinClassBinding", lists.classes],
     ["cachedGetters", "static constexpr BuiltinCachedGetterBinding", lists.cachedGetters],
     ["customGetters", "static constexpr BuiltinCustomGetterBinding", lists.customGetters],
-    ["appendFunctions", "static const BuiltinAppendFunctionBinding", lists.appendFunctions],
     ["directFunctions", "static const BuiltinDirectFunctionBinding", lists.directFunctions],
     ["nativeFunctions", "static constexpr BuiltinNativeFunctionBinding", lists.nativeFunctions],
     ["hostNumbers", "static constexpr BuiltinHostNumberBinding", lists.hostNumbers],
@@ -369,7 +353,6 @@ export function emitEngineBindings(model: TableModel): string {
 
 function emitHostIncludes(
   classes: readonly ModelClass[],
-  appendSymbols: readonly string[],
   directFunctions: readonly DirectFunctionEntry[],
   nativeFunctions: readonly NativeFunctionEntry[],
 ): string {
@@ -382,7 +365,6 @@ function emitHostIncludes(
   return [
     "#include <JavaScriptCore/AOTBuiltinTableBindings.h>",
     "#include <JavaScriptCore/StructureInlines.h>",
-    ...(appendSymbols.length > 0 ? ["#include <JavaScriptCore/AOTStringBuilderStorage.h>"] : []),
     ...sortUnique(["ZigGlobalObject.h", ...classHeaders, ...functionHeaders]).map(header => `#include "${header}"`),
     "#include <type_traits>",
   ].join("\n");
@@ -408,13 +390,11 @@ function emitHostFunctionDeclarations(qualifiedNames: readonly string[]): string
 }
 
 function emitExternDeclarations(
-  appendSymbols: readonly string[],
   directFunctions: readonly DirectFunctionEntry[],
   nativeFunctionSymbols: readonly string[],
   nativeCallListStamp: string,
 ): string {
   return [
-    ...appendSymbols.map(symbol => `extern "C" bool ${symbol}${appendFunctionParameters};`),
     ...sortUnique(directFunctions.map(({ directEntry }) => directEntry.declaration)),
     ...nativeFunctionSymbols.map(symbol => `extern "C" JSC_DECLARE_HOST_FUNCTION(${symbol});`),
     `extern "C" const uint8_t Bun__js2nativeList_${nativeCallListStamp};`,
@@ -423,10 +403,6 @@ function emitExternDeclarations(
 
 function emitCallListReference(stamp: string): string {
   return `[[maybe_unused]] __attribute__((used)) static const uint8_t* const nativeCallListStamp = &Bun__js2nativeList_${stamp};`;
-}
-
-function emitAppendFormAssertions(appendSymbols: readonly string[]): string {
-  return appendSymbols.map(symbol => `static_assert(std::is_same_v<decltype(&${symbol}), HostAppendForm>);`).join("\n");
 }
 
 // Compiled code enters these the way it enters an operation of the engine, so they have the calling convention of one.
@@ -460,7 +436,6 @@ export function emitHostBindings(
 ): string {
   const classes = findClassesWithBindings(model, "Host");
   const nativeFunctions = findNativeFunctions(model, "Host");
-  const appendSymbols = sortUnique(model.builtins.flatMap(builtin => builtin.attachments.hostAppendSymbol ?? []));
   const directFunctions = findDirectFunctions(model);
   const customGetters = sortUnique(model.overloads.flatMap(overload => customGetterOf(overload) ?? []));
   const symbolsWithoutHeader = collectNativeFunctionSymbols(
@@ -468,9 +443,6 @@ export function emitHostBindings(
   );
   const isInNamespace = (symbol: string) => symbol.includes("::");
   const records = [
-    ...model.builtins.flatMap(builtin =>
-      formatHostEntryPointRecord("appendFunctions", builtin, builtin.attachments.hostAppendSymbol, formatRecord),
-    ),
     ...new Set(
       directFunctions.flatMap(({ overload, directEntry }) =>
         formatHostEntryPointRecord(
@@ -493,9 +465,8 @@ export function emitHostBindings(
   const blocks = [
     `${fileHeader}#include "root.h"`,
     "#if ENABLE(AOT)",
-    emitHostIncludes(classes, appendSymbols, directFunctions, nativeFunctions),
+    emitHostIncludes(classes, directFunctions, nativeFunctions),
     emitExternDeclarations(
-      appendSymbols,
       directFunctions,
       symbolsWithoutHeader.filter(symbol => !isInNamespace(symbol)),
       nativeCallListStamp,
@@ -505,13 +476,11 @@ export function emitHostBindings(
     "namespace Bun::AOTHostBindings {",
     `using namespace JSC::AOT;\n${namespacesOfHostFunctions}`,
     emitCallListReference(nativeCallListStamp),
-    emitAppendFormAssertions(appendSymbols),
     emitDirectFormAssertions(directFunctions),
     emitBindings("static constinit const BuiltinBindingSet hostBindings", {
       classes: classes.map(builtinClass => formatClassBinding(builtinClass, formatId("BuiltinClassID", builtinClass))),
       cachedGetters: model.overloads.flatMap(formatCachedGetterBinding),
       customGetters: model.overloads.flatMap(formatCustomGetterBinding),
-      appendFunctions: model.builtins.flatMap(formatAppendFunctionBinding),
       directFunctions: directFunctions.map(formatDirectFunctionBinding),
       nativeFunctions: nativeFunctions.map(formatHostNativeFunction),
       hostNumbers: model.builtins.flatMap(formatHostNumberBinding),

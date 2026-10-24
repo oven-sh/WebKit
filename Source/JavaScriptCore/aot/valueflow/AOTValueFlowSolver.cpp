@@ -3207,6 +3207,52 @@ void ValueFlowSolver::prepareSaturation()
     growAndFill(m_lastCountThatSaw, 1 + numberOfLayouts + numberOfClasses + universe.numberOfObjects(), 0u);
 }
 
+ValueSetID ValueFlowSolver::findClosuresFollowedTo(ValueFlowNodeID callee)
+{
+    AOT_THRESHOLD(unsigned, mostNodesVisited, 128);
+    AOT_THRESHOLD(unsigned, mostPredecessorsFollowed, 8);
+    ValueSetMaker& maker = *m_makers[0];
+    Vector<ValueFlowNodeID, 32> visited { callee };
+    Vector<ValueFlowNodeID, 8> predecessors;
+    ValueSetID closures = ValueSets::nothing;
+    for (unsigned next = 0; next < visited.size(); ++next) {
+        predecessors.shrink(0);
+        unsigned numberOfPredecessors = 0;
+        m_graph.forEachPredecessor(visited[next], [&](ValueFlowNodeID predecessor) {
+            if (++numberOfPredecessors <= mostPredecessorsFollowed)
+                predecessors.append(predecessor);
+        });
+        if (!numberOfPredecessors)
+            closures = maker.unite(closures, maker.intersect(valueOf(visited[next]), m_input.placeholders.closures));
+        if (numberOfPredecessors > mostPredecessorsFollowed)
+            continue;
+        for (ValueFlowNodeID predecessor : predecessors) {
+            if (predecessor == m_input.escaped || predecessor == m_input.lost || isMadeForUnknownObject(predecessor) || visited.contains(predecessor))
+                continue;
+            if (visited.size() >= mostNodesVisited)
+                return ValueSets::nothing;
+            visited.append(predecessor);
+        }
+    }
+    return m_sets.size(closures) > m_input.mostMembersToldApart ? ValueSets::nothing : closures;
+}
+
+void ValueFlowSolver::findClosuresFollowedToConstructions()
+{
+    if (!m_input.program || !m_input.placeholders.unknown || !m_input.placeholders.closures)
+        return;
+    for (const ValueFlowStatement& statement : m_input.statements) {
+        if (statement.kind != ValueFlowStatementKind::Operation || !OperandPosition::newTarget(statement.opcode) || !isReached(statement.function))
+            continue;
+        ValueFlowNodeID callee = operandsOf(statement)[0].node;
+        if (callee && m_sets.contains(valueOf(callee), m_input.placeholders.unknown)) {
+            m_closuresFollowedToConstruction.ensure(callee.index(), [&] {
+                return findClosuresFollowedTo(callee);
+            });
+        }
+    }
+}
+
 bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
 {
     const ValueFlowNodeKey* key = keyOfMadeNode(node);
@@ -3772,6 +3818,7 @@ bool ValueFlowSolver::solve()
     m_graph.releaseRows();
     spreadMarks();
     findObjectsOutsideFamilies();
+    findClosuresFollowedToConstructions();
     findUnknownSources([&] {
         report();
         releaseRoundState();

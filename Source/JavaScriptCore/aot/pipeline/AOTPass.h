@@ -68,14 +68,13 @@ enum class ProgramResult : uint32_t {
     InliningSummaries = 1 << 4,
     CallingConventions = 1 << 5,
     FrameAllocation = 1 << 6,
-    EnvironmentReuse = 1 << 7,
-    LiteralStrings = 1 << 8,
-    ConstantCollections = 1 << 9,
-    SlotPlan = 1 << 10,
-    RegExpRequests = 1 << 11,
-    StackChecks = 1 << 12,
-    Placement = 1 << 13,
-    SiteCaches = 1 << 14,
+    LiteralStrings = 1 << 7,
+    ConstantCollections = 1 << 8,
+    SlotPlan = 1 << 9,
+    RegExpRequests = 1 << 10,
+    StackChecks = 1 << 11,
+    Placement = 1 << 12,
+    SiteCaches = 1 << 13,
 };
 
 enum class FunctionSchedule : uint8_t { Type, Simplify, Prepare, Resolve, Optimize, Select, Represent };

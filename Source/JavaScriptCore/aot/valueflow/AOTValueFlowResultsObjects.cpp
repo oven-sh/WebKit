@@ -923,12 +923,14 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
     return added;
 }
 
+static void noteClosuresBelowFunctions(const ValueFlowResultInputs&, const PrototypeLinks&, std::span<AllocationClass>);
+
 static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const PrototypeLinks& links, KeysAddedToClosures&& added, FlowResultTables& tables)
 {
     // Whoever holds a closure that nobody follows any more puts there what nobody lists.
     constexpr OptionSet<ObjectMutation> mutationsAddingUnlistedKeys { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
     const Program& program = inputs.program;
-    tables.sites.allocationClasses.appendVector(collectInParallel<AllocationClass>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocationClass>& classes) {
+    Vector<AllocationClass> classesOfClosures = collectInParallel<AllocationClass>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocationClass>& classes) {
         if (!inputs.isReached(FunctionID(index)) || calls.functionsNamedByUnsolvedCode.get(index) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
             return;
         ValueFlowObjectID closure = inputs.universe().closureOf(FunctionID(index));
@@ -936,12 +938,83 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         AllocationClass closures;
         closures.closureFunction = FunctionID(index);
         closures.impossibleMutations = allObjectMutations - possible;
+        // A class object is created with the static members of its definition, which nobody lists here. What a constructor function holds was stored there.
+        LayoutID constructedClass = program.functions[index].constructedClass;
+        bool isDefinedByClass = constructedClass && !program.at(constructedClass).has(LayoutFlags::IsConstructorFunction);
+        bool namesEveryStaticField = !constructedClass || std::ranges::all_of(program.at(constructedClass).staticFields, [](const StaticField& field) {
+            return !!field.key;
+        });
         closures.addedKeysAreComplete = !possible.containsAny(mutationsAddingUnlistedKeys) && !inputs.isLost(closure) && !added.areIncomplete.get(index)
-            && !program.functions[index].constructedClass && inputs.build.isEnabled(FlowResultKind::OwnNames, index);
-        if (closures.addedKeysAreComplete)
+            && !isDefinedByClass && namesEveryStaticField && inputs.build.isEnabled(FlowResultKind::OwnNames, index);
+        if (closures.addedKeysAreComplete) {
             closures.addedKeys = WTF::move(added.keys[index]);
+            if (constructedClass) {
+                for (const StaticField& field : program.at(constructedClass).staticFields)
+                    closures.addedKeys.append(field.key);
+                AOT::sort(closures.addedKeys);
+                closures.addedKeys.shrink(std::ranges::unique(closures.addedKeys).begin() - closures.addedKeys.begin());
+            }
+        }
         classes.append(WTF::move(closures));
-    }));
+    });
+    noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
+    tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
+}
+
+// `Object.setPrototypeOf(Derived, Base)`: a function below functions of the program still finds what Function.prototype holds, under every name that none of them has got.
+static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, std::span<AllocationClass> classes)
+{
+    constexpr OptionSet<ObjectMutation> mutationsHidingNames { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty };
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    auto listsItsNames = [&](const AllocationClass& closures) {
+        return closures.addedKeysAreComplete && closures.impossibleMutations.containsAll(mutationsHidingNames)
+            && !program.at(closures.closureFunction).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+    };
+    auto findClassOf = [&](FunctionID function) -> const AllocationClass* {
+        auto found = std::ranges::lower_bound(classes, function, { }, &AllocationClass::closureFunction);
+        return found != classes.end() && found->closureFunction == function ? &*found : nullptr;
+    };
+
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueFlowObjectID functionPrototype = universe.objectOf(Builtins::FunctionPrototype);
+    Vector<std::pair<uint32_t, Vector<PropertyKeyID>>> namesOnTheWay;
+    for (uint32_t index = 0; index < classes.size(); ++index) {
+        if (classes[index].impossibleMutations.contains(ObjectMutation::ChangePrototype) || !listsItsNames(classes[index]))
+            continue;
+        Vector<PropertyKeyID> names = classes[index].addedKeys;
+        Vector<FunctionID, 4> passed { classes[index].closureFunction };
+        bool isKnown = true;
+        for (size_t next = 0; next < passed.size() && isKnown; ++next) {
+            ValueSetID parents = links.linkedPrototypes(borrowedMaker.get(), universe.closureOf(passed[next]));
+            if (ValueSets::isComplement(parents)) {
+                isKnown = false;
+                break;
+            }
+            inputs.sets().forEachMember(parents, [&](ValueFlowObjectID parent) {
+                if (parent == functionPrototype)
+                    return;
+                FunctionID function = universe.kindOf(parent) == ValueFlowObjectKind::Closure ? universe.closureFunction(parent) : FunctionID();
+                const AllocationClass* above = function ? findClassOf(function) : nullptr;
+                if (!above || !listsItsNames(*above)) {
+                    isKnown = false;
+                    return;
+                }
+                if (passed.contains(function))
+                    return;
+                passed.append(function);
+                names.appendVector(above->addedKeys);
+            });
+        }
+        if (isKnown)
+            namesOnTheWay.append({ index, WTF::move(names) });
+    }
+    for (auto& [index, names] : namesOnTheWay) {
+        AOT::sort(names);
+        names.shrink(std::ranges::unique(names).begin() - names.begin());
+        classes[index].addedKeys = WTF::move(names);
+        classes[index].inheritsFromListedFunctions = true;
+    }
 }
 
 // Every allocation of an object with a layout and of a closure has a site, by which the report on allocations names it. An environment, and an object about whose layout nothing is known, has no class.

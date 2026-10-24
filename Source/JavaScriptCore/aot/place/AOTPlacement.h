@@ -41,7 +41,6 @@ namespace Typed {
 class CallGraph;
 class CallingConventions;
 class ConstantCollections;
-class EnvironmentReuse;
 class FlowResults;
 class FrameAllocation;
 class Heat;
@@ -164,7 +163,6 @@ struct StaticsPlan {
     Vector<PlacedVariable> variables;
     // By module. A module has a word only where something may ask for what the word holds: see ModuleData::value.
     Vector<std::optional<uint32_t>> moduleValueOffsets;
-    Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
     Vector<uint32_t> roots;
     Vector<StaticsRange> clearedEachCollection;
@@ -241,7 +239,6 @@ struct PlacementInputs {
     const Heat& heat;
     const CallingConventions& callingConventions;
     const FrameAllocation& frameAllocation;
-    const EnvironmentReuse& environmentReuse;
     const LiteralStringTable& literalStrings;
     const ConstantCollections& constantCollections;
     const SlotPlan& slots;
@@ -278,7 +275,6 @@ public:
     uint32_t sizeOfStatics() const { return m_statics.size; }
     bool hasModuleValue(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].has_value(); }
     uint32_t moduleValueOffset(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].value(); }
-    std::optional<uint32_t> freeCellOffset(LayoutID id) const { return id.index() < m_statics.freeCellOffsets.size() ? m_statics.freeCellOffsets[id.index()] : std::nullopt; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> moduleBuiltinCellOffset(BuiltinID, ModuleID) const;
 
     const GuardBitTable& guardBits() const { return m_guardBits; }

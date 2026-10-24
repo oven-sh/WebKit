@@ -232,6 +232,23 @@ VirtualShape shapeAfterStore(const VirtualFamily& family, KeyOrderTable& orders,
     return result;
 }
 
+VirtualShape shapeAfterDelete(const VirtualFamily& family, KeyOrderTable& orders, const VirtualShape& shape, uint32_t namedField)
+{
+    RELEASE_ASSERT(shape.kind == VirtualShapeKind::Fields && family.fieldAt(namedField).kind == VirtualFieldKind::Named);
+    VirtualShape result = shape;
+    bool wasStored = result.stored.clear(namedField);
+    if (std::optional<uint32_t> counterpart = family.findCounterpart(namedField))
+        wasStored |= result.stored.clear(*counterpart);
+    if (!wasStored || !family.descriptionOf(shape).hasKeyOrder)
+        return result;
+    result.order = emptyKeyOrder;
+    for (uint32_t field : orders.fieldsOf(shape.order)) {
+        if (field != namedField)
+            result.order = orders.append(result.order, field);
+    }
+    return result;
+}
+
 VirtualShape shapeAfterAppend(VirtualFamily& family, const VirtualShape& shape, bool isHole, uint32_t& appendedField)
 {
     RELEASE_ASSERT(shape.kind == VirtualShapeKind::Fields);

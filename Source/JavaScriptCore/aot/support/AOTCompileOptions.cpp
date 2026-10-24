@@ -381,7 +381,6 @@ void WireOptionsReader::readChecks(CompileOptions& options)
     options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
     options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
     options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
-    options.countsChangesBehindSimplify = hasFlag(checks, CheckSet::CountChangesBehindSimplify);
 }
 
 void WireOptionsReader::readThreadCount(CompileOptions& options)

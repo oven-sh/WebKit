@@ -50,7 +50,7 @@ ValueID AllocationEmitter::findOnlyAllocationIn(BlockID from, const Target& targ
         return { };
     const PlacedAllocation& allocation = m_placement.allocation(value.allocation());
     LayoutID layout = allocation.layout;
-    if (!isObjectLayout(m_program.at(layout).kind) || !m_placement.layout(layout).hasSlots() || m_placement.freeCellOffset(layout))
+    if (!isObjectLayout(m_program.at(layout).kind) || !m_placement.layout(layout).hasSlots())
         return { };
     // The stub that is not told the size of the cell zeroes two chunks at a time from the end.
     if (allocation.size < 2 * copyChunkBytes)

@@ -82,6 +82,8 @@ std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Value& valu
         return std::nullopt;
 
     BuiltinID builtin = calledBuiltinOf(builtins, value);
+    if (builtin == Builtins::ObjectKeys)
+        return OwnKeyWalk::Keys;
     if (builtin == Builtins::ObjectValues)
         return OwnKeyWalk::Values;
     if (builtin == Builtins::ObjectEntries)
@@ -118,6 +120,7 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
 
     std::span<const ValueID> arguments = builtinCallOf(program, value).arguments;
     switch (*walk) {
+    case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
         break;

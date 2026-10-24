@@ -26,12 +26,13 @@ function f0 name="validated" parameters=[{type=string}] results=[{type=anything}
 # CHECK-NEXT: [[no0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[again0]]([[no0]])
 # CHECK: [[rejected0]]() frequency=Rare:
-# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[again0]]([[yes0]])
+# CHECK-NEXT: [[isIgnored0]]: boolean = IsThrownValueIgnored
+# CHECK-NEXT: Branch [[isIgnored0]] -> taken [[ignored0]](), notTaken [[lookedAt0]]()
 # CHECK: [[again0]]([[isRefused0]]: boolean) frequency=Rare:
 # CHECK-NEXT: [[original0]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
 # CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
-# CHECK-NEXT: [[general0]]: anything = CallBuiltin -, [[original0]], [[plan0]], [[isRefused0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[prepared0]]: anything = GetPreparedPlans
+# CHECK-NEXT: [[general0]]: anything = CallBuiltin -, [[original0]], [[plan0]], [[isRefused0]], [[prepared0]] overload=CompilerHelpersValidateByPlan/0
 # CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
 # CHECK: JSONSourceAbandon
 # CHECK-NEXT: Jump -> next [[generic0]]()
@@ -87,7 +88,8 @@ function f4 name="reviver" parameters=[{type=string}, {type=function}] results=[
 # CHECK-NEXT: [[revived]]: anything = CallBuiltin -, v0, v1 overload=JSONParse/1
 # CHECK-NEXT: [[plan4]]:{{*}}= String string="[{\"shape\":\"Object\",
 # CHECK-NEXT: [[isRefused4]]: false = Boolean
-# CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]], [[isRefused4]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[prepared4]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]], [[isRefused4]], [[prepared4]] overload=CompilerHelpersValidateByPlan/0
 # CHECK-NEXT: Jump -> next [[merge4]]([[revived]])
 # CHECK-NOT: JSONSourceOpen
 # CHECK: function [[parserOfFirstList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x0}

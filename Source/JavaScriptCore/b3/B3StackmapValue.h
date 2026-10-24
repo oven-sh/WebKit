@@ -37,10 +37,6 @@ namespace JSC {
 
 class CCallHelpers;
 
-namespace AOT { namespace Typed {
-class DirectCodeGenerator;
-} }
-
 namespace B3 {
 
 class StackmapGenerationParams;
@@ -325,7 +321,6 @@ private:
     friend class PatchpointSpecial;
     friend class StackmapGenerationParams;
     friend class StackmapSpecial;
-    friend class AOT::Typed::DirectCodeGenerator;
     
     Vector<ValueRep> m_reps;
     RefPtr<StackmapGenerator> m_generator;

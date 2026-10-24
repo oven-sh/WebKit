@@ -15,10 +15,10 @@ void FlowApplicationDeleter::operator()(FlowApplication* application) const
     delete application;
 }
 
-LayoutID layoutOfEmptyLiteral(const Program& program, const Value& value)
+LayoutID layoutOfPlainLiteral(const Program& program, const Value& value)
 {
     if (value.opcode == Opcode::NewObject)
-        return value.fields().empty() && !value.prototypeOperand() ? value.layout() : LayoutID();
+        return value.fields().size() == value.variadicOperands().size() && !value.prototypeOperand() ? value.layout() : LayoutID();
     if (value.opcode != Opcode::Data)
         return { };
     const auto* object = program.at(value.data()).root.tryAs<DataNode::Object>();

@@ -81,6 +81,7 @@ struct PlannedWayBackIntoLoop {
     Edge enteringEdge;
     Vector<Edge, 2> backEdges;
     Vector<PlannedTest, 4> tests;
+    Vector<TypeID, 4> typesOfCounters;
 };
 
 struct TestPlacementPlan {

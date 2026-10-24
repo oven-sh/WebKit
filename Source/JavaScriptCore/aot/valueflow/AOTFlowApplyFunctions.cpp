@@ -60,30 +60,6 @@ void removeUnreachedBodies(const FlowApplyContext& context, ProgramEditor& edito
     });
 }
 
-// The tests at the head of a function stand in a function of their own when flow runs.
-void cutCallsOfUnreachedVersions(const FlowApplyContext& context)
-{
-    Program& program = context.program;
-    forEachIndexInParallel(context.build.parallelLoops(), context.results.functionCountAsRead(), [&](unsigned index) {
-        Function& function = program.functions[index];
-        const auto* record = function.creator.tryAs<CreatorRecord::EntryChecks>();
-        if (!record || !function.hasBody() || (program.at(record->body).hasBody() && program.at(record->fallback).hasBody()))
-            return;
-        for (Block& block : function.editAllBlocks()) {
-            size_t call = block.values.findIf([&](ValueID id) {
-                const Value& value = function.at(id);
-                return value.opcode == Opcode::CallDirect && !program.at(value.function()).hasBody();
-            });
-            if (call == notFound)
-                continue;
-            Origin origin = function.at(block.values[call]).origin();
-            block.values.shrink(call);
-            block.terminator.become(TerminatorKind::Unreachable);
-            block.terminator.setOrigin(origin);
-        }
-    });
-}
-
 // A record of constant data that only unreached code names is never made. The types of fields are narrowed to what reached code stores, so such a record may no longer fit the fields that it fills.
 void dropDataOfUnreachedCode(const FlowApplyContext& context)
 {

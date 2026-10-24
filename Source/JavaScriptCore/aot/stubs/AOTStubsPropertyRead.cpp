@@ -81,29 +81,17 @@ static void returnOwnInlineValue(StubAssembler& jit, GPRReg receiver, GPRReg cel
     jit.returnToCaller();
 }
 
-#if !CPU(X86_64)
-// Goes on where the filter of the receiver's Structure says that neither the receiver nor anything above it has the name.
-static void branchUnlessFilterRulesOut(StubAssembler& jit, GPRReg structureID, GPRReg name, GPRReg filter, GPRReg scratch, JumpList& isUnknown)
+static void subtractWordAt(StubAssembler& jit, Address address, GPRReg value, GPRReg scratch)
 {
-    RELEASE_ASSERT(noOverlap(structureID, name, filter, scratch, instanceGPR));
-    jit.urshift32(structureID, TrustedImm32(StructureRowWords::granuleShift), scratch);
-    jit.and32(TrustedImm32(AbsenceFilter::numberOfFilters - 1), scratch);
-    jit.lshift32(TrustedImm32(AbsenceFilter::sizeShift), scratch);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilters)), filter);
-    jit.add64(scratch, filter);
-    isUnknown.append(jit.branch32(CCallHelpers::NotEqual, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, structureID)), structureID));
-    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilterGeneration)), scratch);
-    isUnknown.append(jit.branch32(CCallHelpers::NotEqual, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, generation)), scratch));
-    jit.urshift32(name, TrustedImm32(AbsenceFilter::bitsOfWordShift), scratch);
-    jit.and32(TrustedImm32(AbsenceFilter::numberOfWords - 1), scratch);
-    jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight, OBJECT_OFFSETOF(AbsenceFilter, names)), scratch);
-    // A shift takes the low six bits of its count.
-    jit.urshift64(name, scratch);
-    isUnknown.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
-}
-#endif
-
 #if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.sub64(address, value);
+#else
+    jit.loadPtr(address, scratch);
+    jit.sub64(scratch, value);
+#endif
+}
+
 static void returnAnswer(StubAssembler& jit, ObjectLookupQuestion question, bool isPresent)
 {
     RELEASE_ASSERT(question != ObjectLookupQuestion::Read || !isPresent);
@@ -248,12 +236,12 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
         // The names of the image are atoms that lie in the order of their numbers. Text made at run time that equals one of them is that atom.
         jit.move(r.uid, r.name);
         if (jit.options().isPositionIndependent) {
-            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), r.name);
+            subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.capacity))));
             jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
             hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
         } else {
-            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
+            subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name, r.index);
             isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.sizeOfProgramIdentifiers))));
             hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName * sizeof(UniquedStringImpl))));
             jit.urshift32(TrustedImm32(3), r.name);
@@ -425,7 +413,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
         } else {
             static_assert(sizeof(UniquedStringImpl) == 24);
             jit.move(r.uid, r.name);
-            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
+            subtractWordAt(jit, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name, r.index);
             jit.urshift32(TrustedImm32(3), r.name);
             jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
         }
@@ -550,21 +538,28 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
 
 void countMissOfPair(StubAssembler& jit, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling)
 {
-    static_assert(hasOneBitSet(MissesOfPairs::numberOfCounters) && hasOneBitSet(MissesOfPairs::missesBetweenFilings) && MissesOfPairs::missesBetweenFilings <= UINT8_MAX + 1);
+    static_assert(hasOneBitSet(MissesOfPairs::numberOfCounters) && hasOneBitSet(MissesOfPairs::missesBetweenFilings) && hasOneBitSet(MissesOfPairs::missesBetweenFilingsOfDictionaries));
+    static_assert(MissesOfPairs::missesBetweenFilings < MissesOfPairs::missesBetweenFilingsOfDictionaries && MissesOfPairs::missesBetweenFilingsOfDictionaries <= UINT8_MAX + 1);
     RELEASE_ASSERT(noOverlap(structureID, uid, counter, instanceGPR));
     jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), structureID, counter);
     jit.urshift32(TrustedImm32(HashedSlot::structureHashShift), counter);
-    jit.x86Lea32(BaseIndex(counter, uid, static_cast<CCallHelpers::Scale>(HashedSlot::uidHashShift)), counter);
+    // Only the low half of the sum is looked at.
+    jit.getEffectiveAddress(BaseIndex(counter, uid, static_cast<CCallHelpers::Scale>(HashedSlot::uidHashShift)), counter);
     jit.urshift32(TrustedImm32(HashedSlot::sizeShift), counter);
     jit.and32(TrustedImm32(MissesOfPairs::numberOfCounters - 1), counter);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.missesOfPairs)), counter);
     jit.add8(TrustedImm32(1), Address(counter));
-    Jump isNotDue = jit.branchTest8(CCallHelpers::NonZero, Address(counter), TrustedImm32(MissesOfPairs::missesBetweenFilings - 1));
+    JumpList isNotDue;
+    isNotDue.append(jit.branchTest8(CCallHelpers::NonZero, Address(counter), TrustedImm32(MissesOfPairs::missesBetweenFilings - 1)));
+    Jump isDueForAnyStructure = jit.branchTest8(CCallHelpers::Zero, Address(counter), TrustedImm32(MissesOfPairs::missesBetweenFilingsOfDictionaries - 1));
+    jit.move(structureID, counter);
+    decodeStructureID(jit, counter);
+    isNotDue.append(jit.branchTest32(CCallHelpers::NonZero, Address(counter, Structure::bitFieldOffset()), TrustedImm32(Structure::s_dictionaryKindMask << Structure::s_dictionaryKindShift)));
+    isDueForAnyStructure.link(&jit);
     jit.store8(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.missIsDueForFiling)));
     isDueForFiling.append(jit.jump());
     isNotDue.link(&jit);
 }
-#endif
 
 struct GetByIdBody {
     StubAssembler& jit;
@@ -588,7 +583,7 @@ static JumpList emitFrontProbe(GetByIdBody& body)
     const GPRReg T13 = body.registers.T13;
     loadStructureIDOfReceiver(jit, R0, T11, *body.miss, [&] {
         JumpList isNotInFieldTable;
-        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, false, body.callerFrame }, isNotInFieldTable);
+        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, body.callerFrame }, isNotInFieldTable);
         isNotInFieldTable.link(&jit);
         body.behindFieldTable = jit.label();
         jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(body.callerFrame));
@@ -639,28 +634,13 @@ static void emitHashedProbe(GetByIdBody& body, JumpList hasOtherNameInFront)
 
     // No table has the pair: mostly because it is asked for the first time. What follows costs a read that hits a table nothing.
     isInNoTable.link(&jit);
-#if CPU(X86_64)
     // What answers from here on files nothing, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
-    constexpr bool leavesNowAndThen = false;
     countMissOfPair(jit, structureID, uid, header, *body.miss);
-#else
-    constexpr bool leavesNowAndThen = true;
-#endif
     JumpList isNotAnsweredByLayout;
-    returnFieldByTable(jit, { R0, name, header, payload, std::nullopt, false, false, true, leavesNowAndThen }, isNotAnsweredByLayout);
+    returnFieldByTable(jit, { R0, name, header, payload, std::nullopt, false, false, true }, isNotAnsweredByLayout);
     isNotAnsweredByLayout.link(&jit);
-#if !CPU(X86_64)
-    const GPRReg filter = header;
-    branchUnlessFilterRulesOut(jit, structureID, name, filter, payload, *body.miss);
-    static_assert(hasOneBitSet(AbsenceFilter::readsBetweenMisses) && leavesNowAndThen);
-    jit.add32(TrustedImm32(1), Address(filter, OBJECT_OFFSETOF(AbsenceFilter, readsAnswered)));
-    body.miss->append(jit.branchTest32(CCallHelpers::Zero, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, readsAnswered)), TrustedImm32(AbsenceFilter::readsBetweenMisses - 1)));
-    jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
-    jit.returnToCaller();
-#else
-    // Each object says by the bits of the names that its Structure has seen, or by its row, that it has no such name: that costs less than a filter has to be filled for.
-    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, { R0, name, uid, header, structureID, payload, entry, jit.scratchRegister() }, ObjectLookupName::IsGivenByNumber, *body.miss);
-#endif
+    // Each object says by the bits of the names that its Structure has seen, or by its row, that it has no such name.
+    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, { R0, name, uid, header, structureID, payload, entry, indexRegisterOfObjectLookup(jit) }, ObjectLookupName::IsGivenByNumber, *body.miss);
 }
 
 #if CPU(X86_64)
@@ -680,7 +660,7 @@ static void emitAlternateReceiverProbe(StubAssembler& jit)
     Jump isNotCell = jit.branchIfNotCell(receiver);
     JumpList isNotInFieldTable;
     JumpList hasOtherName;
-    returnFieldByTable(jit, { receiver, name, row, cell, std::nullopt, true, true, false, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { receiver, name, row, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     jit.load32(Address(receiver, JSCell::structureIDOffset()), cell);
     locateFrontCell(jit, SlotAccess::Read, cell, name, scratch);
@@ -714,7 +694,7 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
 #if CPU(X86_64)
     const uint32_t upperHalf = PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(number));
     Jump isNotCell = jit.branchIfNotCell(R0);
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     loadFrontRowOfCell(jit, SlotAccess::Read, R0, row, T10);
     Jump isNotOwnInlineValue = jit.branch32(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(static_cast<int32_t>(upperHalf)));
@@ -823,9 +803,6 @@ void generateInById(StubAssembler& jit)
     const GPRReg T14 = registers.T14;
     JumpList isNotInFront;
     JumpList miss;
-#if !CPU(X86_64)
-    JumpList isNotRuledOut;
-#endif
     JumpList isNotInFieldTable;
     miss.append(jit.branchIfNotCell(R0));
     auto emitReturnFalse = [&] {
@@ -840,14 +817,6 @@ void generateInById(StubAssembler& jit)
     isNotInFieldTable.link(&jit);
     miss.append(jit.branchIfNotObject(R0));
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
-#if !CPU(X86_64)
-    // What the filter answers never leaves for the operation that files, so no table would ever hold it: the filter is asked first.
-    branchUnlessFilterRulesOut(jit, structureID, name, T12, T13, isNotRuledOut);
-    jit.move(TrustedImm32(0), R0);
-    jit.returnToCaller();
-
-    isNotRuledOut.link(&jit);
-#endif
     isNotInFront.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     loadFrontCell(jit, SlotAccess::Read, { structureID, name, T13, T12, T10 });
     isNotInFront.append(branchIfCellNameDiffers(jit, name, T12, T10));
@@ -856,19 +825,13 @@ void generateInById(StubAssembler& jit)
 
     isNotInFront.link(&jit);
     loadIdentifier(jit, name, T10, miss);
-#if CPU(X86_64)
     JumpList isInNoTable;
-#else
-    JumpList& isInNoTable = miss;
-#endif
     findHashedSlot(jit, SlotAccess::Read, { structureID, T10, T14, T12, T13, T13 }, isInNoTable);
     emitPresenceBySlot(jit, question, { SlotForm::Slot, T12, T13 }, registers, miss, miss);
-#if CPU(X86_64)
 
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, T10, T12, miss);
-    answerFromObjectsAndReturn(jit, question == PresenceQuestion::In ? ObjectLookupQuestion::In : ObjectLookupQuestion::HasOwn, { R0, name, T10, T12, structureID, T13, T14, jit.scratchRegister() }, ObjectLookupName::IsGivenByNumber, miss);
-#endif
+    answerFromObjectsAndReturn(jit, question == PresenceQuestion::In ? ObjectLookupQuestion::In : ObjectLookupQuestion::HasOwn, { R0, name, T10, T12, structureID, T13, T14, indexRegisterOfObjectLookup(jit) }, ObjectLookupName::IsGivenByNumber, miss);
 
     miss.link(&jit);
     jit.exitOnMiss(cachingOperationByNameFor(question), { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = R0, .thirdArgumentIn = name });

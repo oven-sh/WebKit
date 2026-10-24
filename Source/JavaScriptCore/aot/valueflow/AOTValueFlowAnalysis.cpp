@@ -404,8 +404,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     Vector<ValueFlowObjectID, 16> closures;
     auto functionsToInstance = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         FunctionID function(index);
-        // A function that tests its arguments runs three bodies for one call.
-        return positionOfKey[index] != noKey && !universe.genericVersionOf(function) && nodes.endOfNodesOf(function) - nodes.firstNodeOf(function) <= mostNodesOfBody;
+        return positionOfKey[index] != noKey && nodes.endOfNodesOf(function) - nodes.firstNodeOf(function) <= mostNodesOfBody;
     });
     for (uint32_t index : functionsToInstance) {
         FunctionID function(index);

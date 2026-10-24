@@ -28,7 +28,6 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
     return std::ranges::is_sorted(set.classes, { }, &BuiltinClassBinding::builtinClass)
         && std::ranges::is_sorted(set.cachedGetters, { }, &BuiltinCachedGetterBinding::overload)
         && std::ranges::is_sorted(set.customGetters, { }, &BuiltinCustomGetterBinding::overload)
-        && std::ranges::is_sorted(set.appendFunctions, { }, &BuiltinAppendFunctionBinding::builtin)
         && std::ranges::is_sorted(set.directFunctions, { }, &BuiltinDirectFunctionBinding::overload)
         && std::ranges::is_sorted(set.nativeFunctions, { }, &BuiltinNativeFunctionBinding::builtin)
         && std::ranges::is_sorted(set.hostNumbers, { }, &BuiltinHostNumberBinding::builtin);
@@ -165,12 +164,6 @@ std::optional<uint32_t> BuiltinBindings::cachedValueOffsetOf(const ClassInfo* in
 GetValueFunc::Ptr BuiltinBindings::customGetterOf(BuiltinOverloadID id)
 {
     auto* binding = findBinding(&BuiltinBindingSet::customGetters, &BuiltinCustomGetterBinding::overload, id);
-    return binding ? binding->function : nullptr;
-}
-
-const void* BuiltinBindings::appendFunctionOf(BuiltinID id)
-{
-    auto* binding = findBinding(&BuiltinBindingSet::appendFunctions, &BuiltinAppendFunctionBinding::builtin, id);
     return binding ? binding->function : nullptr;
 }
 

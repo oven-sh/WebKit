@@ -456,8 +456,7 @@ static void testInheritedFields()
     AOT_TEST_CHECK(representationsRead > 4);
 }
 
-#if CPU(X86_64)
-// What the hashed table has answered once for the cell of a key and a Structure is answered again without it: an own value, and that nothing is found. The second holds until an object of some chain changes.
+// What the hashed table has answered once for the cell of a key and a Structure is answered again without it: an own value, a field in the cell, and that nothing is found.
 static void testPlacesOfKeyedValues()
 {
     PropertyReads reads;
@@ -517,7 +516,7 @@ static void testPlacesOfKeyedValues()
 
     reads.file(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
     StubRun absent = read(key);
-    AOT_TEST_CHECK(!absent.calledOperation && absent.result == bitsOf(jsUndefined()) && numberOfPlaces() == 1);
+    AOT_TEST_CHECK(!absent.calledOperation && absent.result == bitsOf(jsUndefined()) && numberOfPlaces() == 1 && instance.propertyCaches.placesSayAbsence);
     reads.clear();
     StubRun stillAbsent = read(key);
     AOT_TEST_CHECK(!stillAbsent.calledOperation && stillAbsent.result == bitsOf(jsUndefined()));
@@ -530,10 +529,69 @@ static void testPlacesOfKeyedValues()
     for (PresenceQuestion question : { PresenceQuestion::In, PresenceQuestion::HasOwn })
         AOT_TEST_CHECK(reads.runner.run(inByValCached(question), { receiver.address(), key.address() }).calledOperation);
     receiver.setHeader(PropertyReads::structureID, FinalObjectType);
-    ++instance.propertyCaches.absenceFilterGeneration;
-    AOT_TEST_CHECK(read(key).calledOperation);
+
+    // A field in the cell, in every form that a slot has. An empty slot is left to the tables, and so is a field outside the cell.
+    uintptr_t cageBase = instance.cellCageBase;
+    FakeObject<16> cell;
+    cell.setHeader(0, FinalObjectType);
+    const JSValue values[] = { jsNumber(7), jsNumber(-200), jsNumber(INT32_MIN), jsDoubleNumber(0.5), jsDoubleNumber(-0.0), jsBoolean(true), JSValue(std::bit_cast<JSCell*>(cell.address())) };
+    unsigned representationsRead = 0;
+    for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
+        bool wasRead = false;
+        for (JSValue value : values) {
+            FakeTypedObject object;
+            if (!tryWrite(representation, &object.field(), value, cageBase))
+                continue;
+            auto readField = [&] {
+                return reads.runner.run(getByValCached(), { object.address(), key.address() });
+            };
+            forget();
+            reads.file(createFieldSlot(representation));
+            StubRun first = readField();
+            AOT_TEST_CHECK(!first.calledOperation && first.result == bitsOf(value) && numberOfPlaces() == 1);
+            reads.clear();
+            StubRun second = readField();
+            AOT_TEST_CHECK(!second.calledOperation && second.result == bitsOf(value));
+            for (PresenceQuestion question : { PresenceQuestion::In, PresenceQuestion::HasOwn }) {
+                StubRun asked = reads.runner.run(inByValCached(question), { object.address(), key.address() });
+                AOT_TEST_CHECK(!asked.calledOperation && asked.result == 1);
+            }
+            AOT_TEST_CHECK(reads.runner.run(getByValCached(), { object.address(), otherKey.address() }).calledOperation);
+            if (SlotTraits traits = traitsOf(representation); traits.hasAbsent) {
+                memcpy(&object.field(), &traits.absentBits, traits.width);
+                AOT_TEST_CHECK(readField().calledOperation);
+                StubRun askedOfEmptySlot = reads.runner.run(inByValCached(PresenceQuestion::HasOwn), { object.address(), key.address() });
+                AOT_TEST_CHECK(askedOfEmptySlot.calledOperation || !askedOfEmptySlot.result);
+            }
+
+            // The question whether the name is there leaves a place as a read does.
+            forget();
+            AOT_TEST_CHECK(tryWrite(representation, &object.field(), value, cageBase));
+            reads.file(createFieldSlot(representation));
+            StubRun asked = reads.runner.run(inByValCached(PresenceQuestion::In), { object.address(), key.address() });
+            AOT_TEST_CHECK(!asked.calledOperation && asked.result == 1 && numberOfPlaces() == 1);
+            reads.clear();
+            StubRun readBehindQuestion = readField();
+            AOT_TEST_CHECK(!readBehindQuestion.calledOperation && readBehindQuestion.result == bitsOf(value));
+            wasRead = true;
+        }
+        representationsRead += wasRead;
+    }
+    AOT_TEST_CHECK(representationsRead == numberOfEnumerators<SlotRepresentation> - 1);
+
+    forget();
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField + sizeof(uint64_t);
+    constexpr uint32_t offsetInExtension = 8;
+    FakeTypedObject objectWithExtension;
+    FakeObject<offsetInExtension + sizeof(uint64_t)> extension;
+    extension.at<uint64_t>(offsetOfExtensionGranuleBits) = granuleBitOf(offsetInExtension);
+    extension.at<uint64_t>(offsetInExtension) = bitsOf(jsNumber(7));
+    objectWithExtension.at<uint32_t>(offsetOfExtensionWord) = MarkedBlockCage::encode(cageBase, std::bit_cast<void*>(extension.address() - offsetOfEmptyExtensionInCage));
+    reads.file(Slot::createField(structureID, Slot::Kind::Field, Slot::isOwn | Slot::isOutOfLine, SlotData::create(offsetInExtension, SlotRepresentation::JSValue), 0, offsetOfExtensionWord));
+    StubRun outsideCell = reads.runner.run(getByValCached(), { objectWithExtension.address(), key.address() });
+    AOT_TEST_CHECK(!outsideCell.calledOperation && outsideCell.result == bitsOf(jsNumber(7)));
+    AOT_TEST_CHECK(!numberOfPlaces());
 }
-#endif
 
 // What the tables do not say of the holder is asked of the run time with the holder as the receiver.
 static void testInheritedFieldsOfHolderThatIsNotFiled()
@@ -1156,20 +1214,13 @@ static void testNamesOutsideLayoutAreAbsent()
     // What is answered here is never filed, so one answer in so many is left to the operation that files.
     constexpr uint16_t absentName = 1;
     static_assert(absentName != inheritedName && absentName != PropertyReads::name && absentName != PropertyReads::nameMadeAtRunTime);
-    reads.runner.instance().propertyCaches.absentReadsAnswered = 0;
     FakeObjectWithShape askedOften(FieldTable::shapeWithValue);
-#if CPU(X86_64)
     constexpr unsigned readsBetweenMisses = MissesOfPairs::missesBetweenFilings;
-#else
-    constexpr unsigned readsBetweenMisses = AbsenceFilter::readsBetweenMisses;
-#endif
     reads.runner.setCountsMissesAcrossRuns(true);
     for (unsigned read = 1; read <= 3 * readsBetweenMisses; ++read) {
         reads.runner.instance().propertyCaches.missIsDueForFiling = 0;
         AOT_TEST_CHECK(reads.read(askedOften.address(), absentName).calledOperation == !(read % readsBetweenMisses));
-#if CPU(X86_64)
         AOT_TEST_CHECK(reads.runner.instance().propertyCaches.missIsDueForFiling == !(read % readsBetweenMisses));
-#endif
     }
     reads.runner.setCountsMissesAcrossRuns(false);
 
@@ -1432,9 +1483,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/fields-or-inherited-getters"_s, ImageTests::whenExecutable<testFieldsOrInheritedGetters> },
         { "stubs/get-by-id/inherited-fields"_s, ImageTests::whenExecutable<testInheritedFields> },
         { "stubs/get-by-id/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<testInheritedFieldsOfHolderThatIsNotFiled> },
-#if CPU(X86_64)
         { "stubs/get-by-val/places-of-keyed-values"_s, ImageTests::whenExecutable<testPlacesOfKeyedValues> },
-#endif
         { "stubs/get-by-id/fields-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsOrInheritedFields> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedFields> },
         { "stubs/get-by-id/names-made-at-run-time"_s, ImageTests::whenExecutable<testNamesMadeAtRunTime> },

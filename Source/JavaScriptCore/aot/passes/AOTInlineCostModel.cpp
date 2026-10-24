@@ -50,7 +50,6 @@ AOT_THRESHOLD(unsigned, depthWithoutBets, 3);
 constexpr uint32_t constructorBytes = 256;
 constexpr uint8_t percentileOfMostEnteredFunctions = 98;
 constexpr uint32_t storeIntoOwnAllocationBytes = 32;
-constexpr uint32_t handlerIntroductionBytes = 320;
 // What an entrypoint that has to convert the result pays to enter the tests: a frame, a call, a return.
 constexpr uint32_t bodyCopiedIntoHotEntrypointBytes = 48;
 
@@ -386,12 +385,22 @@ static bool isEnteredThroughCallerAlone(const FunctionPassContext& context, Func
     return !isNamedByOtherFunctions(context, function, heat);
 }
 
+// The generic version of a caller repeats the call and never takes the body in. The program has written one call.
+static bool isCalledAgainByGenericVersionAlone(const FunctionPassContext& context, FunctionID function)
+{
+    if (context.inputs.callGraph.numberOfCallSites(function) != 2)
+        return false;
+    return std::ranges::count_if(context.function.values, [&](const Value& value) {
+        return value.opcode == Opcode::CallDirect && value.function() == function && value.isNeverInlined();
+    }) == 1;
+}
+
 // The body goes only where the call in the frame is the one call that the graph counts.
 static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID function, uint32_t frame, HeatClass heat)
 {
     const CallGraph& callGraph = context.inputs.callGraph;
     bool isTheCallThatIsCounted = numberOfCallSitesCountedHere(context, frame) || isHot(heat);
-    if (isTheCallThatIsCounted && callGraph.numberOfCallSites(function) == 1 && callGraph.callSiteSet(function) == CallSiteSet::Complete)
+    if (isTheCallThatIsCounted && callGraph.callSiteSet(function) == CallSiteSet::Complete && (callGraph.numberOfCallSites(function) == 1 || isCalledAgainByGenericVersionAlone(context, function)))
         return true;
     return isEnteredThroughCallerAlone(context, function, heat);
 }
@@ -499,9 +508,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     uint32_t foldedBytes = computeFoldedBytes(program, caller, value, summary);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
-    bool introducesHandlers = !summary.blocksWithHandlers.isEmpty() && !context.analyses.cfg().hasHandlers();
-    if (introducesHandlers)
-        cost = saturatingSum<uint32_t>(cost, InlineModel::handlerIntroductionBytes);
 
     HeatClass heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
@@ -514,7 +520,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
     uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, value, heat, depth);
-    InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget, .introducesHandlers = introducesHandlers };
+    InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {
         verdict.benefits.add(benefit);
@@ -579,7 +585,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     else if (isHot(heat) && summary.canInlineHead()) {
         verdict.decision = InlineDecision::InlineHead;
         verdict.costBytes = summary.headBytes;
-        verdict.introducesHandlers = false;
     } else if (!canInlineWholeBody)
         verdict.decision = InlineDecision::Barrier;
     else

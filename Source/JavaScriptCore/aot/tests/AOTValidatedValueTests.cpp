@@ -81,12 +81,12 @@ static constexpr ASCIILiteral functionsOfProgram = R"IR(function f0 name="main" 
     v27 = Call v1, -, v26
     Return
 }
-function f1 name="validateByPlan" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Builtin builtin=TypeError
-    v4 = String string="the value does not match the type"
-    v5 = Construct v3, -, v4
-    Throw v5
+function f1 name="validateByPlan" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Builtin builtin=TypeError
+    v5 = String string="the value does not match the type"
+    v6 = Construct v4, -, v5
+    Throw v6
 }
 function f2 name="resultIsUsed" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -147,11 +147,11 @@ function f11 name="validate" role=Library parameters=[{type=anything}] results=[
   b0(v0: anything):
     Return v0
 }
-function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
-    v2 = String string="id-1!"
-    v3 = StrictEq v0, v2
-    Return v3
+function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=string flags=[IsExpected]}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = String string="id-1!"
+    v4 = StrictEq v0, v3
+    Return v4
 }
 function f13 name="withRuleTestedByHelper" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

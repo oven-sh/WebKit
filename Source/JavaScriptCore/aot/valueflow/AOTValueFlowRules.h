@@ -61,7 +61,6 @@ void runArithmetic(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runToPropertyKey(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 // Whether the set holds an instance of a class without a heritage that some operand passes as new.target: the run time may have made an ordinary object in its place.
-bool mayHaveOtherLayoutThanItsClass(ValueFlowRuleContext&, ClimbingSet);
 void runCall(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runCallGroup(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runEscape(const ValueFlowStatement&, ValueFlowRuleContext&);

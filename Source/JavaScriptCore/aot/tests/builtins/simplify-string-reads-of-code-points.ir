@@ -95,23 +95,12 @@ function f3 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]},
 # CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
 # CHECK-NOT: GetStringCodeUnit
 
-function f4 name="readOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
-    v3 = Substring v0, v1, v2
-    v4 = CallBuiltin v3, v1 overload=StringPrototypeCodePointAt/0
-    Return v4
-}
-# CHECK-LABEL: function f4 name="readOfARange"
-# CHECK-NOT: GetStringCodeUnit
-# CHECK: v4:{{*}}= CallBuiltin v3, v1 overload=StringPrototypeCodePointAt/0
-# CHECK-NOT: GetStringCodeUnit
-
-function f5 name="positionIsOmitted" parameters=[{type=string}] results=[{type=anything}] {
+function f4 name="positionIsOmitted" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = CallBuiltin v0 overload=StringPrototypeCodePointAt/0
     Return v1
 }
-# CHECK-LABEL: function f5 name="positionIsOmitted"
+# CHECK-LABEL: function f4 name="positionIsOmitted"
 # CHECK-NOT: GetStringCodeUnit
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=StringPrototypeCodePointAt/0
 # CHECK-NOT: GetStringCodeUnit

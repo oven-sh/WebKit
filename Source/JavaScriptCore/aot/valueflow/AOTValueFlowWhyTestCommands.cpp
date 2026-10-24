@@ -45,8 +45,6 @@ static ASCIILiteral nameOf(ValueFlowStatementKind kind)
         return "Escape"_s;
     case ValueFlowStatementKind::ModuleEvaluation:
         return "ModuleEvaluation"_s;
-    case ValueFlowStatementKind::EntryChecks:
-        return "EntryChecks"_s;
     case ValueFlowStatementKind::Coroutine:
         return "Coroutine"_s;
     case ValueFlowStatementKind::HostRoots:
@@ -277,43 +275,6 @@ static void printUsedBuiltinsBehind(PrintStream& out, ValueFlowSolution& solutio
                     out.print(" row-of:", builtins.tokenOf(builtin));
             }
         }
-    }
-}
-
-// For each of the last rounds that logged an edge: how many edges each statement logged for the first time, the busiest statements first.
-static void printLateRounds(PrintStream& out, ValueFlowSolution& solution, uint32_t numberOfRounds)
-{
-    constexpr size_t numberOfStatementsPrinted = 4;
-    const ValueFlowSolver& solver = solution.solver();
-    std::span<const ValueFlowSolver::LoggedEdge> logged = solver.edgesInOrderLogged();
-    if (logged.empty())
-        return;
-    uint32_t lastRound = logged.back().round;
-    uint32_t firstRound = lastRound > numberOfRounds ? lastRound - numberOfRounds + 1 : 0;
-    size_t index = 0;
-    while (index < logged.size() && logged[index].round < firstRound)
-        ++index;
-    while (index < logged.size()) {
-        uint32_t round = logged[index].round;
-        Vector<uint32_t> statements;
-        for (; index < logged.size() && logged[index].round == round; ++index)
-            statements.append(logged[index].statement.index());
-        AOT::sort(statements);
-        Vector<std::pair<uint32_t, uint32_t>> counts;
-        for (uint32_t statement : statements) {
-            if (counts.isEmpty() || counts.last().second != statement)
-                counts.append({ 0, statement });
-            ++counts.last().first;
-        }
-        AOT::sort(counts, [](auto first, auto second) {
-            return std::pair { second.first, first.second } < std::pair { first.first, second.second };
-        });
-        out.print("round ", round, " edges ", statements.size(), " statements ", counts.size(), ":");
-        for (auto [count, statement] : counts.span().first(std::min(counts.size(), numberOfStatementsPrinted))) {
-            out.print("  ", count, " ");
-            printStatement(out, solver, ValueFlowStatementID(statement));
-        }
-        out.println();
     }
 }
 
@@ -767,19 +728,16 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
     uint32_t withUnknownObject = 0;
     uint32_t withoutSource = 0;
     uint32_t withoutBirth = 0;
-    // The typed bodies, whatever else the program wrote, its generic versions, the library.
-    enum Part : uint8_t { TypedBodies, Program, GenericVersions, Library, NumberOfParts };
+    // What the program wrote, its generic versions, the library.
+    enum Part : uint8_t { Program, GenericVersions, Library, NumberOfParts };
     std::array<uint32_t, NumberOfParts> countedInPart { };
     std::array<uint32_t, NumberOfParts> withUnknownObjectInPart { };
-    Vector<std::pair<FunctionID, ValueID>> examplesInTypedBodies;
     HashMap<String, uint32_t> producersOfOperandsWithUnknownObject;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         if (!solver.isReached(FunctionID(index)))
             continue;
         FunctionRole role = program.functions[index].role;
         Part part = role == FunctionRole::GenericVersion ? GenericVersions : isWrittenInProgram(program.functions[index]) ? Program : Library;
-        if (part == Program && role == FunctionRole::Source && bodies.universe().genericVersionOf(FunctionID(index)))
-            part = TypedBodies;
         for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || !isCounted(statement.opcode) || !statement.operandCount)
                 continue;
@@ -792,20 +750,17 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
                 continue;
             ++withUnknownObject;
             ++withUnknownObjectInPart[part];
-            if (part == TypedBodies || part == Program) {
+            if (part == Program) {
                 // What the front end says of the operand, and which operation has made it.
                 const Function& function = program.functions[index];
                 ValueID value = function.at(statement.site).operand(0);
                 const Value& producer = function.at(value);
                 const Type& type = program.at(producer.type);
                 ASCIILiteral kindOfType = type.isAnything() ? "anything"_s : type.anyObject ? "any object"_s : (type.anyFunction || !type.functions.isEmpty()) ? "functions"_s : !type.classes.isEmpty() ? "built-in classes"_s : type.layouts ? "layouts"_s : "primitives"_s;
-                uint32_t count = ++producersOfOperandsWithUnknownObject.add(makeString(part == TypedBodies ? "typed body, "_s : "rest, "_s, kindOfType, ", "_s, nameOf(producer.opcode)), 0).iterator->value;
+                uint32_t count = ++producersOfOperandsWithUnknownObject.add(makeString(kindOfType, ", "_s, nameOf(producer.opcode)), 0).iterator->value;
                 if (type.isAnything() && !(count % 300))
                     out.println("typed anything: ", nameOf(producer.opcode), " f", index, ":v", value.index(), " read at v", statement.site.index(), " position ", function.at(statement.site).position);
             }
-            // One in every 400, so that they come from all over the program.
-            if (part == TypedBodies && !(withUnknownObjectInPart[part] % 400))
-                examplesInTypedBodies.append({ FunctionID(index), statement.site });
             if (std::optional<ValueFlowUnknownSource> source = operand.node ? solver.unknownSourceOf(operand.node) : std::nullopt)
                 ++operandsOfSource[static_cast<size_t>(*source)];
             else
@@ -825,9 +780,7 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
     }
 
     out.println("operations ", counted, " with the untracked object ", withUntrackedObject, " with the unknown object ", withUnknownObject, " from no operation ", withoutBirth);
-    out.println("in typed bodies ", countedInPart[TypedBodies], " with the unknown object ", withUnknownObjectInPart[TypedBodies], "; in the rest of the program ", countedInPart[Program], " with ", withUnknownObjectInPart[Program], "; in its generic versions ", countedInPart[GenericVersions], " with ", withUnknownObjectInPart[GenericVersions], "; in the library ", countedInPart[Library], " with ", withUnknownObjectInPart[Library]);
-    for (auto [function, site] : examplesInTypedBodies)
-        out.println("in a typed body: f", function.index(), ":v", site.index());
+    out.println("in the program ", countedInPart[Program], " with ", withUnknownObjectInPart[Program], "; in its generic versions ", countedInPart[GenericVersions], " with ", withUnknownObjectInPart[GenericVersions], "; in the library ", countedInPart[Library], " with ", withUnknownObjectInPart[Library]);
     Vector<std::pair<String, uint32_t>> producers;
     for (auto& [name, count] : producersOfOperandsWithUnknownObject)
         producers.append({ name, count });
@@ -1439,60 +1392,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
     }
 }
 
-// leaving: the reached functions that test their arguments and the reached typed bodies, by the worst of what their tests, checks and reads turn away.
-static void printWhoLeavesTypedCode(PrintStream& out, ValueFlowSolution& solution)
-{
-    const Program& program = solution.program();
-    const ValueFlowBodies& bodies = solution.bodies();
-    const ValueFlowUniverse& universe = bodies.universe();
-    ValueSetID escaped = solution.solver().valueOf(ValueFlowProgramNodes::escaped());
-    struct Counts {
-        uint32_t nothing { 0 };
-        uint32_t primitivesAlone { 0 };
-        uint32_t knownObjects { 0 };
-        uint32_t placeholderAndHasEscaped { 0 };
-        uint32_t placeholderFromKnownCode { 0 };
-    };
-    Counts ofTests;
-    Counts ofTypedBodies;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!solution.solver().isReached(FunctionID(index)))
-            continue;
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (statement.kind != ValueFlowStatementKind::EntryChecks)
-                continue;
-            bool turnsAwayPrimitive = false;
-            bool turnsAwayKnownObject = false;
-            bool turnsAwayPlaceholder = false;
-            for (const ValueFlowOperand& turnedAway : bodies.operandsOf(statement)) {
-                solution.sets().forEachMember(solution.valueOf(turnedAway), [&](ValueFlowObjectID member) {
-                    if (member == ValueFlowUniverse::unknownObject() || member == ValueFlowUniverse::untrackedObject())
-                        turnsAwayPlaceholder = true;
-                    else if (universe.isObject(member))
-                        turnsAwayKnownObject = true;
-                    else
-                        turnsAwayPrimitive = true;
-                });
-            }
-            bool isTests = program.functions[index].role == FunctionRole::EntryChecks;
-            Counts& counts = isTests ? ofTests : ofTypedBodies;
-            if (turnsAwayPlaceholder)
-                ++(isTests && solution.sets().contains(escaped, universe.closureOf(FunctionID(index))) ? counts.placeholderAndHasEscaped : counts.placeholderFromKnownCode);
-            else if (turnsAwayKnownObject)
-                ++counts.knownObjects;
-            else if (turnsAwayPrimitive)
-                ++counts.primitivesAlone;
-            else
-                ++counts.nothing;
-        }
-    }
-    auto print = [&](ASCIILiteral name, const Counts& counts) {
-        out.println(name, ": turn away nothing ", counts.nothing, "; primitives alone ", counts.primitivesAlone, "; known objects ", counts.knownObjects, "; a placeholder, and the function has escaped ", counts.placeholderAndHasEscaped, "; a placeholder from known code ", counts.placeholderFromKnownCode);
-    };
-    print("functions that test their arguments"_s, ofTests);
-    print("typed bodies"_s, ofTypedBodies);
-}
-
 // receiver-layouts: the reads and stores of named properties in the reached functions of the program but for its generic versions, by what their receiver may be.
 static void printLayoutsOfReceivers(PrintStream& out, ValueFlowSolution& solution)
 {
@@ -1677,26 +1576,6 @@ static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
         out.println();
     });
     out.println("escaped closures: ", closures);
-}
-
-// The nodes of which the functor says yes: how many there are, then the first of them.
-static void printNodesWhere(PrintStream& out, ValueFlowSolution& solution, ASCIILiteral title, NOESCAPE const Invocable<bool(ValueFlowNodeID)> auto& functor)
-{
-    constexpr uint32_t numberOfNodesPrinted = 40;
-    uint32_t found = 0;
-    for (uint32_t index = 0; index < solution.solver().graph().numberOfNodes(); ++index)
-        found += functor(ValueFlowNodeID(index));
-    out.println(title, " ", found);
-
-    uint32_t printed = 0;
-    for (uint32_t index = 0; index < solution.solver().graph().numberOfNodes() && printed < numberOfNodesPrinted; ++index) {
-        if (!functor(ValueFlowNodeID(index)))
-            continue;
-        ++printed;
-        out.print("  ");
-        printNode(out, solution, ValueFlowNodeID(index));
-        out.println();
-    }
 }
 
 // What the operands of the operation hold, in the order of the operands, and what its result holds.
@@ -2046,7 +1925,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
     }
 
     for (const String& word : context.arguments) {
-        if (word.startsWith("rounds="_s) || word.startsWith("without="_s) || word == "split"_s || word == "guarded"_s || word == "unguarded"_s)
+        if (word.startsWith("rounds="_s) || word.startsWith("without="_s) || word == "guarded"_s || word == "unguarded"_s)
             continue;
         if (word == "seeds"_s) {
             printSeeds(context.out, solution);
@@ -2098,47 +1977,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printRootsOfEscape(context.out, solution);
             continue;
         }
-        if (word == "saturated"_s) {
-            printNodesWhere(context.out, solution, "saturated"_s, [&](ValueFlowNodeID node) {
-                return solver.isSaturated(node);
-            });
-            continue;
-        }
-        if (word.startsWith("late="_s)) {
-            std::optional<uint32_t> rounds = numberAfter(word, 5);
-            if (!rounds)
-                return printBadArgument(context.out, word);
-            printLateRounds(context.out, solution, *rounds);
-            continue;
-        }
-        if (word.startsWith("large="_s)) {
-            std::optional<uint32_t> size = numberAfter(word, 6);
-            if (!size)
-                return printBadArgument(context.out, word);
-            auto isLarge = [&](ValueFlowNodeID node) {
-                ValueSetID value = solver.valueOf(node);
-                return !ValueSets::isComplement(value) && solver.sets().size(value) > *size;
-            };
-            printNodesWhere(context.out, solution, "large"_s, isLarge);
-            uint64_t members = 0;
-            uint64_t membersThatHaveEscaped = 0;
-            uint32_t holdingUnknownObject = 0;
-            HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> distinct;
-            ValueSetMaker maker(bodies.sets());
-            ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
-            for (uint32_t index = 0; index < solver.graph().numberOfNodes(); ++index) {
-                if (!isLarge(ValueFlowNodeID(index)))
-                    continue;
-                ValueSetID value = solver.valueOf(ValueFlowNodeID(index));
-                holdingUnknownObject += solver.sets().contains(value, ValueFlowUniverse::unknownObject());
-                if (!distinct.add(value.index()).isNewEntry)
-                    continue;
-                members += solver.sets().size(value);
-                membersThatHaveEscaped += solver.sets().size(maker.intersect(value, escaped));
-            }
-            context.out.println("  holding the unknown object ", holdingUnknownObject, "; distinct sets ", distinct.size(), " with ", members, " members, of which ", membersThatHaveEscaped, " have escaped");
-            continue;
-        }
         if (word.startsWith("holds="_s)) {
             // holds=nN:#M
             size_t colon = word.find(':');
@@ -2148,10 +1986,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 return printBadArgument(context.out, word);
             context.out.println(word);
             printWhyHeld(context.out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
-            continue;
-        }
-        if (word == "leaving"_s) {
-            printWhoLeavesTypedCode(context.out, solution);
             continue;
         }
         if (word == "receiver-layouts"_s) {
@@ -2166,12 +2000,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printChokePoints(context.out, solution, context.build);
             continue;
         }
-        if (word == "outside-families"_s) {
-            printNodesWhere(context.out, solution, "outside-families"_s, [&](ValueFlowNodeID node) {
-                return solver.holdsObjectOutsideFamily(node);
-            });
-            continue;
-        }
         if (word == "evaluators"_s) {
             const BuiltinTable& builtins = program.builtins();
             solver.sets().forEachMember(solver.valueOf(ValueFlowProgramNodes::escaped()), [&](ValueFlowObjectID object) {
@@ -2181,16 +2009,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 context.out.println("escaped ", builtins.tokenOf(builtin));
                 printWhyHeld(context.out, solution, ValueFlowProgramNodes::escaped(), object);
             });
-            continue;
-        }
-        if (word == "hubs"_s) {
-            for (uint32_t index = 0; index < solver.graph().numberOfNodes(); ++index) {
-                const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(index));
-                if (!key || key->kind != ValueFlowMadeNodeKind::Hub || !solver.sets().contains(solver.valueOf(ValueFlowNodeID(index)), ValueFlowUniverse::unknownObject()))
-                    continue;
-                context.out.println("hub ", key->payload);
-                printWhyHeld(context.out, solution, ValueFlowNodeID(index), ValueFlowUniverse::unknownObject());
-            }
             continue;
         }
         size_t equals = word.find('=');
@@ -2414,28 +2232,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
         if (!function || *function >= program.functions.size())
             return printBadArgument(context.out, word);
         context.out.println(word);
-        if (word.startsWith("leaves="_s)) {
-            const Function& record = program.functions[*function];
-            context.out.println("  ", record.role, " at position ", record.position, " of module m", record.module ? record.module.index() : 0);
-            for (const ValueFlowStatement& statement : bodies.statementsOf(*function)) {
-                if (statement.kind != ValueFlowStatementKind::EntryChecks)
-                    continue;
-                unsigned index = 0;
-                for (const ValueFlowOperand& turnedAway : bodies.operandsOf(statement)) {
-                    ValueSetID held = solution.valueOf(turnedAway);
-                    if (!solution.sets().isEmpty(held)) {
-                        context.out.print("  test ", index);
-                        if (turnedAway.node) {
-                            context.out.print(" at ");
-                            printNode(context.out, solution, turnedAway.node);
-                        }
-                        context.out.print(" turns away ");
-                        printValue(context.out, solution, held);
-                    }
-                    ++index;
-                }
-            }
-        } else if (word.startsWith("reached="_s))
+        if (word.startsWith("reached="_s))
             printWhyReached(context.out, solution, FunctionID(*function));
         else if (word.startsWith("escaped="_s))
             printWhyHeld(context.out, solution, ValueFlowProgramNodes::escaped(), bodies.universe().closureOf(FunctionID(*function)));

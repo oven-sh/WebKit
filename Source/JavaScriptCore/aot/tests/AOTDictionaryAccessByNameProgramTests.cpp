@@ -35,10 +35,8 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 }
 )IR"_s;
 
-// Where the object answers, one access in MissesOfPairs::missesBetweenFilings leaves for an operation: 6 or 7 of the 400 that measure() makes, which it tells from the 3 at most of a cache.
-#if CPU(X86_64)
-static_assert(400 / MissesOfPairs::missesBetweenFilings > 3 && 400 / MissesOfPairs::missesBetweenFilings + 1 <= 8);
-#endif
+// Where the object answers, one access in MissesOfPairs::missesBetweenFilingsOfDictionaries leaves for an operation: 6 or 7 of the 400 that measure() makes, which it tells from the 3 at most of a cache.
+static_assert(400 / MissesOfPairs::missesBetweenFilingsOfDictionaries > 3 && 400 / MissesOfPairs::missesBetweenFilingsOfDictionaries + 1 <= 8);
 
 #define MEASURE_ACCESSES R"JS(
 const operations = ["GetByIdAndCache", "GetById", "PutByIdAndCache", "PutById"];
@@ -99,13 +97,8 @@ globalThis.publish = (read, store) => {
 #define OUTPUT_LINE(what, served) what served "\n"
 
 // What a read, or a store that replaces a value, is served by where no cache may answer, and a read that is filed only behind its first few calls.
-#if CPU(X86_64)
 #define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) objectAnswers
 #define READ_CACHED_LATE(cached, objectAnswers) cached
-#else
-#define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) notCached
-#define READ_CACHED_LATE(cached, objectAnswers) objectAnswers
-#endif
 
 #define OUTPUT_OF_CACHEABLE_DICTIONARIES(cached, notCached, objectAnswers) \
     OUTPUT_LINE("held: 2", cached) \

@@ -1,7 +1,7 @@
-# The type never has every kind of JavaScript value, as an operand and as a terminator value, and it is no environment and no opaque value
+# The type never has every kind of JavaScript value, as an operand and as a terminator value, and it is no opaque value
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: OperandTypeMismatch 3
+# DIAGNOSTIC: OperandTypeMismatch 2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="goodJavaScriptValueKinds" parameters=[{type=never}, {type=anything}, {type=object}, {type=function}] results=[{type=undefined}] {
@@ -20,17 +20,12 @@ function f0 name="goodJavaScriptValueKinds" parameters=[{type=never}, {type=anyt
   b2():
     Return
 }
-function f1 name="badEnvironment" parameters=[{type=never}] results=[{type=undefined}] {
-  b0(v0: never):
-    MarkEnvironmentEscaped v0
-    Return
-}
-function f2 name="badOpaque" parameters=[{type=never}, {type=anything}] results=[{type=undefined}] {
+function f1 name="badOpaque" parameters=[{type=never}, {type=anything}] results=[{type=undefined}] {
   b0(v0: never, v1: anything):
     v2 = ForInStep v0, v1
     Return
 }
-function f3 name="badOpaqueTerminatorValue" parameters=[{type=never}] results=[{type=undefined}] {
+function f2 name="badOpaqueTerminatorValue" parameters=[{type=never}] results=[{type=undefined}] {
   b0(v0: never):
     Rethrow v0
 }

@@ -1,0 +1,40 @@
+# The program reads RegExp.$1, which tells of its own last match: no pattern and no format is matched by compiled code, whose matches are recorded. The helper's are not
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="^a"}, Format{format=Uuid}]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = ToString v1
+    v4 = CallDirect v3 function=f2
+    v5 = Builtin builtin=RegExp
+    v6 = PropGet v5 key="$1"
+    Return v6
+}
+function f1 name="validates" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=BunBundleValidate
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return v2
+}
+function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0 expectedResult=x0
+    Return v2
+}
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK: function {{*}}role=ValidatingParser
+# CHECK: = String string="{\"rule\":\"Pattern\",\"source\":\"^a\"}"
+# CHECK-NEXT: = GetPreparedPlans
+# CHECK: function {{*}}role=Validator
+# CHECK: = String string="{\"rule\":\"Pattern\",\"source\":\"^a\"}"
+# CHECK-NEXT: = GetPreparedPlans
+# CHECK-NOT: SharedRegExpLiteral

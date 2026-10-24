@@ -227,7 +227,6 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
 void PassRunner::didFinishFunctionLoop()
 {
     flushFunctionPassTotals();
-    reportChangesBehindSimplify();
     if (m_build.diagnostics().hasErrors() || m_didRunLastPass.load(std::memory_order_relaxed))
         m_isStopped = true;
 }
@@ -765,63 +764,6 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
     run.isStopped = true;
 }
 
-// The one walk that is to stand in the place of the schedule leaves the function as the schedule would. A run of the schedule on a copy shows what it has left undone, pass by pass.
-void PassRunner::countChangesBehindSimplify(std::span<const ScheduleStep> steps, const FunctionPassContext& context, const ScheduleRun& run) const
-{
-    if (!m_build.options().countsChangesBehindSimplify) [[likely]]
-        return;
-    Function copy(context.function);
-    FunctionAnalyses analyses(context.analyses.context(), copy);
-    FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
-    contextOfCopy.pendingTyping = context.pendingTyping.forCopyWith(contextOfCopy.changes, context.changes);
-    contextOfCopy.isInRounds = context.isInRounds;
-    ScheduleRun runOfCopy;
-    prepare(runOfCopy);
-    runOfCopy.recordsChangers = false;
-    runOfCopy.functionAsRead = run.functionAsRead;
-    runOfCopy.optionalPassesOfShortSchedule = run.optionalPassesOfShortSchedule;
-    runOfCopy.maxRounds = run.maxRounds;
-    bool hasLoop = Typed::contentsOf(copy).opcodes.contains(Opcode::LoopHint);
-    runSteps(steps, contextOfCopy, runOfCopy);
-
-    uint64_t changes = 0;
-    for (unsigned index = 0; index < numberOfPasses; ++index) {
-        if (!runOfCopy.changes[index])
-            continue;
-        ChangesBehindSimplify& total = m_changesBehindSimplify[index];
-        total.runs.fetch_add(runOfCopy.changes[index], std::memory_order_relaxed);
-        total.functions.fetch_add(1, std::memory_order_relaxed);
-        total.functionsWithLoop.fetch_add(hasLoop, std::memory_order_relaxed);
-        uint32_t function = run.functionAsRead.index();
-        uint32_t first = total.firstFunction.load(std::memory_order_relaxed);
-        while (function < first && !total.firstFunction.compare_exchange_weak(first, function, std::memory_order_relaxed)) { }
-        changes += runOfCopy.changes[index];
-    }
-    if (!changes)
-        return;
-    m_build.statistics().count(StatisticID::ChangesBehindSimplify, changes);
-    m_programWithChangesBehindSimplify.store(&context.program, std::memory_order_relaxed);
-}
-
-void PassRunner::reportChangesBehindSimplify()
-{
-    const Program* counted = m_programWithChangesBehindSimplify.exchange(nullptr, std::memory_order_relaxed);
-    if (!counted) [[likely]]
-        return;
-    const Program& program = *counted;
-    for (PassID id : allMembersOf<PassID>) {
-        ChangesBehindSimplify& total = m_changesBehindSimplify[static_cast<unsigned>(id)];
-        uint64_t runs = total.runs.exchange(0, std::memory_order_relaxed);
-        uint64_t functions = total.functions.exchange(0, std::memory_order_relaxed);
-        uint64_t functionsWithLoop = total.functionsWithLoop.exchange(0, std::memory_order_relaxed);
-        FunctionID first(total.firstFunction.exchange(std::numeric_limits<uint32_t>::max(), std::memory_order_relaxed));
-        if (!runs)
-            continue;
-        StringID name = program.at(first).name;
-        dataLogLn("AOT changes behind Simplify: ", nameOf(id), " | ", runs, " runs change the function | at ", functions, " starts of the schedule, ", functionsWithLoop, " of them in a function with a loop | first in f", first.index(), " ", name ? program.strings.toWTFString(name) : "(no name)"_str);
-    }
-}
-
 void PassRunner::dumpAfterFunctionPass(PassID id, const FunctionPassContext& context) const
 {
     if (m_build.options().logging.dumpedPass != id) [[likely]]
@@ -859,7 +801,6 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
             std::span<const ScheduleStep> included = stepsOf(step.schedule);
             if (!step.compacts)
                 included = included.first(included.size() - 1);
-            countChangesBehindSimplify(included, context, run);
             runSteps(included, context, run, whatFollowsStep);
             break;
         }

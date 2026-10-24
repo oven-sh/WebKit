@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <bit>
 #include <limits>
+#include <ranges>
 #include <span>
 #include <tuple>
 #include <wtf/ASCIICType.h>
@@ -50,16 +51,14 @@ public:
 
     std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> build()
     {
-        bool runsOnlyOn8BitSubjects = false;
+        bool givesUpAtSurrogates = false;
         if (m_pattern.eitherUnicode() && !consumesSingleCodeUnits(*m_pattern.m_body, Subjects::All)) {
             if (!consumesSingleCodeUnits(*m_pattern.m_body, Subjects::With8BitCharacters))
                 return makeUnexpected(FlatProgramDecline::UnicodeMode);
-            runsOnlyOn8BitSubjects = true;
+            givesUpAtSurrogates = true;
         }
         if (m_pattern.m_containsModifiers)
             return makeUnexpected(FlatProgramDecline::Modifiers);
-        if (m_pattern.m_containsLookbehinds)
-            return makeUnexpected(FlatProgramDecline::Lookbehind);
         if (m_pattern.hasDuplicateNamedCaptureGroups())
             return makeUnexpected(FlatProgramDecline::DuplicateNamedGroups);
         if (m_pattern.containsUnsignedLengthPattern())
@@ -71,7 +70,8 @@ public:
         if (m_pattern.hasEndAnchoredFixedSize())
             program->endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
         program->triesOnlyOnce = m_pattern.sticky();
-        program->runsOnlyOn8BitSubjects = runsOnlyOn8BitSubjects;
+        program->givesUpAtSurrogates = givesUpAtSurrogates;
+        program->countsTurns = m_countsTurns;
 
         auto& alternatives = m_pattern.m_body->m_alternatives;
         unsigned count = alternatives.size();
@@ -88,13 +88,18 @@ public:
         if (!emitAlternatives(alternatives.span().first(count), { }))
             return makeUnexpected(*m_decline);
         emit(Kind::Match);
+        program->recordFailureOp = emit(Kind::RecordFailure);
         if (m_countsTurns && !std::ranges::contains(program->ops, Kind::CountTurn, &FlatOp::kind))
             return makeUnexpected(FlatProgramDecline::NoTurnsToCount);
         if (hasExceededIndexLimit())
             return makeUnexpected(FlatProgramDecline::TooManySetsOrRegisters);
         program->numRegisters = m_nextRegister;
+        program->framesOfRegisters = (m_nextRegister * sizeof(uint32_t) + sizeof(FlatFrame) - 1) / sizeof(FlatFrame);
 
         removeUnneededLogging(*program);
+        assignMemoRows();
+        if (!m_countsTurns)
+            program->stepsPerCharacterBeforeStopping = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
 
@@ -110,6 +115,9 @@ public:
         program->wideRanges.shrinkToFit();
         program->text.shrinkToFit();
         program->wideText.shrinkToFit();
+        program->turnsThatMayTakeNothing.shrinkToFit();
+        program->loopsThatCountTurns.shrinkToFit();
+        program->aroundMemoRow.shrinkToFit();
         return program;
     }
 
@@ -171,7 +179,7 @@ private:
                         return false;
                     break;
                 case PatternTerm::Type::DotStarEnclosure:
-                    return false;
+                    break;
                 }
             }
         }
@@ -252,6 +260,66 @@ private:
     }
 
     unsigned here() const { return m_program->ops.size(); }
+
+    void isLookaheadSince(unsigned begin) { m_lookaheads.append({ begin, here() }); }
+    void isTurnThatMayTakeNothingSince(unsigned begin, unsigned startRegister) { m_turnsThatMayTakeNothing.append({ begin, here(), startRegister }); }
+    void isLoopThatCountsTurnsSince(unsigned begin, unsigned counter, unsigned bound) { m_loopsThatCountTurns.append({ begin, here(), counter, bound }); }
+
+    void assignMemoRows()
+    {
+        if (m_searchDependsOnMoreThanPosition)
+            return;
+        auto& ops = m_program->ops;
+        Vector<bool> hasTooManyRows(FillWith { }, ops.size(), false);
+        Vector<bool> isInsideLookahead(FillWith { }, ops.size(), false);
+        for (auto [begin, end] : m_lookaheads)
+            std::ranges::fill(isInsideLookahead.mutableSpan().subspan(begin, end - begin), true);
+        // An inner turn ends, and so is listed, before the one around it.
+        Vector<uint16_t> turnAround(FillWith { }, ops.size(), 0);
+        auto& turns = m_program->turnsThatMayTakeNothing;
+        turns.append(FlatProgram::TurnThatMayTakeNothing { 0, 0 });
+        for (auto [begin, end, startRegister] : m_turnsThatMayTakeNothing.span() | std::views::reverse) {
+            turns.append(FlatProgram::TurnThatMayTakeNothing { static_cast<uint16_t>(startRegister), turnAround[begin] });
+            std::ranges::fill(turnAround.mutableSpan().subspan(begin, end - begin), static_cast<uint16_t>(turns.size() - 1));
+        }
+        constexpr unsigned maxRowsOfOp = 64;
+        Vector<uint16_t> loopAround(FillWith { }, ops.size(), 0);
+        Vector<unsigned> rowsOfOp(FillWith { }, ops.size(), 1);
+        auto& loops = m_program->loopsThatCountTurns;
+        loops.append(FlatProgram::LoopThatCountsTurns { 0, 0, 0 });
+        for (auto [begin, end, counter, bound] : m_loopsThatCountTurns.span() | std::views::reverse) {
+            uint64_t rows = static_cast<uint64_t>(rowsOfOp[begin]) * (static_cast<uint64_t>(bound) + 1);
+            if (rows > maxRowsOfOp) {
+                std::ranges::fill(hasTooManyRows.mutableSpan().subspan(begin, end - begin), true);
+                continue;
+            }
+            loops.append(FlatProgram::LoopThatCountsTurns { static_cast<uint16_t>(counter), static_cast<uint16_t>(bound), loopAround[begin] });
+            std::ranges::fill(loopAround.mutableSpan().subspan(begin, end - begin), static_cast<uint16_t>(loops.size() - 1));
+            std::ranges::fill(rowsOfOp.mutableSpan().subspan(begin, end - begin), static_cast<unsigned>(rows));
+        }
+        m_program->aroundMemoRow.append(FlatProgram::AroundMemoRow { 0, 0, false });
+        for (unsigned i = 0; i < ops.size() && m_program->memoRows + maxRowsOfOp < maxIndexCount; ++i) {
+            switch (ops[i].kind) {
+            case Kind::Choice:
+            case Kind::ChoiceByFirst:
+            case Kind::ChoiceByTable:
+            case Kind::GreedyLoopChoice:
+            case Kind::GreedyRun:
+            case Kind::LazyRun:
+            case Kind::GreedyRunBeforeKnownCharacters:
+            case Kind::LazyRunBeforeKnownCharacters:
+                if (!hasTooManyRows[i]) {
+                    ops[i].memoRow = static_cast<uint16_t>(m_program->memoRows + 1);
+                    m_program->memoRows += rowsOfOp[i];
+                    m_program->aroundMemoRow.grow(m_program->memoRows + 1);
+                    m_program->aroundMemoRow[ops[i].memoRow] = { turnAround[i], loopAround[i], isInsideLookahead[i] };
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
     void setTarget(unsigned op) { m_program->ops[op].target = here(); }
 
     static uint64_t minimumSize(const PatternTerm& term)
@@ -417,12 +485,15 @@ private:
             auto row = entries.mutableSpan().subspan(firstRow + alternative * classCount, classCount);
             for (unsigned i = 0; i < classCount; ++i)
                 row[i] = next[i];
+            // Where this alternative alone is left, the earlier ones go past its choice.
             uint32_t here = choices[alternative] + FlatProgram::firstDispatchTarget;
+            uint32_t pastChoice = here + 1;
             forEachClassThatBegins(first[alternative], [&](unsigned i) {
-                if (next[i] == here)
+                if (next[i] == here || next[i] == pastChoice)
                     return;
-                row[i] = next[i] == FlatProgram::noAlternativeBeginsHere ? FlatProgram::onlyThisAlternativeBeginsHere : FlatProgram::thisAndLaterAlternativesBeginHere;
-                next[i] = here;
+                bool isOnlyOne = next[i] == FlatProgram::noAlternativeBeginsHere;
+                row[i] = isOnlyOne ? FlatProgram::onlyThisAlternativeBeginsHere : FlatProgram::thisAndLaterAlternativesBeginHere;
+                next[i] = isOnlyOne ? pastChoice : here;
             });
             ops[choices[alternative]].argument = firstRow + alternative * classCount;
             ops[choices[alternative]].needed = firstClass;
@@ -437,35 +508,153 @@ private:
         return entry->second;
     }
 
+    static constexpr unsigned maxStartTableDepth = FlatProgram::maxStartTableDepth;
+    static constexpr unsigned maxTermsVisitedForStartTable = 256;
+
+    struct StartOfMatch {
+        std::array<FirstSetBits, maxStartTableDepth> at { };
+        std::array<bool, maxStartTableDepth> mayBeWide { };
+        unsigned depth { maxStartTableDepth };
+        unsigned leastSizeOfMatch { 0 };
+        unsigned termsLeftToVisit { maxTermsVisitedForStartTable };
+        bool mayMatchOnlyAtInputStart { false };
+
+        void allowAnythingFrom(unsigned place)
+        {
+            depth = std::min(depth, std::max(place, leastSizeOfMatch));
+            for (; place < depth; ++place) {
+                at[place].bits.fill(~0ull);
+                mayBeWide[place] = true;
+            }
+        }
+    };
+
+    // What follows an alternative of a group. Without an alternative: anything.
+    struct AfterGroup {
+        const PatternAlternative* alternative;
+        unsigned term;
+        const AfterGroup* parent;
+    };
+
+    // Assertions only take matches away.
+    void collectStartOfMatch(StartOfMatch& start, const PatternAlternative& alternative, unsigned i, unsigned place, const AfterGroup* after) const
+    {
+        auto& terms = alternative.m_terms;
+        for (; place < start.depth; ++i) {
+            if (!start.termsLeftToVisit)
+                return start.allowAnythingFrom(place);
+            --start.termsLeftToVisit;
+            if (i == terms.size()) {
+                if (!after) {
+                    start.depth = place;
+                    return;
+                }
+                if (!after->alternative)
+                    return start.allowAnythingFrom(place);
+                return collectStartOfMatch(start, *after->alternative, after->term, place, after->parent);
+            }
+            const PatternTerm& term = terms[i];
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+                if (term.multiline())
+                    break;
+                start.mayMatchOnlyAtInputStart |= !place;
+                return;
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+            case PatternTerm::Type::ParentheticalAssertion:
+            case PatternTerm::Type::NumberedForwardReference:
+            case PatternTerm::Type::NamedForwardReference:
+            case PatternTerm::Type::DotStarEnclosure:
+                break;
+            case PatternTerm::Type::NumberedBackReference:
+            case PatternTerm::Type::NamedBackReference:
+                return start.allowAnythingFrom(place);
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass: {
+                bool hasWideMembers = false;
+                auto set = isAtom(term) ? latin1Bits(term.m_matchedSet, hasWideMembers) : std::nullopt;
+                if (!set)
+                    return start.allowAnythingFrom(place);
+                for (unsigned count = 0; count < term.quantityMaxCount && place < start.depth; ++count, ++place) {
+                    if (term.quantityType != QuantifierType::FixedCount)
+                        collectStartOfMatch(start, alternative, i + 1, place, after);
+                    addAll(start.at[place], *set);
+                    start.mayBeWide[place] |= hasWideMembers;
+                }
+                break;
+            }
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                if (term.matchDirection() != Forward)
+                    return start.allowAnythingFrom(place);
+                if (!term.quantityMaxCount)
+                    break;
+                if (!term.quantityMinCount)
+                    collectStartOfMatch(start, alternative, i + 1, place, after);
+                AfterGroup afterThis { term.quantityMaxCount == 1 ? &alternative : nullptr, i + 1, after };
+                for (auto& nested : term.parentheses.disjunction->m_alternatives)
+                    collectStartOfMatch(start, *nested, 0, place, &afterThis);
+                return;
+            }
+            }
+        }
+    }
+
     void computeStartScan(Alternatives alternatives)
     {
         if (m_program->triesOnlyOnce)
             return;
-        FirstSetBits start;
-        bool hasWideMembers = false;
+        StartOfMatch start;
+        start.leastSizeOfMatch = alternatives[0]->m_minimumSize;
+        for (auto& alternative : alternatives)
+            start.leastSizeOfMatch = std::min(start.leastSizeOfMatch, alternative->m_minimumSize);
+        for (auto& alternative : alternatives)
+            collectStartOfMatch(start, *alternative, 0, 0, nullptr);
+
+        // The analysis knows what a lookahead lets through.
+        FirstSetBits first;
+        bool firstMayBeWide = false;
+        bool knowsFirst = start.depth;
         for (auto& alternative : alternatives) {
-            auto first = firstBits(*alternative, hasWideMembers);
-            if (!first)
-                return;
-            addAll(start, *first);
+            auto known = knowsFirst ? firstBits(*alternative, firstMayBeWide) : std::nullopt;
+            knowsFirst = known && !known->atEnd;
+            if (knowsFirst)
+                addAll(first, *known);
         }
-        if (start.atEnd)
+        if (knowsFirst) {
+            for (unsigned i = 0; i < first.bits.size(); ++i)
+                start.at[0].bits[i] &= first.bits[i];
+            start.mayBeWide[0] &= firstMayBeWide;
+        }
+
+        while (start.depth && start.mayBeWide[start.depth - 1] && hasAllLatin1Characters(start.at[start.depth - 1]))
+            --start.depth;
+        if (!start.depth)
             return;
 
-        m_program->startScan = FlatStartScan::Set;
-        m_program->startSet = start;
-        m_program->startMayBeWide = hasWideMembers;
-        unsigned memberCount = 0;
-        unsigned lastMember = 0;
-        for (unsigned i = 0; i < start.bits.size(); ++i) {
-            memberCount += std::popcount(start.bits[i]);
-            if (start.bits[i])
-                lastMember = i * 64 + std::countr_zero(start.bits[i]);
+        m_program->startScan = FlatStartScan::Table;
+        m_program->startTableDepth = start.depth;
+        m_program->mayMatchOnlyAtInputStart = start.mayMatchOnlyAtInputStart;
+        unsigned firstCount = 0;
+        for (unsigned place = 0; place < start.depth; ++place) {
+            forEachMember(start.at[place], [&](unsigned member) {
+                m_program->startTable[member] |= 1 << place;
+                m_program->startTableOfLowBits[member & 15] |= 1 << place;
+                m_program->startTableOfHighBits[(member >> 4) & 15] |= 1 << place;
+                if (!place) {
+                    ++firstCount;
+                    m_program->onlyStartCharacter = static_cast<Latin1Character>(member);
+                }
+            });
+            if (start.mayBeWide[place])
+                m_program->startTable[256] |= 1 << place;
         }
-        if (memberCount == 1 && !hasWideMembers) {
+        for (unsigned i = 0; i < 16; ++i) {
+            m_program->startTableOfLowBits[i] |= 0xf << start.depth;
+            m_program->startTableOfHighBits[i] |= 0xf << start.depth;
+        }
+        if (firstCount == 1 && !start.mayBeWide[0] && start.depth == 1)
             m_program->startScan = FlatStartScan::OneCharacter;
-            m_program->onlyStartCharacter = static_cast<Latin1Character>(lastMember);
-        }
     }
 
     unsigned internSet(const CharacterClass* characterClass, bool invert, char16_t first, char16_t second)
@@ -757,12 +946,15 @@ private:
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
 
         auto emitChecked = [&] {
+            unsigned begin = here();
             if (canBeEmpty)
                 emitWithRegister(Kind::LoggedSavePosition, start);
             if (!emitGroupBody(term, context))
                 return false;
-            if (canBeEmpty)
+            if (canBeEmpty) {
                 emitWithRegister(Kind::FailIfEmpty, start);
+                isTurnThatMayTakeNothingSince(begin, start);
+            }
             return true;
         };
 
@@ -811,6 +1003,7 @@ private:
         std::optional<unsigned> jumpToBody;
         std::optional<unsigned> jumpToMandatory;
         Vector<unsigned, 3> jumpsToExit;
+        unsigned loopBegin = here();
         if (needsCounter)
             emitWithRegister(Kind::LoggedSetRegister, counter, 0);
         else if (min) {
@@ -868,6 +1061,7 @@ private:
         }
         if (jumpToBody)
             setTarget(*jumpToBody);
+        unsigned turnBegin = here();
         if (needsCounter)
             emitWithRegister(Kind::LoggedIncrement, counter);
         if (captures)
@@ -878,6 +1072,10 @@ private:
             emitWithRegister(Kind::LoopBackUnlessEmpty, start, 0, head);
         else
             emit(Kind::LoopBack, 0, head);
+        if (canBeEmpty)
+            isTurnThatMayTakeNothingSince(turnBegin, start);
+        if (needsCounter)
+            isLoopThatCountsTurnsSince(loopBegin, counter, max == quantifyInfinite ? min : max);
         for (unsigned jump : jumpsToExit)
             setTarget(jump);
         return true;
@@ -930,6 +1128,7 @@ private:
         const PatternDisjunction& disjunction = *term.parentheses.disjunction;
         if (!max)
             return true;
+        m_program->jitCountsTurns |= jitCountsTurnsOf(term);
         if (m_countsTurns) {
             bool isTestedForByParent = max == 1 && term.quantityType == QuantifierType::FixedCount;
             context.initialInputPosition = term.inputPosition - (isTestedForByParent ? disjunction.m_minimumSize : 0);
@@ -948,27 +1147,86 @@ private:
         });
     }
 
+    bool emitAssertion(const PatternTerm& term)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::AssertionBOL:
+            if (term.multiline())
+                emitWithSet(Kind::LineStart, newlineSet());
+            else
+                emit(Kind::InputStart);
+            return true;
+        case PatternTerm::Type::AssertionEOL:
+            if (term.multiline())
+                emitWithSet(Kind::LineEnd, newlineSet());
+            else
+                emit(Kind::InputEnd);
+            return true;
+        case PatternTerm::Type::AssertionWordBoundary:
+            emitWithSet(term.invert() ? Kind::NotWordBoundary : Kind::WordBoundary, internSet(m_pattern.wordcharCharacterClass(), false, 0, 0));
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // Characters and classes that are each taken a fixed number of times, and assertions between them, match the same whichever way they are read: so a lookbehind that consists of nothing else
+    // steps back by as many characters as an alternative takes and reads it forward.
+    bool emitAlternativesOfLookbehind(Alternatives alternatives)
+    {
+        Vector<unsigned, 8> jumpsToEnd;
+        for (auto& alternative : alternatives) {
+            uint64_t width = 0;
+            for (const PatternTerm& term : alternative->m_terms) {
+                bool isCharacter = term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass;
+                bool isAssertion = term.type == PatternTerm::Type::AssertionBOL || term.type == PatternTerm::Type::AssertionEOL || term.type == PatternTerm::Type::AssertionWordBoundary;
+                if (!isAssertion && (!isCharacter || term.quantityType != QuantifierType::FixedCount))
+                    return decline(FlatProgramDecline::Lookbehind);
+                width += isCharacter ? static_cast<unsigned>(term.quantityMaxCount) : 0;
+            }
+            if (width > std::numeric_limits<int32_t>::max())
+                return decline(FlatProgramDecline::Lookbehind);
+            bool isLast = &alternative == &alternatives.back();
+            unsigned choice = isLast ? 0 : emit(Kind::Choice);
+            emit(Kind::StepBack, static_cast<uint32_t>(width));
+            for (const PatternTerm& term : alternative->m_terms) {
+                if (!emitAssertion(term))
+                    emitFixedAtom(term);
+            }
+            if (isLast)
+                break;
+            jumpsToEnd.append(emit(Kind::Jump));
+            setTarget(choice);
+        }
+        for (unsigned jump : jumpsToEnd)
+            setTarget(jump);
+        return true;
+    }
+
     bool emitLookahead(const PatternTerm& term, EmitContext context)
     {
-        if (term.matchDirection() != Forward)
-            return decline(FlatProgramDecline::Lookbehind);
         Alternatives alternatives = term.parentheses.disjunction->m_alternatives.span();
         context.initialInputPosition = term.inputPosition;
+        auto emitBody = [&] {
+            return term.matchDirection() == Forward ? emitAlternatives(alternatives, context) : emitAlternativesOfLookbehind(alternatives);
+        };
         unsigned frameDepthRegister = m_nextRegister++;
         if (term.invert()) {
             unsigned begin = emit(Kind::NegativeLookaheadBegin, frameDepthRegister);
-            if (!emitAlternatives(alternatives, context))
+            if (!emitBody())
                 return false;
             emit(Kind::NegativeLookaheadEnd, frameDepthRegister);
+            isLookaheadSince(begin);
             setTarget(begin);
             return true;
         }
 
         unsigned positionRegister = m_nextRegister++;
-        emitWithRegister(Kind::LookaheadBegin, positionRegister, frameDepthRegister);
-        if (!emitAlternatives(alternatives, context))
+        unsigned begin = emitWithRegister(Kind::LookaheadBegin, positionRegister, frameDepthRegister);
+        if (!emitBody())
             return false;
         emitWithRegister(term.containsAnyCaptures() ? Kind::LookaheadEndKeepingCaptures : Kind::LookaheadEnd, positionRegister, frameDepthRegister);
+        isLookaheadSince(begin);
         return true;
     }
 
@@ -1129,6 +1387,7 @@ private:
     {
         if (term.matchDirection() != Forward)
             return decline(FlatProgramDecline::Lookbehind);
+        m_searchDependsOnMoreThanPosition = true;
         auto emitReference = [&] {
             emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, term.backReferenceSubpatternId << 1);
             return true;
@@ -1164,19 +1423,9 @@ private:
             accountThrough(i);
             switch (term.type) {
             case PatternTerm::Type::AssertionBOL:
-                if (term.multiline())
-                    emitWithSet(Kind::LineStart, newlineSet());
-                else
-                    emit(Kind::InputStart);
-                break;
             case PatternTerm::Type::AssertionEOL:
-                if (term.multiline())
-                    emitWithSet(Kind::LineEnd, newlineSet());
-                else
-                    emit(Kind::InputEnd);
-                break;
             case PatternTerm::Type::AssertionWordBoundary:
-                emitWithSet(term.invert() ? Kind::NotWordBoundary : Kind::WordBoundary, internSet(m_pattern.wordcharCharacterClass(), false, 0, 0));
+                emitAssertion(term);
                 break;
             case PatternTerm::Type::PatternCharacter:
             case PatternTerm::Type::CharacterClass:
@@ -1209,7 +1458,11 @@ private:
             case PatternTerm::Type::NamedForwardReference:
                 break;
             case PatternTerm::Type::DotStarEnclosure:
-                return decline(FlatProgramDecline::DotStarEnclosure);
+                // Under /m whether a leading ^ holds depends on the line that the attempt began in.
+                m_searchDependsOnMoreThanPosition |= term.anchors.bolAnchor && term.multiline();
+                emitWithSet(Kind::DotStarEnclosure, newlineSet(), (term.anchors.bolAnchor ? FlatProgram::enclosureBeginsLine : 0) | (term.anchors.eolAnchor ? FlatProgram::enclosureEndsLine : 0)
+                    | (term.multiline() ? FlatProgram::enclosureIsMultiline : 0) | (term.dotAll() ? FlatProgram::enclosureDotMatchesAll : 0));
+                break;
             }
         }
         return true;
@@ -1220,6 +1473,10 @@ private:
     std::optional<FlatProgramDecline> m_decline;
     StdUnorderedMap<SetKey, unsigned, InternedKeyHash> m_setIndexes;
     StdUnorderedMap<FirstSetBits, unsigned, InternedKeyHash> m_firstSetIndexes;
+    Vector<std::pair<unsigned, unsigned>, 8> m_lookaheads;
+    Vector<std::tuple<unsigned, unsigned, unsigned>, 8> m_turnsThatMayTakeNothing;
+    Vector<std::tuple<unsigned, unsigned, unsigned, unsigned>, 8> m_loopsThatCountTurns;
+    bool m_searchDependsOnMoreThanPosition { false };
     unsigned m_nextRegister { 0 };
     const bool m_countsTurns;
 };
@@ -1228,7 +1485,8 @@ size_t FlatProgram::estimatedSizeInBytes() const
 {
     return ops.capacity() * sizeof(FlatOp) + characterSets.capacity() * sizeof(CharacterSetBits) + firstSets.capacity() * sizeof(FirstSetBits)
         + dispatchClasses.capacity() * sizeof(uint16_t) + dispatchEntries.capacity() * sizeof(uint32_t)
-        + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t);
+        + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t)
+        + turnsThatMayTakeNothing.capacity() * sizeof(TurnThatMayTakeNothing) + loopsThatCountTurns.capacity() * sizeof(LoopThatCountsTurns) + aroundMemoRow.capacity() * sizeof(AroundMemoRow);
 }
 
 // As YarrGenerator::disjunctionContainsBacktrackableContent().
@@ -1280,8 +1538,6 @@ ASCIILiteral description(FlatProgramDecline reason)
         return "unsigned length pattern"_s;
     case FlatProgramDecline::CopiedGroup:
         return "copied group"_s;
-    case FlatProgramDecline::DotStarEnclosure:
-        return "enclosed by .*"_s;
     case FlatProgramDecline::NestedTooDeep:
         return "nested too deep"_s;
     case FlatProgramDecline::TooManySetsOrRegisters:

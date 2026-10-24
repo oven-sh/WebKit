@@ -12,7 +12,7 @@ function f0 name="inBalancedCode" parameters=[{type=anything}, {type=anything}] 
     Return v3
 }
 # CHECK: f0: size=
-# CHECK-NOT: FindMethodByIdAtSite
+# CHECK-NOT: GetByIdAtSite
 # CHECK: stub CallMethodById.n1 x1
 # CHECK-NOT: stub CallValue
 # S: f0 b0 Balanced
@@ -29,5 +29,5 @@ function f1 name="inFastCode" parameters=[{type=anything}, {type=anything}, {typ
 }
 # CHECK-NOT: stub CallMethodById
 # CHECK: stub CallValue.n1
-# CHECK: stub FindMethodByIdAtSite
+# CHECK: stub GetByIdAtSite
 # S: f1 b1 Fast

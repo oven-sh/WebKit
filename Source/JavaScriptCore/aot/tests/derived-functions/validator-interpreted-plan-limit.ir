@@ -16,6 +16,7 @@ layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
 # CHECK-NEXT: [[b]]: anything = GetOwnDataProperty {{*}} key="b"
 # CHECK-NEXT: = TypeTest [[a]] testedType=number
 # CHECK: [[plan]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"x\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
-# CHECK-NEXT: [[pair]]: anything = CallBuiltin -, [[b]], [[plan]] overload=CompilerHelpersInterpretNode/0
+# CHECK-NEXT: [[preparedAt1]]: anything = GetPreparedPlans
+# CHECK-NEXT: [[pair]]: anything = CallBuiltin -, [[b]], [[plan]], [[preparedAt1]] overload=CompilerHelpersInterpretNode/0
 # CHECK: = CloneAs {{*}} layout=L0 fields=[1]
 # CHECK-NOT: role=Validator

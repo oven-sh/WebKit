@@ -73,18 +73,22 @@ static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, 
 static constexpr OpcodeSet testedBitwiseOperators { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
 static constexpr OpcodeSet numericOperators = testedBitwiseOperators | relationalOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Sub, Opcode::Mul, Opcode::Negate };
 
-// A counter, for one. It is held as an integer, and of that a bitwise operator takes the low half, whatever its range. What comes out of memory or out of a call is a value, which the test is the cheapest way to look at.
-static bool isIntegerCarriedBetweenBlocks(TestSiteReporter& reporter, ValueID operand)
+// A counter, for one, or a sum of integers. It is held as an integer, and of that a bitwise operator takes the low half, whatever its range. What comes out of memory or out of a call is a value, which the test is the cheapest way to look at.
+static bool isHeldAsInteger(TestSiteReporter& reporter, const OperatorSite& site, ValueID operand)
 {
     if (!reporter.typeOf(operand).isInteger())
         return false;
-    ValueLocation location = reporter.analyses().useLists().locationOf(reporter.analyses().identityOf(operand));
+    ValueID identity = reporter.analyses().identityOf(operand);
+    const Value& definition = reporter.function().at(identity);
+    if (hasOperatorForm(definition.opcode) && chooseFormOfOperator(site, definition) == OperatorForm::Integers)
+        return true;
+    ValueLocation location = reporter.analyses().useLists().locationOf(identity);
     return location.placement == ValuePlacement::Parameter && location.block != entryBlock;
 }
 
-static TypeID testedTypeFor(TestSiteReporter& reporter, const Value& user, ValueID operand)
+static TypeID testedTypeFor(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, ValueID operand)
 {
-    if (testedBitwiseOperators.contains(user.opcode) && isIntegerCarriedBetweenBlocks(reporter, operand))
+    if (testedBitwiseOperators.contains(user.opcode) && isHeldAsInteger(reporter, site, operand))
         return { };
     std::optional<Type> expected = reporter.expectedPartOf(operand);
     if (!expected)
@@ -181,11 +185,12 @@ static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
     return typedArrayTypeOf(BuiltinTable::singleton(), collection.withoutPrimitives(Primitive::UndefinedOrNull)) != NotTypedArray;
 }
 
-// Whether typed code does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. An array counts its elements in 32 bits, so it wants an int32 too.
-static bool isOnlyReckonedWith(TestSiteReporter& reporter, ValueID counter)
+// Whether typed code in the loop does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. An array counts its elements in 32 bits, so it wants an int32 too. Behind the loop the value is made once, and the test would be made at every turn.
+static bool isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& loop, ValueID counter)
 {
     const Function& function = reporter.function();
     const UseLists& useLists = reporter.analyses().useLists();
+    const NaturalLoops& loops = reporter.analyses().naturalLoops();
     Vector<ValueID, maxNamesOfCounter> names { counter };
     auto follow = [&](ValueID name) {
         if (names.contains(name))
@@ -197,7 +202,7 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, ValueID counter)
     };
     for (size_t index = 0; index < names.size(); ++index) {
         for (const Use& use : useLists.usesOf(names[index])) {
-            if (function.at(use.block).frequency != BlockFrequency::Normal)
+            if (function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
                 continue;
             switch (use.kind) {
             case Use::Kind::Operand: {
@@ -214,8 +219,9 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, ValueID counter)
                 return false;
             }
             case Use::Kind::EdgeArgument: {
-                const Block& target = function.at(targetOf(function, use.edge()).block);
-                if (target.frequency == BlockFrequency::Normal && (use.operandIndex >= target.parameters.size() || !follow(target.parameters[use.operandIndex])))
+                BlockID targetBlock = targetOf(function, use.edge()).block;
+                const Block& target = function.at(targetBlock);
+                if (target.frequency == BlockFrequency::Normal && loops.belongsTo(targetBlock, loop) && (use.operandIndex >= target.parameters.size() || !follow(target.parameters[use.operandIndex])))
                     return false;
                 continue;
             }
@@ -249,7 +255,7 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, std::span
                 if (!(bound.isInteger() && !bound.isInt32()) && !reporter.isClaimed(reporter.analyses().identityOf(test.bound)))
                     continue;
                 if (!isEligible)
-                    isEligible = isOnlyReckonedWith(reporter, variable.parameter);
+                    isEligible = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter);
                 if (*isEligible)
                     counters.append({ variable.parameter, test.comparison, test.stayingEdge });
             }
@@ -275,76 +281,43 @@ static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& val
     });
 }
 
-static constexpr OpcodeSet operatorsThatReckonInEitherForm { Opcode::Add, Opcode::Sub, Opcode::Mul };
-static constexpr OpcodeSet callsOfFunctionsOfTheProgram { Opcode::Call, Opcode::CallDirect, Opcode::Construct };
-static constexpr OpcodeSet usersOfPositions = operationsOnElements | operationsOnElementsOfViews
-    | OpcodeSet { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsInBounds, Opcode::IsElementPresent };
-static constexpr OpcodeSet usersOfIntegers = testedBitwiseOperators | OpcodeSet { Opcode::Mod, Opcode::TypeTest, Opcode::CallBuiltin };
-
-enum class WantedForm : uint8_t { Number, Integer, ShowsOnceCallsAreInlined };
-
-// Whether a likely turn of the loop does something with the counter, or with what it reckons from the counter and other integers, that an integer is better for: finds an element, takes its bits or a remainder, hands it to a built-in function. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
-static WantedForm findWantedForm(TestSiteReporter& reporter, const NaturalLoop& loop, const InductionVariable& counter)
+// Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing. What a function of the program does with it shows once the call is inlined.
+static bool isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
 {
-    WantedForm wanted = WantedForm::Number;
     const Function& function = reporter.function();
-    const UseLists& useLists = reporter.analyses().useLists();
     const NaturalLoops& loops = reporter.analyses().naturalLoops();
     Vector<ValueID, maxNamesOfCounter> names { counter.parameter };
-    auto follow = [&](ValueID name) {
-        if (!names.contains(name) && names.size() < maxNamesOfCounter)
-            names.append(name);
-    };
     for (size_t index = 0; index < names.size(); ++index) {
-        for (const Use& use : useLists.usesOf(names[index])) {
-            if (function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
+        for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
+            if (use.kind != Use::Kind::Operand || function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
                 continue;
-            switch (use.kind) {
-            case Use::Kind::Operand: {
-                const Value& user = function.at(use.user);
-                if (isCastWithoutTest(user.opcode)) {
-                    follow(use.user);
-                    continue;
-                }
-                if (counter.steppedValues.contains(use.user))
-                    continue;
-                if (usersOfIntegers.contains(user.opcode) || (usersOfPositions.contains(user.opcode) && use.operandIndex == positionOperandIndex))
-                    return WantedForm::Integer;
-                if (callsOfFunctionsOfTheProgram.contains(user.opcode) && !reporter.context().isBehindRounds)
-                    wanted = WantedForm::ShowsOnceCallsAreInlined;
-                if (operatorsThatReckonInEitherForm.contains(user.opcode) && reporter.typeOf(user.operand(1 - use.operandIndex)).isInteger())
-                    follow(use.user);
+            const Value& user = function.at(use.user);
+            if (isCastWithoutTest(user.opcode)) {
+                if (!names.contains(use.user) && names.size() < maxNamesOfCounter)
+                    names.append(use.user);
                 continue;
             }
-            case Use::Kind::EdgeArgument: {
-                const Target& target = targetOf(function, use.edge());
-                const Block& block = function.at(target.block);
-                if (loops.belongsTo(target.block, loop) && use.operandIndex < block.parameters.size())
-                    follow(block.parameters[use.operandIndex]);
+            if (hasOperatorForm(user.opcode)) {
+                TestedTypePerOperand tested;
+                TestedOperands isTested { };
+                tested[use.operandIndex] = TypeTable::int32;
+                isTested[use.operandIndex] = true;
+                if (isBetterForm(user.opcode, chooseOperatorForm(site, user), chooseFormUnderTests(reporter, site, user, tested, isTested)))
+                    return true;
                 continue;
             }
-            case Use::Kind::TerminatorOperand:
-            case Use::Kind::HandlerArgument:
-            case Use::Kind::BlockSubject:
-                continue;
-            }
+            OperandKind kind = user.operandKind(use.operandIndex);
+            if (kind == OperandKind::Number || kind == OperandKind::Integer || user.opcode == Opcode::TypeTest || user.opcode == Opcode::CallBuiltin)
+                return true;
+            if (operationsOnElements.contains(user.opcode) && use.operandIndex == positionOperandIndex)
+                return true;
         }
     }
-    return wanted;
-}
-
-// The copy of a turn whose tests have failed hands the loop what it has counted up, in a join in front of the loop. That is an integer once the counter is.
-static bool startsAtInteger(TestSiteReporter& reporter, ValueID start)
-{
-    const Type& type = reporter.typeOf(start);
-    if (type.isInt32())
-        return true;
-    ValueLocation location = reporter.analyses().useLists().locationOf(reporter.analyses().identityOf(start));
-    return type.isNumberWithoutFraction() && location.placement == ValuePlacement::Parameter && location.block != entryBlock;
+    return false;
 }
 
 // `i < n; i++` with `n: number`. Below an int32 the counter is one.
-static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& reporter, const Value& comparison)
+static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& reporter, const OperatorSite& site, const Value& comparison)
 {
     if (!relationalOperators.contains(comparison.opcode))
         return std::nullopt;
@@ -354,12 +327,18 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
     };
     if (!mayBeBound(leftOperand) && !mayBeBound(rightOperand))
         return std::nullopt;
-    const NaturalLoop* loop = reporter.analyses().naturalLoops().innerMostLoopOf(reporter.point().block);
+    const NaturalLoops& loops = reporter.analyses().naturalLoops();
+    const NaturalLoop* loop = loops.innerMostLoopOf(reporter.point().block);
     if (!loop)
         return std::nullopt;
+    // The test pays in front of the loop alone. Its proof has to last around the loop then, through code that the copy holds too, and a loop in there is more than a copy may hold.
+    for (unsigned index = 0; index < loop->size(); ++index) {
+        if (loops.innerMostLoopOf(loop->at(index)) != loop)
+            return std::nullopt;
+    }
 
     for (const InductionVariable& variable : reporter.analyses().inductionVariables().of(*loop).variables) {
-        if (variable.step.kind != InductionStepKind::Constant || !variable.start || !startsAtInteger(reporter, variable.start))
+        if (variable.step.kind != InductionStepKind::Constant || !variable.start || !reporter.typeOf(variable.start).isInt32())
             continue;
         for (const InductionTest& test : variable.tests) {
             if (test.comparison != reporter.use() || test.tested != TestedValue::BeforeStep || test.boundKind != LoopBoundKind::Invariant || !isBoundingRelation(test.relation, variable.direction))
@@ -367,17 +346,9 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
             ValueID bound = reporter.analyses().identityOf(test.bound);
             bool isLeftBound = reporter.analyses().identityOf(comparison.operand(leftOperand)) == bound;
             bool isRightBound = reporter.analyses().identityOf(comparison.operand(rightOperand)) == bound;
-            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand))
+            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand) || !isWantedAsInteger(reporter, site, *loop, variable))
                 return std::nullopt;
-            switch (findWantedForm(reporter, *loop, variable)) {
-            case WantedForm::Number:
-                return std::nullopt;
-            case WantedForm::ShowsOnceCallsAreInlined:
-                reporter.putOffUse();
-                return std::nullopt;
-            case WantedForm::Integer:
-                return isLeftBound ? leftOperand : rightOperand;
-            }
+            return isLeftBound ? leftOperand : rightOperand;
         }
     }
     return std::nullopt;
@@ -399,7 +370,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
         uint32_t numberOfOperands = value.numberOfOperands();
         RELEASE_ASSERT(numberOfOperands == 1 || numberOfOperands == 2);
 
-        if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, value)) {
+        if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, site, value)) {
             reporter.report({ makeTypeTest(value.operand(*bound), TypeTable::int32) }, chooseOperatorForm(site, value).effects.normal);
             comparisonsWithTestedBound.append(reporter.use());
             boundedCounters = std::nullopt;
@@ -408,7 +379,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         TestedTypePerOperand tested;
         for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
-            tested[operandIndex] = testedTypeFor(reporter, value, value.operand(operandIndex));
+            tested[operandIndex] = testedTypeFor(reporter, site, value, value.operand(operandIndex));
         if (numberOfOperands == 2) {
             for (uint32_t operandIndex : { leftOperand, rightOperand }) {
                 if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)

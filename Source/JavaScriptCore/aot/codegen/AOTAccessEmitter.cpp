@@ -209,12 +209,8 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     if (!identifier)
         return undefined();
     if (!comesAgain(context)) {
-#if CPU(X86_64)
         // Behind the tables the stub asks the objects themselves and files nothing, so code that runs once takes the way of all other code and leaves nothing behind.
         return getByIdThroughTables(context, receiver, *identifier, origin);
-#else
-        return callOperation<Boxed>(context, RuntimeOperation::GetById, { receiver, word32(static_cast<int32_t>(*identifier)) }, { .origin = origin });
-#endif
     }
     if (cache && m_program.nameClassOf(key) == NameClass::Length)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier, .origin = origin }).first);

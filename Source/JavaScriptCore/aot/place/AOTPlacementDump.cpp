@@ -466,13 +466,6 @@ private:
             m_printer.print(cell.module);
             m_out.print(" @"_s, cell.offset, "\n"_s);
         }
-        for (unsigned index = 0; index < statics.freeCellOffsets.size(); ++index) {
-            if (!statics.freeCellOffsets[index])
-                continue;
-            m_out.print("freeCell "_s);
-            m_printer.print(LayoutID(index));
-            m_out.print(" @"_s, *statics.freeCellOffsets[index], "\n"_s);
-        }
     }
 
     void dumpFunctions()

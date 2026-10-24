@@ -13,14 +13,15 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTEscapeAnalysis.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
-#include "AOTInt32Conversions.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCalls.h"
 #include "AOTSort.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTTypeRelations.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -394,21 +395,20 @@ bool LoopSplitter::servesEveryAccess(ValueID receiver, const BitVector* isInLoop
     return true;
 }
 
+// An operator takes it that gives nothing but a number, or that has a number on its other side.
 bool LoopSplitter::isUsedAsNumber(ValueID element)
 {
-    static constexpr OpcodeSet numericOperations = int32ConvertingOperations | OpcodeSet {
-        Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Pow, Opcode::Negate, Opcode::Increment, Opcode::Decrement,
-    };
-    static constexpr OpcodeSet operationsOnTwoOfAKind { Opcode::Add, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::Eq, Opcode::StrictEq };
     for (const Use& use : m_analyses.useLists().usesOf(element)) {
         if (use.kind != Use::Kind::Operand)
             continue;
         const Value& user = m_function.at(use.user);
-        if (numericOperations.contains(user.opcode))
-            return true;
-        if (operationsOnTwoOfAKind.contains(user.opcode) && m_program.expectedOrTypeOf(m_function, user.operand(!use.operandIndex)).isNumber())
-            return true;
         if (user.opcode == Opcode::Upcast && isUsedAsNumber(use.user))
+            return true;
+        if (familyOf(user.opcode) != OperationFamily::Operator)
+            continue;
+        if (m_program.typeOf(m_function, use.user).hasOnlyPrimitives(Primitive::Number | Primitive::BigInt))
+            return true;
+        if (user.numberOfOperands() == 2 && m_program.expectedOrTypeOf(m_function, user.operand(!use.operandIndex)).isNumber())
             return true;
     }
     return false;
@@ -476,19 +476,30 @@ TypeID LoopSplitter::chooseTestedType(ValueID receiver, ValueID narrowestName, c
         return m_context.types.intern(testedTypeOf(*last));
     }
 
-    // Nobody could follow the object. What is asked only for what bytes have may be bytes as well as the array that it is taken for.
+    // Nobody could follow the object. What is asked only for what a view of numbers has may be one as well as the array that it is taken for: bytes, which the host hands out, or a kind that the program constructs.
     if (!whole.anyObject || !m_context.build.recordedOptions().usesExpectedTypes() || !isExpectedToHoldNumbers(receiver, narrowestName, isInLoop))
         return { };
-    UnionParts bytes = unionPartsOf(Type::builtinClass(BuiltinClasses::Uint8Array).withoutClassProofs());
-    if (!servesEveryAccess(receiver, nullptr, bytes[0]))
-        return { };
-    TypeID testedType = m_context.types.intern(bytes[0].type);
-    Value test = IRBuilder::make(Opcode::TypeTest, { narrowestName });
-    test.setTestedType(testedType);
-    if (m_analyses.findEarlierTest(test, front) == EarlierTest::Failed)
-        return { };
-    restTakesEveryValue = true;
-    return testedType;
+    const BuiltinTable& builtins = m_program.builtins();
+    Vector<BuiltinClassID, 4> kinds { BuiltinClasses::Uint8Array };
+    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+        const BuiltinClass& view = builtins.at(BuiltinClassID(index));
+        if (hasInlineElementAccess(view.typedArrayType) && !isTypedView(builtins.at(view.parent).typedArrayType) && !kinds.contains(view.id) && m_context.inputs.flow.usesOf(view.constructor).contains(BuiltinUse::Constructed))
+            kinds.append(view.id);
+    }
+    // Where `new` is given a callee that nobody knows every kind counts as constructed, which says nothing.
+    if (kinds.size() > m_context.limit(LimitID::MaxDispatchCases))
+        kinds.shrink(1);
+    for (BuiltinClassID kind : kinds) {
+        UnionParts parts = unionPartsOf(Type::builtinClass(kind).withoutClassProofs());
+        TypeID testedType = m_context.types.intern(parts[0].type);
+        Value test = IRBuilder::make(Opcode::TypeTest, { narrowestName });
+        test.setTestedType(testedType);
+        if (m_analyses.findEarlierTest(test, front) == EarlierTest::Failed || !servesEveryAccess(receiver, nullptr, parts[0]))
+            continue;
+        restTakesEveryValue = true;
+        return testedType;
+    }
+    return { };
 }
 
 std::optional<LoopSplit> LoopSplitter::planFor(const NaturalLoop& loop)
@@ -611,6 +622,9 @@ void LoopSplitter::split(const LoopSplit& plan)
         m_isFinishedHeader.set(block.index());
         m_isFinishedHeader.set(cloner.cloneOf(block).index());
     }
+    // The next kind of view gets the next copy.
+    if (plan.restTakesEveryValue)
+        m_isFinishedHeader.clear(plan.header.index());
 }
 
 } // anonymous namespace

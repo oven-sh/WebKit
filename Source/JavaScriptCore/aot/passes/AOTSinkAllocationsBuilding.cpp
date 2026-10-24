@@ -318,7 +318,7 @@ void ObjectInterpreter::buildMembers(std::span<const VirtualObjectID> members, c
             }
             if (!isHardEdge(m_sinking, member, state, held.field) && m_state.canReach(held.object, member)) {
                 if (m_mode == SinkingMode::Count)
-                    m_sinking.at(held.object).isStoredLate = true;
+                    m_sinking.at(held.object).holdersThatStoreItLate.appendIfNotContains(member);
                 continue;
             }
             if (membersBeingVisited.get(held.object.index())) {

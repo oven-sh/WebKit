@@ -46,8 +46,8 @@ function f4 name="two-functions-or-undefined" parameters=[{type=undefined|f0|f1}
 # CHECK-NEXT: [[secondResult]]: anything = CallDirect v1 function=f1
 # CHECK-NEXT: Jump -> next [[join]]([[secondResult]])
 # CHECK-NEXT: [[rest]]([[nothing]]: undefined)
-# CHECK-NEXT: [[thrown]]: anything = Call [[nothing]], -, v1
-# CHECK-NEXT: Jump -> next [[join]]([[thrown]])
+# CHECK-NEXT: : never = Call [[nothing]], -, v1
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 function f5 name="two-functions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
   b0(v0: f0|f1, v1: anything):

@@ -367,7 +367,7 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
             }
         }
         auto generator = FunctionCodeGenerator::create(worker, inputs, id, totals);
-        if (generator && !generator->generatesDirectly())
+        if (generator)
             procedures.append(&generator->procedure());
         generators.append(WTF::move(generator));
     }
@@ -377,14 +377,6 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
     for (size_t index = 0; index < ids.size(); ++index) {
         if (generators[index]) {
             CompiledCode code = generators[index]->finish();
-            while (generators[index] && generators[index]->didFailToGenerateDirectly()) {
-                generators[index] = FunctionCodeGenerator::create(worker, inputs, ids[index], totals, generators[index]->nextDirectCodeAttempt());
-                if (!generators[index])
-                    break;
-                if (!generators[index]->generatesDirectly())
-                    B3::prepareForGeneration(generators[index]->procedure());
-                code = generators[index]->finish();
-            }
             RELEASE_ASSERT(!isX86_64() || !isForwardingCode.quickGet(index) || isSameCode(results[index], code));
             results[index] = WTF::move(code);
         }

@@ -77,10 +77,6 @@ bool ArrayChainFinder::isWorthFusingIn(BlockID block)
 
 void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
 {
-    const Terminator& terminator = m_function.at(block).terminator;
-    if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == last.call)
-        return;
-
     ArrayChain chain;
     chain.block = block;
     chain.lastCall = last.call;
@@ -214,7 +210,11 @@ bool ArrayChainFinder::isUsedOnlyBy(ValueID receiver, const ArrayMethodCall& con
         if (value != casts.last() && !isPassingCast(value))
             return false;
         for (const Use& use : useLists.usesOf(value)) {
-            if (use.kind != Use::Kind::Operand || (use.user != user && use.user != consumer.call))
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            // A validating build looks at each array of the chain, and goes without the look where there is no array.
+            bool isValidation = m_function.at(use.user).opcode == Opcode::ValidateType && use.block == useLists.blockOf(value);
+            if (!isValidation && use.user != user && use.user != consumer.call)
                 return false;
         }
         user = value;

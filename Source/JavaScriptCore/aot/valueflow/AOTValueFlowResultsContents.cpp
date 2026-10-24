@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTKnownClosures.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
@@ -102,6 +103,8 @@ struct ArrayWrites {
         MayBeMadeWithHoles = 1 << 9,
         IsPoisoned = 1 << 10,
         MeetsObjectThatIsNoArray = 1 << 11,
+        // A built-in makes it out of elements of other arrays and of its arguments: `list.slice()`.
+        HoldsWhatIsCopied = 1 << 12,
     };
 
     bool has(Flag flag) const { return flags.load(std::memory_order_relaxed) & flag; }
@@ -121,6 +124,8 @@ struct ArrayWrites {
     // An index that was below the length is below it for good only in an array that never gets shorter.
     bool isDense() const { return has(IsCreatedDense) && !has(MayGetHole) && !(has(IsStoredWithinLength) && has(MayGetShorter)); }
     // The storage changes only with what is stored.
+    // The types of what is stored bound the numbers in it.
+    bool everyStoreIsKnown() const { return (has(IsLiteral) || has(IsInData) || has(HoldsWhatIsCopied)) && !has(HasOtherWriter); }
     bool keepsStorageOfLiteral() const { return (has(IsLiteral) || has(IsPairOfEntries)) && isDense() && !has(ElementsAreMoved); }
 
     std::atomic<uint16_t> flags { 0 };
@@ -150,6 +155,22 @@ private:
         ValueSetID arraysWhoseHolesAreCopied;
         // Between the read of a length and the copy: a callback, the conversion of an operand, an accessor. An array that gets shorter there is copied as if it had holes at its end.
         bool mayRunCodeWhileCopying { false };
+        ValueSetID arraysWhoseElementsAreCopied { ValueSets::nothing };
+    };
+
+    // `list[a] = list[b]`: what is read from an array was stored into it.
+    struct ElementStoredAgain {
+        uint32_t array;
+        FunctionID function;
+        ValueID read;
+        // What the type of the read says, for a read from something of which less is known.
+        ValueFlowNumbers numbersOfRead;
+        ValueSetID arraysRead { ValueSets::nothing };
+    };
+    struct ElementRead {
+        FunctionID function;
+        ValueID read;
+        ValueSetID receivers;
     };
 
     struct Walker {
@@ -168,6 +189,8 @@ private:
         ValueSetID arraysWithUnknownWriter { ValueSets::nothing };
         ValueSetID objectsWithReplacedContents { ValueSets::nothing };
         Vector<ArrayMadeByBuiltin> arraysMadeByBuiltins;
+        Vector<ElementStoredAgain> elementsStoredAgain;
+        Vector<ElementRead> elementReads;
         HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsOfArraysSeen;
         // Of the function whose stores are looked at.
         FunctionID analyzedFunction;
@@ -194,6 +217,7 @@ private:
     void noteApplication(Walker&, const ValueFlowBuiltinApplication&);
     void noteArrayMadeBy(Walker&, const ValueFlowBuiltinApplication&);
     void settleWhichResultsAreCreatedDense();
+    void settleNumbersOfCopies();
     void noteData(const ValueFlowStatement&, const DataNode& root);
     void noteStoredOperand(Walker&, ValueSetID arrays, FunctionID, ValueID stored);
     ValueFlowNumbers numbersOf(FunctionID, ValueID);
@@ -236,6 +260,7 @@ private:
     ValueSetID m_objectsWithReplacedContents { ValueSets::nothing };
     BitVector m_builtinsThatWriteOperands;
     Vector<ArrayMadeByBuiltin> m_arraysMadeByBuiltins;
+    Vector<ElementStoredAgain> m_elementsStoredAgain;
     Vector<ValueSetID> m_writtenPrototypeLinks;
     Vector<ValueFlowContainerFacts> m_facts;
     ValueFlowContainerResults m_results;
@@ -499,6 +524,9 @@ ValueFlowNumbers ContainerAnalysis::numbersOf(FunctionID id, ValueID value)
 
 void ContainerAnalysis::noteStoredOperand(Walker& walker, ValueSetID arrays, FunctionID function, ValueID stored)
 {
+    const Function& body = program().at(function);
+    ValueID definition = definitionThroughSameValues(body, stored);
+    bool isReadFromArray = body.at(definition).opcode == Opcode::ElemGet;
     // Only an array at which a number arrives has numbers to bound.
     std::optional<ValueFlowNumbers> numbers;
     forEachContainerIn(walker.maker, arrays, m_arrays, [&](uint32_t array) {
@@ -506,6 +534,10 @@ void ContainerAnalysis::noteStoredOperand(Walker& walker, ValueSetID arrays, Fun
             return;
         if (!numbers)
             numbers = numbersOf(function, stored);
+        if (isReadFromArray) {
+            walker.elementsStoredAgain.append({ array, function, definition, *numbers });
+            return;
+        }
         Locker locker { lockOf(array) };
         m_arrayWrites[array].storedNumbers.unite(*numbers);
     });
@@ -659,6 +691,8 @@ void ContainerAnalysis::noteOperation(Walker& walker, FunctionID function, const
             continue;
         ValueSetID value = m_heap.valueOf(walker.maker, operand);
         noteSetOfArrays(walker, value);
+        if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object)
+            walker.elementReads.append({ function, statement.site, value });
         ValueSetID arrays = walker.maker.intersect(value, m_arrays);
         // The row of a store by name says that it inspects its receiver: what it writes depends on the name, and `length` and an index write the elements.
         bool storesByName = (statement.opcode == Opcode::PropSet || statement.opcode == Opcode::PropDefine) && index == *receiverOf(statement.opcode);
@@ -762,10 +796,21 @@ void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinAp
     if (!array || !isArray(*array))
         return;
 
+    // Every number in what these make was in an array that they copy, or is an argument.
+    static constexpr std::array copyingBuiltins { Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeFilter, Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSorted, Builtins::ArrayPrototypeToSpliced, Builtins::ArrayPrototypeWith };
+    bool spellsOutArguments = application.site && program().at(application.function).at(application.site).opcode == Opcode::Call;
+    bool holdsWhatIsCopied = spellsOutArguments && application.mode() == BuiltinCallMode::Call && std::ranges::any_of(copyingBuiltins, [&](BuiltinID other) {
+        return builtins().canonicalID(application.builtin) == builtins().canonicalID(other);
+    });
+    ValueSetID sources = ValueSets::nothing;
     ValueSetID copied = ValueSets::nothing;
     bool mayRunCode = false;
     auto noteParameter = [&](const BuiltinParameter& parameter) {
         ValueSetID objects = maker.intersect(application.valueAt(parameter.operand, maker), ValueSets::complement(universe.primitives()));
+        if (parameter.operand.isReceiver() || parameter.roles.contains(BuiltinOperandRole::CopiesHolesToResult)) {
+            holdsWhatIsCopied &= sets().isSubset(objects, m_arrays);
+            sources = maker.unite(sources, objects);
+        }
         if (!parameter.roles.contains(BuiltinOperandRole::CopiesHolesToResult)) {
             mayRunCode |= objects != ValueSets::nothing;
             return;
@@ -783,6 +828,7 @@ void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinAp
         // An array that is never built, because only its first elements are read (`text.split(",")[0]`), is worth more than the proof.
         if (!made->pristine.contains(PristineAspects::Dense) || overload.code.prefixForm) {
             m_arrayWrites[*array].add(ArrayWrites::MayBeMadeWithHoles);
+            holdsWhatIsCopied = false;
             continue;
         }
         if (overload.receiver)
@@ -793,7 +839,13 @@ void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinAp
     forEachContainerIn(maker, copied, m_arrays, [&](uint32_t source) {
         mayRunCode |= m_containers[source].possibleMutations.containsAny({ ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype });
     });
-    walker.arraysMadeByBuiltins.append({ *array, copied, mayRunCode });
+    if (holdsWhatIsCopied) {
+        const Value& call = program().at(application.function).at(application.site);
+        for (uint32_t index = 2; index < call.numberOfOperands(); ++index)
+            noteStoredOperand(walker, maker.of(object), application.function, call.operand(index));
+    }
+    m_arrayWrites[*array].add(holdsWhatIsCopied ? ArrayWrites::HoldsWhatIsCopied : ArrayWrites::HasOtherWriter);
+    walker.arraysMadeByBuiltins.append({ *array, copied, mayRunCode, holdsWhatIsCopied ? sources : ValueSets::nothing });
 }
 
 // An array that copies holes has none where the arrays that it copies have none.
@@ -816,6 +868,46 @@ void ContainerAnalysis::settleWhichResultsAreCreatedDense()
                 writes.set(ArrayWrites::IsCreatedDense, false);
                 didChange = true;
             }
+        }
+    }
+}
+
+// A hole is read from the prototypes, of which the arrays say nothing.
+void ContainerAnalysis::settleNumbersOfCopies()
+{
+    bool didChange = true;
+    while (didChange) {
+        didChange = false;
+        for (const ArrayMadeByBuiltin& made : m_arraysMadeByBuiltins) {
+            ArrayWrites& writes = m_arrayWrites[made.array];
+            if (!writes.has(ArrayWrites::HoldsWhatIsCopied) || !writes.everyStoreIsKnown())
+                continue;
+            ValueFlowNumbers numbers = writes.storedNumbers;
+            bool areBounded = true;
+            forEachContainerIn(maker(), made.arraysWhoseElementsAreCopied, m_arrays, [&](uint32_t source) {
+                const ArrayWrites& copied = m_arrayWrites[source];
+                areBounded &= copied.everyStoreIsKnown() && copied.isDense() && !(made.mayRunCodeWhileCopying && copied.has(ArrayWrites::MayGetShorter));
+                numbers.unite(copied.storedNumbers);
+            });
+            if (!areBounded)
+                writes.add(ArrayWrites::HasOtherWriter);
+            didChange |= !areBounded || numbers.mayBeOtherThanIntegers != writes.storedNumbers.mayBeOtherThanIntegers || numbers.integers != writes.storedNumbers.integers;
+            writes.storedNumbers = numbers;
+        }
+        for (const ElementStoredAgain& stored : m_elementsStoredAgain) {
+            ArrayWrites& writes = m_arrayWrites[stored.array];
+            if (!writes.everyStoreIsKnown())
+                continue;
+            ValueFlowNumbers numbers = writes.storedNumbers;
+            bool areBounded = stored.arraysRead != ValueSets::nothing;
+            forEachContainerIn(maker(), stored.arraysRead, m_arrays, [&](uint32_t source) {
+                areBounded &= m_arrayWrites[source].everyStoreIsKnown() && !m_containers[source].possibleMutations.containsAny({ ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype });
+                numbers.unite(m_arrayWrites[source].storedNumbers);
+            });
+            if (!areBounded)
+                numbers.unite(stored.numbersOfRead);
+            didChange |= numbers.mayBeOtherThanIntegers != writes.storedNumbers.mayBeOtherThanIntegers || numbers.integers != writes.storedNumbers.integers;
+            writes.storedNumbers = numbers;
         }
     }
 }
@@ -888,8 +980,26 @@ void ContainerAnalysis::collectArrayWrites()
             continue;
         m_objectsWithReplacedContents = maker().unite(m_objectsWithReplacedContents, walker->objectsWithReplacedContents);
         m_arraysMadeByBuiltins.appendVector(std::exchange(walker->arraysMadeByBuiltins, { }));
+        m_elementsStoredAgain.appendVector(std::exchange(walker->elementsStoredAgain, { }));
+    }
+    // A read from anything but arrays that are followed, a view of bytes for one, says no more than its type.
+    HashMap<uint64_t, ValueSetID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversOfRead;
+    auto keyOf = [](FunctionID function, ValueID read) {
+        return static_cast<uint64_t>(function.index()) << 32 | read.index();
+    };
+    for (std::unique_ptr<Walker>& walker : m_walkers) {
+        if (!walker)
+            continue;
+        for (const ElementRead& read : std::exchange(walker->elementReads, { }))
+            receiversOfRead.add(keyOf(read.function, read.read), read.receivers);
+    }
+    for (ElementStoredAgain& stored : m_elementsStoredAgain) {
+        ValueSetID objects = maker().intersect(receiversOfRead.get(keyOf(stored.function, stored.read)), ValueSets::complement(m_inputs.universe().primitives()));
+        if (sets().isSubset(objects, m_arrays))
+            stored.arraysRead = objects;
     }
     settleWhichResultsAreCreatedDense();
+    settleNumbersOfCopies();
 
     forEachIndexInParallel(loops, (numberOfFunctions + containersPerTask - 1) / containersPerTask, [&](unsigned task) {
         for (uint32_t function = task * containersPerTask; function < std::min(numberOfFunctions, (task + 1) * containersPerTask); ++function)
@@ -968,8 +1078,7 @@ Type ContainerAnalysis::typeOfContents(ValueFlowPositions& positions, uint32_t i
 
     // The sets know numbers by kind alone. Where every store is an operation, the types of what the operations store bound them too.
     const ArrayWrites& writes = m_arrayWrites[index];
-    bool everyStoreIsOperation = isArray(index) && (writes.has(ArrayWrites::IsLiteral) || writes.has(ArrayWrites::IsInData)) && !writes.has(ArrayWrites::HasOtherWriter);
-    if (everyStoreIsOperation && !writes.storedNumbers.isEmpty())
+    if (isArray(index) && writes.everyStoreIsKnown() && !writes.storedNumbers.isEmpty())
         writes.storedNumbers.narrow(type);
     if (m_containers[index].builtinClass == BuiltinClasses::Map && slot.contentsSlot == ContentsSlot::Value && m_inputs.numbersOfValues) {
         const ValueFlowNumbers* numbers = m_inputs.numbersOfValues->ofValuesOfMap(m_containers[index].object);

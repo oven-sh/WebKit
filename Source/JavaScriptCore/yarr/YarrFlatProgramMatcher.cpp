@@ -33,6 +33,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
+#include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
@@ -46,7 +47,7 @@ namespace JSC { namespace Yarr {
 namespace {
 
 // Next: continue at op + 1. Jumped: op is already the next op to run.
-enum class Step : uint8_t { Next, Jumped, Failed, Matched, NoMatch, HitLimit, NeedsFrames };
+enum class Step : uint8_t { Next, Jumped, Failed, Matched, NoMatch, HitLimit, NeedsFrames, AtEnclosure };
 
 template<typename CharType>
 static ALWAYS_INLINE bool textMatches(const CharType* input, const Latin1Character* expected, unsigned count, unsigned available)
@@ -54,8 +55,17 @@ static ALWAYS_INLINE bool textMatches(const CharType* input, const Latin1Charact
     if constexpr (sizeof(CharType) == 1) {
         constexpr unsigned wordSize = sizeof(uint64_t);
         if (count <= wordSize) {
+            unsigned unused = (wordSize - count) * 8;
             if (available >= wordSize) [[likely]]
-                return !((WTF::unalignedLoad<uint64_t>(input) ^ WTF::unalignedLoad<uint64_t>(expected)) << ((wordSize - count) * 8));
+                return !((WTF::unalignedLoad<uint64_t>(input) ^ WTF::unalignedLoad<uint64_t>(expected)) << unused);
+            // The end of the subject is near: its first and its last four, or two, which may overlap.
+            auto sameAtBothEnds = [&]<typename Part>(Part) {
+                return WTF::unalignedLoad<Part>(input) == WTF::unalignedLoad<Part>(expected) && WTF::unalignedLoad<Part>(input + count - sizeof(Part)) == WTF::unalignedLoad<Part>(expected + count - sizeof(Part));
+            };
+            if (count >= sizeof(uint32_t))
+                return sameAtBothEnds(uint32_t { });
+            if (count >= sizeof(uint16_t))
+                return sameAtBothEnds(uint16_t { });
         } else {
             unsigned i = 0;
             for (; i + wordSize < count; i += wordSize) {
@@ -82,8 +92,19 @@ static ALWAYS_INLINE bool casedTextMatches(const CharType* input, const Latin1Ch
             return (WTF::unalignedLoad<uint64_t>(input + at) | WTF::unalignedLoad<uint64_t>(mask + at)) ^ WTF::unalignedLoad<uint64_t>(expected + at);
         };
         if (count <= wordSize) {
+            unsigned unused = (wordSize - count) * 8;
             if (available >= wordSize) [[likely]]
-                return !(differs(0) << ((wordSize - count) * 8));
+                return !(differs(0) << unused);
+            auto sameAtBothEnds = [&]<typename Part>(Part) {
+                auto same = [&](unsigned at) {
+                    return static_cast<Part>(WTF::unalignedLoad<Part>(input + at) | WTF::unalignedLoad<Part>(mask + at)) == WTF::unalignedLoad<Part>(expected + at);
+                };
+                return same(0) && same(count - sizeof(Part));
+            };
+            if (count >= sizeof(uint32_t))
+                return sameAtBothEnds(uint32_t { });
+            if (count >= sizeof(uint16_t))
+                return sameAtBothEnds(uint16_t { });
         } else {
             for (unsigned i = 0; i + wordSize < count; i += wordSize) {
                 if (differs(i))
@@ -108,6 +129,7 @@ struct FrameStorage {
 
     NEVER_INLINE bool grow(size_t used, size_t needed)
     {
+        auto frames = this->frames();
         size_t newCapacity = frames.size() * 2;
         while (newCapacity - used < needed)
             newCapacity *= 2;
@@ -116,22 +138,245 @@ struct FrameStorage {
             return false;
         memcpySpan(larger.mutableSpan().first(used), frames.first(used));
         overflow = WTF::move(larger);
-        frames = overflow.mutableSpan();
         return true;
     }
 
+    std::span<FlatFrame> frames() { return overflow.isEmpty() ? std::span<FlatFrame> { inlineStorage } : overflow.mutableSpan(); }
+
     FlatFrame inlineStorage[inlineFrames];
     Vector<FlatFrame> overflow;
-    std::span<FlatFrame> frames { inlineStorage };
 };
 
 template<typename CharType>
+static ALWAYS_INLINE bool isInFirstSet(const FirstSetBits& set, CharType character)
+{
+    if (sizeof(CharType) > 1 && character > 255)
+        return false;
+    return set.bits[static_cast<uint8_t>(character) >> 6] & (1ull << (character & 63));
+}
+
+// At which of sixteen characters from `begin` on a match can begin by FlatProgram::startTable.
+struct StartCandidates {
+    static constexpr unsigned stride = SIMD::stride<uint8_t>;
+    static constexpr unsigned bitsPerCharacter = SIMD::bitsPerLaneInMask<uint8_t>;
+    static constexpr uint64_t oneBitPerCharacter = ~0ull / ((1ull << bitsPerCharacter) - 1);
+
+    // The first from `from` on.
+    ALWAYS_INLINE std::optional<unsigned> find(unsigned from) const
+    {
+        if (from - begin >= stride)
+            return std::nullopt;
+        uint64_t rest = mask >> ((from - begin) * bitsPerCharacter);
+        if (!rest)
+            return std::nullopt;
+        return from + std::countr_zero(rest) / bitsPerCharacter;
+    }
+
+    unsigned begin { std::numeric_limits<unsigned>::max() - stride };
+    uint64_t mask { 0 };
+};
+
+// The first place from `from` on where a match can begin. Past the end: none. Out of line so that its loops do not take registers from Machine::run().
+template<typename CharType>
+static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartCandidates& candidates)
+{
+    if (auto found = candidates.find(from))
+        return *found;
+    unsigned none = length + 1;
+    if (!from && program.mayMatchOnlyAtInputStart)
+        return 0;
+    if (program.startScan == FlatStartScan::OneCharacter) {
+        size_t found = WTF::find(std::span { input, length }, static_cast<CharType>(program.onlyStartCharacter), from);
+        return found == notFound ? none : found;
+    }
+    unsigned depth = program.startTableDepth;
+    if (length < depth)
+        return none;
+    unsigned last = length - depth;
+    auto entryOf = [&](unsigned at) -> unsigned {
+        unsigned character = input[at];
+        return program.startTable[sizeof(CharType) == 1 || character < 256 ? character : 256];
+    };
+    // Behind a surrogate pair the places of a match are no longer those of the subject: the attempt is made, and given up. See FlatProgram::givesUpAtSurrogates.
+    auto canBeginAt = [&](unsigned at) {
+        for (unsigned place = 0; place < depth; ++place) {
+            if (sizeof(CharType) > 1 && U16_IS_SURROGATE(input[at + place]) && program.givesUpAtSurrogates)
+                return true;
+            if (!(entryOf(at + place) >> place & 1))
+                return false;
+        }
+        return true;
+    };
+    if constexpr (sizeof(CharType) == 1) {
+        constexpr unsigned stride = StartCandidates::stride;
+        static_assert(FlatProgram::maxStartTableDepth == 4 && FlatProgram::maxStartTableDepth <= stride);
+        auto lowBits = SIMD::load(program.startTableOfLowBits.data());
+        auto highBits = SIMD::load(program.startTableOfHighBits.data());
+        auto placesOf = [&](const uint8_t* characters) {
+            auto sixteen = SIMD::load(characters);
+            return simde_vandq_u8(simde_vqtbl1q_u8(lowBits, simde_vandq_u8(sixteen, simde_vdupq_n_u8(0xf))), simde_vqtbl1q_u8(highBits, simde_vshrq_n_u8(sixteen, 4)));
+        };
+        auto nextPlaces = lowBits;
+        unsigned nextPlacesBegin = none;
+        if (from - candidates.begin < stride)
+            from = candidates.begin + stride;
+        for (;; from += stride) {
+            if (from > last)
+                return none;
+            const uint8_t* characters = std::bit_cast<const uint8_t*>(input + from);
+            uint8_t endOfInput[2 * stride] { };
+            if (length - from < 2 * stride) {
+                memcpy(endOfInput, characters, length - from);
+                characters = endOfInput;
+            }
+            auto places = nextPlacesBegin == from ? nextPlaces : placesOf(characters);
+            nextPlaces = placesOf(characters + stride);
+            nextPlacesBegin = from + stride;
+            auto found = simde_vandq_u8(places, simde_vdupq_n_u8(1));
+            found = simde_vorrq_u8(found, simde_vandq_u8(simde_vextq_u8(places, nextPlaces, 1), simde_vdupq_n_u8(2)));
+            found = simde_vorrq_u8(found, simde_vandq_u8(simde_vextq_u8(places, nextPlaces, 2), simde_vdupq_n_u8(4)));
+            found = simde_vorrq_u8(found, simde_vandq_u8(simde_vextq_u8(places, nextPlaces, 3), simde_vdupq_n_u8(8)));
+            uint64_t mask = SIMD::laneMask(simde_vceqq_u8(found, simde_vdupq_n_u8(0xf))) & StartCandidates::oneBitPerCharacter;
+            if (last - from < stride - 1)
+                mask &= (1ull << ((last - from + 1) * StartCandidates::bitsPerCharacter)) - 1;
+            for (uint64_t rest = mask; rest; rest &= rest - 1) {
+                if (!canBeginAt(from + std::countr_zero(rest) / StartCandidates::bitsPerCharacter))
+                    mask &= ~(rest & -rest);
+            }
+            if (!mask)
+                continue;
+            candidates.begin = from;
+            candidates.mask = mask;
+            return from + std::countr_zero(mask) / StartCandidates::bitsPerCharacter;
+        }
+    }
+    for (; from <= last; ++from) {
+        if (canBeginAt(from))
+            return from;
+    }
+    return none;
+}
+
+// The characters around the last one from 256 up that was looked for in a set, as far as the set treats them alike: the letters of one script lie side by side.
+struct WideNeighbors {
+    ALWAYS_INLINE bool contains(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, char16_t character)
+    {
+        if (set != &wanted || character < first || character > last) [[unlikely]]
+            find(wideRanges, wanted, character);
+        return areInSet;
+    }
+
+    NEVER_INLINE void find(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, char16_t character)
+    {
+        auto ranges = wideRanges.subspan(wanted.firstWideRange, wanted.wideRangeCount);
+        auto next = std::ranges::upper_bound(ranges, character, { }, &CharacterRange::begin);
+        bool isInRange = next != ranges.begin() && character <= (next - 1)->end;
+        set = &wanted;
+        first = next == ranges.begin() ? 0x100 : isInRange ? (next - 1)->begin : (next - 1)->end + 1;
+        last = isInRange ? (next - 1)->end : next == ranges.end() ? 0x10ffff : next->begin - 1;
+        areInSet = isInRange != wanted.invertsWideRanges;
+    }
+
+    const CharacterSetBits* set { nullptr };
+    char32_t first { 0 };
+    char32_t last { 0 };
+    bool areInSet { false };
+};
+
+// What a match seldom uses. Separate from Machine for the same reason as FrameStorage.
+template<typename CharType>
+struct Enclosure {
+    static constexpr unsigned lineStartIsUnsatisfiable = std::numeric_limits<unsigned>::max();
+
+    // As Interpreter::matchDotStarEnclosure().
+    NEVER_INLINE bool widen(const FlatProgram& program, const FlatOp& op, const CharType* characters, unsigned expressionBegin, unsigned expressionEnd, unsigned* output)
+    {
+        std::span input { characters, length };
+        const CharacterSetBits& newlines = program.characterSets[op.set];
+        auto wideRanges = program.wideRanges.span();
+        bool isMultiline = op.argument & FlatProgram::enclosureIsMultiline;
+        bool beginsLine = op.argument & FlatProgram::enclosureBeginsLine;
+        auto isNewline = [&](unsigned at) {
+            return contains(newlines, wideRanges, input[at]);
+        };
+        auto isLineStart = [&](unsigned at) {
+            return !at || (isMultiline && isNewline(at - 1));
+        };
+        auto rejectForLineStart = [&] {
+            if (!isMultiline)
+                noNewlineBefore = lineStartIsUnsatisfiable;
+            return false;
+        };
+        if (noNewlineBefore == lineStartIsUnsatisfiable)
+            return false;
+
+        unsigned begin = startOffset;
+        unsigned end = input.size();
+        if (op.argument & FlatProgram::enclosureDotMatchesAll) {
+            if (beginsLine && !isLineStart(begin)) {
+                if (!isMultiline)
+                    return rejectForLineStart();
+                begin = std::max(begin, noNewlineBefore);
+                while (begin < expressionBegin && !isNewline(begin))
+                    ++begin;
+                if (begin >= expressionBegin) {
+                    noNewlineBefore = std::max(noNewlineBefore, expressionBegin);
+                    return false;
+                }
+                ++begin;
+            }
+        } else {
+            unsigned bound = std::max(startOffset, noNewlineBefore);
+            if (expressionBegin > bound) {
+                for (begin = expressionBegin - 1; !isNewline(begin); --begin) {
+                    if (begin == bound) {
+                        noNewlineBefore = expressionBegin;
+                        begin = startOffset - 1;
+                        break;
+                    }
+                }
+                ++begin;
+            }
+            if (beginsLine && !isLineStart(begin))
+                return rejectForLineStart();
+            end = expressionEnd;
+            while (end != input.size() && !isNewline(end))
+                ++end;
+            if ((op.argument & FlatProgram::enclosureEndsLine) && end != input.size() && !isMultiline)
+                return false;
+        }
+        output[0] = begin;
+        output[1] = end;
+        return true;
+    }
+
+    ALWAYS_INLINE JSRegExpResult resultUnlessGivenUp(const FlatProgram& program, JSRegExpResult result) const
+    {
+        if constexpr (sizeof(CharType) > 1) {
+            if (hasMetSurrogate && program.givesUpAtSurrogates)
+                return JSRegExpResult::JITCodeFailure;
+        }
+        return result;
+    }
+
+    const unsigned startOffset;
+    const unsigned length;
+    const unsigned steps;
+    unsigned noNewlineBefore { startOffset };
+    StartCandidates startCandidates { };
+    struct Nothing { };
+    NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, bool> hasMetSurrogate { }; // See FlatProgram::givesUpAtSurrogates.
+    NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, WideNeighbors> neighbors { };
+};
+
+template<typename CharType> static JSRegExpResult matchBehindLimit(const FlatProgram&, const CharType* input, const Enclosure<CharType>&, unsigned* output);
+
+// remembers: keeps the table of failed searches. See FlatMatchPolicy.
+template<typename CharType, bool remembers>
 struct Machine {
     using Kind = FlatOp::Kind;
 
-    static constexpr unsigned registersPerFrame = sizeof(FlatFrame) / sizeof(uint32_t);
-
-    ALWAYS_INLINE Machine(const FlatProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output)
+    ALWAYS_INLINE Machine(const FlatProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output, Enclosure<CharType>& enclosure, uint32_t* memo = nullptr)
         : program(program)
         , ops(program.ops.span().data())
         , characterSets(program.characterSets.span().data())
@@ -143,9 +388,13 @@ struct Machine {
         , length(subject.size())
         , output(output)
         , slots((program.numSubpatterns + 1) * 2)
-        , framesOfRegisters((program.numRegisters + registersPerFrame - 1) / registersPerFrame)
+        , framesOfRegisters(program.framesOfRegisters)
+        , enclosure(enclosure)
         , matchStart(start)
+        , remainingSteps(enclosure.steps)
+        , memo(memo)
     {
+        ASSERT(remembers == !!memo);
     }
 
     ALWAYS_INLINE JSRegExpResult run()
@@ -153,26 +402,32 @@ struct Machine {
         if (matchStart > length)
             return JSRegExpResult::NoMatch;
 
-        for (unsigned i = 0; i < slots; i += 2) {
+        FrameStorage frameStorage;
+        if (framesOfRegisters >= FrameStorage::inlineFrames) [[unlikely]] {
+            if (!frameStorage.grow(0, framesOfRegisters + 1))
+                return JSRegExpResult::ErrorNoMemory;
+            setFrames(frameStorage.frames(), framesOfRegisters);
+        } else
+            setFrames(frameStorage.inlineStorage, framesOfRegisters);
+
+        // Whoever finds a match sets the first two.
+        for (unsigned i = 2; i < slots; i += 2) {
             output[i] = offsetNoMatch;
             output[i + 1] = offsetNoMatch;
             WTF::compilerFence();
         }
 
+        // The size is in code units: a pattern in unicode mode has one only where every step takes a known number of them. The bytecode interpreter and the JIT begin at the same place.
         if (program.endAnchoredFixedSize && length >= *program.endAnchoredFixedSize)
             matchStart = std::max(matchStart, length - *program.endAnchoredFixedSize);
-        remainingSteps = matchLimit;
-
-        FrameStorage frameStorage;
-        if (framesOfRegisters >= FrameStorage::inlineFrames && !frameStorage.grow(0, framesOfRegisters + 1)) [[unlikely]]
-            return JSRegExpResult::ErrorNoMemory;
-        setFrames(frameStorage.frames, framesOfRegisters);
 
         if (!beginAttempt())
             return JSRegExpResult::NoMatch;
 
         for (;;) {
             Step step = runOp();
+            if (step == Step::AtEnclosure)
+                step = enclosure.widen(program, *op, input, matchStart, position, output) ? Step::Matched : Step::Failed;
             if (step == Step::Failed)
                 step = backtrack();
             switch (step) {
@@ -186,16 +441,98 @@ struct Machine {
             case Step::NoMatch:
                 return JSRegExpResult::NoMatch;
             case Step::HitLimit:
+                if constexpr (!remembers)
+                    return matchBehindLimit(program, input, enclosure, output);
                 return JSRegExpResult::ErrorHitLimit;
             case Step::NeedsFrames:
                 if (!growFrames(frameStorage))
                     return JSRegExpResult::ErrorNoMemory;
                 continue;
             case Step::Failed:
+            case Step::AtEnclosure:
                 break;
             }
             RELEASE_ASSERT_NOT_REACHED();
         }
+    }
+
+    // 0: the search from there has not begun. Else one more than the turns that it began before it failed.
+    ALWAYS_INLINE uint32_t& memoEntry(unsigned row, unsigned at)
+    {
+        ASSERT(row && row <= program.memoRows && at <= length);
+        return memo[static_cast<size_t>(row - 1) * (static_cast<size_t>(length) + 1) + at];
+    }
+    static ALWAYS_INLINE bool isMemoized(const FlatOp* at) { return remembers && at->memoRow; }
+
+    ALWAYS_INLINE bool takeTurnsOfFailedSearch(uint32_t entry)
+    {
+        uint32_t turns = entry - 1;
+        if (!turns)
+            return true;
+        if (program.remainingTurns <= turns) {
+            program.remainingTurns = 0;
+            return false;
+        }
+        program.remainingTurns -= turns;
+        return true;
+    }
+
+    static constexpr uint32_t dependsOnWhereTurnBegan = std::numeric_limits<uint32_t>::max();
+
+    ALWAYS_INLINE void recordFailedSearch(unsigned row, const FlatFrame& frame)
+    {
+        if (frame.extra != dependsOnWhereTurnBegan)
+            memoEntry(row, frame.position) = 1 + (frame.extra - program.remainingTurns);
+    }
+
+    ALWAYS_INLINE bool isInsideLookahead(const FlatOp* at) const { return program.aroundMemoRow[at->memoRow].isInsideLookahead; }
+
+    ALWAYS_INLINE unsigned memoRowOf(const FlatOp* at)
+    {
+        unsigned index = 0;
+        for (unsigned loop = program.aroundMemoRow[at->memoRow].loopThatCountsTurns; loop; loop = program.loopsThatCountTurns[loop].enclosing) {
+            auto& counted = program.loopsThatCountTurns[loop];
+            index = index * (counted.bound + 1) + std::min<unsigned>(registers()[counted.registerIndex], counted.bound);
+        }
+        return at->memoRow + index;
+    }
+
+    ALWAYS_INLINE bool turnsAroundHaveTakenSomething(unsigned row)
+    {
+        for (unsigned turn = program.aroundMemoRow[row].turnThatMayTakeNothing; turn; turn = program.turnsThatMayTakeNothing[turn].enclosing) {
+            if (registers()[program.turnsThatMayTakeNothing[turn].registerIndex] == position)
+                return false;
+        }
+        return true;
+    }
+
+    ALWAYS_INLINE Step pushChoice(uint32_t limit)
+    {
+        if (isMemoized(op)) [[unlikely]] {
+            if (!turnsAroundHaveTakenSomething(op->memoRow)) {
+                push(position, limit, dependsOnWhereTurnBegan);
+                return Step::Next;
+            }
+            uint32_t& entry = memoEntry(memoRowOf(op), position);
+            if (entry)
+                return takeTurnsOfFailedSearch(entry) ? Step::Failed : Step::HitLimit;
+            entry = !isInsideLookahead(op);
+            push(position, limit, program.remainingTurns);
+            return Step::Next;
+        }
+        push(position, limit, 0);
+        return Step::Next;
+    }
+
+    // The last alternative is about to begin. A program that counts turns has to hear when that has failed too.
+    ALWAYS_INLINE void popChoice(const FlatOp* from)
+    {
+        if (isMemoized(from) && top[-1].extra != dependsOnWhereTurnBegan && (program.countsTurns || isInsideLookahead(from))) [[unlikely]] {
+            top[-1].op = offsetOf(ops + program.recordFailureOp);
+            top[-1].limit = memoRowOf(from);
+            return;
+        }
+        --top;
     }
 
     ALWAYS_INLINE uint32_t* registers() { return reinterpret_cast<uint32_t*>(storage); }
@@ -204,15 +541,16 @@ struct Machine {
 
     ALWAYS_INLINE bool contains(const CharacterSetBits& set, CharType character) const
     {
-        return Yarr::contains(set, wideRanges, character);
+        if constexpr (sizeof(CharType) > 1) {
+            if (character > 0xff) [[unlikely]] {
+                enclosure.hasMetSurrogate |= U16_IS_SURROGATE(character);
+                return enclosure.neighbors.contains(wideRanges, set, character);
+            }
+        }
+        return Yarr::contains(set, wideRanges, static_cast<Latin1Character>(character));
     }
 
-    ALWAYS_INLINE bool contains(const FirstSetBits& set, CharType character) const
-    {
-        if (sizeof(CharType) > 1 && character > 255)
-            return false;
-        return set.bits[static_cast<uint8_t>(character) >> 6] & (1ull << (character & 63));
-    }
+    ALWAYS_INLINE bool contains(const FirstSetBits& set, CharType character) const { return isInFirstSet(set, character); }
 
     ALWAYS_INLINE void setFrames(std::span<FlatFrame> frames, size_t used)
     {
@@ -227,7 +565,7 @@ struct Machine {
         size_t used = top - storage;
         if (!frameStorage.grow(used, framesNeeded))
             return false;
-        setFrames(frameStorage.frames, used);
+        setFrames(frameStorage.frames(), used);
         return true;
     }
 
@@ -256,34 +594,21 @@ struct Machine {
 
     ALWAYS_INLINE bool findNextStart()
     {
-        switch (program.startScan) {
-        case FlatStartScan::None:
+        if (program.startScan == FlatStartScan::None)
             return true;
-        case FlatStartScan::OneCharacter: {
-            size_t found = WTF::find(std::span<const CharType> { input, length }, static_cast<CharType>(program.onlyStartCharacter), matchStart);
-            if (found == notFound)
-                return false;
-            matchStart = found;
-            return true;
-        }
-        case FlatStartScan::Set:
-            for (; matchStart < length; ++matchStart) {
-                auto character = input[matchStart];
-                if (sizeof(CharType) == 1 || character < 256) {
-                    if (contains(program.startSet, character))
-                        return true;
-                } else if (program.startMayBeWide)
-                    return true;
-            }
-            return false;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        matchStart = findStartOfMatch(program, input, length, matchStart, enclosure.startCandidates);
+        return matchStart <= length;
     }
 
     ALWAYS_INLINE bool beginAttempt()
     {
         if (!findNextStart())
             return false;
+        if constexpr (sizeof(CharType) > 1) {
+            enclosure.hasMetSurrogate |= matchStart < length && U16_IS_SURROGATE(input[matchStart]);
+            if (enclosure.hasMetSurrogate && program.givesUpAtSurrogates)
+                return false;
+        }
         position = matchStart;
         op = ops;
         top = bottom;
@@ -341,17 +666,40 @@ struct Machine {
 
     ALWAYS_INLINE Step runSetCount() { return nextIf(length - position >= op->argument && consumeMembers(characterSets[op->set], op->argument)); }
 
+    // A search that comes into the same long run again does not walk it again.
+    ALWAYS_INLINE void consumeMembersUpTo(unsigned end)
+    {
+        constexpr unsigned leastLengthToKnow = 32;
+        const CharacterSetBits& set = characterSets[op->set];
+        if constexpr (!remembers) {
+            while (position < end && contains(set, input[position]))
+                ++position;
+            return;
+        }
+        unsigned begin = position;
+        bool isInKnownRun = op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin;
+        if (isInKnownRun)
+            position = std::min(knownRunEnd, end);
+        while (position < end && contains(set, input[position]))
+            ++position;
+        if (isInKnownRun)
+            knownRunEnd = std::max(knownRunEnd, position);
+        else if (position - begin >= leastLengthToKnow) {
+            knownRunSet = op->set;
+            knownRunBegin = begin;
+            knownRunEnd = position;
+        }
+    }
+
     ALWAYS_INLINE std::optional<unsigned> consumeGreedyRun()
     {
-        const CharacterSetBits& set = characterSets[op->set];
         unsigned available = length - position;
         if (available < op->needed)
             return std::nullopt;
         available -= op->needed;
         unsigned end = available > op->argument ? position + op->argument : position + available;
         unsigned begin = position;
-        while (position < end && contains(set, input[position]))
-            ++position;
+        consumeMembersUpTo(end);
         if (position - begin < op->target)
             return std::nullopt;
         return begin + op->target;
@@ -364,9 +712,105 @@ struct Machine {
         std::optional<unsigned> least = consumeGreedyRun();
         if (!least)
             return Step::Failed;
+        if (isMemoized(op)) [[unlikely]] {
+            push(position, *least, 0);
+            return goOnFromGreedyRun<false>(op);
+        }
         if (position > *least)
             push(position, *least, 0);
         return Step::Next;
+    }
+
+    // The top frame is the run's. Goes down from position to the first place that the search has not gone on from before.
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step goOnFromGreedyRun(const FlatOp* from)
+    {
+        FlatFrame& frame = top[-1];
+        unsigned row = memoRowOf(from);
+        for (;; --position) {
+            if (!knowsFollowingCharacters || (position == length ? firstSets[from->firstSet].atEnd : contains(firstSets[from->firstSet], input[position]))) {
+                if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                    frame.extra = dependsOnWhereTurnBegan;
+                    break;
+                }
+                uint32_t& entry = memoEntry(row, position);
+                if (!entry) {
+                    entry = !isInsideLookahead(from);
+                    frame.extra = program.remainingTurns;
+                    break;
+                }
+                if (!takeTurnsOfFailedSearch(entry))
+                    return Step::HitLimit;
+            }
+            if (position == frame.limit) {
+                --top;
+                return Step::Failed;
+            }
+        }
+        frame.position = position;
+        op = from;
+        return Step::Next;
+    }
+
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step resumeMemoizedGreedyRun(const FlatOp* from)
+    {
+        const FlatFrame& frame = top[-1];
+        recordFailedSearch(memoRowOf(from), frame);
+        if (frame.position == frame.limit) {
+            --top;
+            return Step::Failed;
+        }
+        position = frame.position - 1;
+        return goOnFromGreedyRun<knowsFollowingCharacters>(from);
+    }
+
+    // The top frame is the run's: its limit is how many characters the run has taken up to position.
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step goOnFromLazyRun(const FlatOp* from)
+    {
+        FlatFrame& frame = top[-1];
+        unsigned row = memoRowOf(from);
+        for (;;) {
+            if (!knowsFollowingCharacters || position == length || contains(firstSets[from->firstSet], input[position])) {
+                if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                    frame.extra = dependsOnWhereTurnBegan;
+                    break;
+                }
+                uint32_t& entry = memoEntry(row, position);
+                if (!entry) {
+                    entry = !isInsideLookahead(from);
+                    frame.extra = program.remainingTurns;
+                    break;
+                }
+                if (!takeTurnsOfFailedSearch(entry))
+                    return Step::HitLimit;
+            }
+            if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
+                --top;
+                return Step::Failed;
+            }
+            ++frame.limit;
+            ++position;
+        }
+        frame.position = position;
+        op = from;
+        return Step::Next;
+    }
+
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step resumeMemoizedLazyRun(const FlatOp* from)
+    {
+        FlatFrame& frame = top[-1];
+        recordFailedSearch(memoRowOf(from), frame);
+        position = frame.position;
+        if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
+            --top;
+            return Step::Failed;
+        }
+        ++frame.limit;
+        ++position;
+        return goOnFromLazyRun<knowsFollowingCharacters>(from);
     }
 
     ALWAYS_INLINE Step runGreedyRunBeforeKnownCharacters()
@@ -376,6 +820,10 @@ struct Machine {
         std::optional<unsigned> least = consumeGreedyRun();
         if (!least)
             return Step::Failed;
+        if (isMemoized(op)) [[unlikely]] {
+            push(position, *least, 0);
+            return goOnFromGreedyRun<true>(op);
+        }
         const FirstSetBits& following = firstSets[op->firstSet];
         while (position > *least && !(position == length ? following.atEnd : contains(following, input[position])))
             --position;
@@ -397,6 +845,8 @@ struct Machine {
         if (!consumeLazyRunMinimum())
             return Step::Failed;
         push(position, op->target, length - op->needed);
+        if (isMemoized(op)) [[unlikely]]
+            return goOnFromLazyRun<false>(op);
         return Step::Next;
     }
 
@@ -406,35 +856,37 @@ struct Machine {
             return Step::NeedsFrames;
         if (!consumeLazyRunMinimum())
             return Step::Failed;
+        if (isMemoized(op)) [[unlikely]] {
+            push(position, op->target, 0);
+            return goOnFromLazyRun<true>(op);
+        }
         const CharacterSetBits& set = characterSets[op->set];
         const FirstSetBits& following = firstSets[op->firstSet];
-        unsigned count = op->target;
+        unsigned begin = position;
+        unsigned limit = length - op->needed;
+        if (op->argument - op->target < limit - position)
+            limit = position + (op->argument - op->target);
         while (position < length && !contains(following, input[position])) {
-            if (count == op->argument || length - position <= op->needed || !contains(set, input[position]))
+            if (position >= limit || !contains(set, input[position]))
                 return Step::Failed;
-            ++count;
             ++position;
         }
-        push(position, count, length - op->needed);
+        push(position, op->target + (position - begin), length - op->needed);
         return Step::Next;
     }
 
     ALWAYS_INLINE Step runPossessiveRun()
     {
-        const CharacterSetBits& set = characterSets[op->set];
         unsigned end = length - position > op->argument ? position + op->argument : length;
         unsigned begin = position;
-        while (position < end && contains(set, input[position]))
-            ++position;
+        consumeMembersUpTo(end);
         return nextIf(position - begin >= op->target);
     }
 
     ALWAYS_INLINE std::optional<unsigned> consumeCapturedRun()
     {
-        const CharacterSetBits& set = characterSets[op->set];
         unsigned begin = position;
-        while (position < length && contains(set, input[position]))
-            ++position;
+        consumeMembersUpTo(length);
         if (position - begin < op->target)
             return std::nullopt;
         return begin;
@@ -454,17 +906,17 @@ struct Machine {
     {
         if (!tryReserveFrames(1))
             return Step::NeedsFrames;
-        push(position, 0, 0);
-        return Step::Next;
+        return pushChoice(0);
     }
 
     ALWAYS_INLINE Step runGreedyLoopChoice()
     {
         if (!tryReserveFrames(1))
             return Step::NeedsFrames;
-        push(position, registers()[op->registerIndex], 0);
-        registers()[op->registerIndex] = position;
-        return Step::Next;
+        Step step = pushChoice(registers()[op->registerIndex]);
+        if (step == Step::Next)
+            registers()[op->registerIndex] = position;
+        return step;
     }
 
     ALWAYS_INLINE bool canBeginHere(const FirstSetBits& first) const
@@ -483,7 +935,7 @@ struct Machine {
         if (!canBeginHere(firstSets[op->firstSet]))
             return jumpTo(op->target);
         if (canBeginHere(firstSets[op->laterFirstSet]))
-            push(position, 0, 0);
+            return pushChoice(0);
         return Step::Next;
     }
 
@@ -499,8 +951,7 @@ struct Machine {
         if (entry == FlatProgram::thisAndLaterAlternativesBeginHere) {
             if (!tryReserveFrames(1))
                 return Step::NeedsFrames;
-            push(position, 0, 0);
-            return Step::Next;
+            return pushChoice(0);
         }
         if (entry == FlatProgram::noAlternativeBeginsHere)
             return Step::Failed;
@@ -551,6 +1002,19 @@ struct Machine {
     ALWAYS_INLINE Step runFailIfEmpty() { return nextIf(registers()[op->registerIndex] != position); }
     ALWAYS_INLINE Step runNeedsInput() { return nextIf(length - position >= op->needed); }
     ALWAYS_INLINE Step runInputStart() { return nextIf(!position); }
+
+    ALWAYS_INLINE Step runStepBack()
+    {
+        if (position < op->argument)
+            return Step::Failed;
+        if constexpr (sizeof(CharType) > 1) {
+            // The step is in characters: see FlatProgram::givesUpAtSurrogates.
+            for (unsigned i = 1; i <= op->argument; ++i)
+                enclosure.hasMetSurrogate |= U16_IS_SURROGATE(input[position - i]);
+        }
+        position -= op->argument;
+        return Step::Next;
+    }
     ALWAYS_INLINE Step runLineStart() { return nextIf(!position || contains(characterSets[op->set], input[position - 1])); }
     ALWAYS_INLINE Step runInputEnd() { return nextIf(position == length); }
     ALWAYS_INLINE Step runLineEnd() { return nextIf(position == length || contains(characterSets[op->set], input[position])); }
@@ -563,6 +1027,8 @@ struct Machine {
         output[1] = position;
         return Step::Matched;
     }
+
+    ALWAYS_INLINE Step runDotStarEnclosure() { return Step::AtEnclosure; }
 
     ALWAYS_INLINE Step runLoggedCaptureStart()
     {
@@ -727,9 +1193,19 @@ struct Machine {
 
     ALWAYS_INLINE Step resumeChoice()
     {
+        const FlatOp* from = opOf(top[-1]);
+        position = top[-1].position;
+        popChoice(from);
+        return jumpTo(from->target);
+    }
+
+    ALWAYS_INLINE Step runRecordFailure() { RELEASE_ASSERT_NOT_REACHED(); }
+
+    ALWAYS_INLINE Step resumeRecordFailure()
+    {
         const FlatFrame& frame = *--top;
-        position = frame.position;
-        return jumpTo(opOf(frame)->target);
+        recordFailedSearch(frame.limit, frame);
+        return Step::Failed;
     }
 
     ALWAYS_INLINE Step resumeChoiceByFirst() { return resumeChoice(); }
@@ -738,10 +1214,11 @@ struct Machine {
 
     ALWAYS_INLINE Step resumeGreedyLoopChoice()
     {
-        const FlatFrame& frame = *--top;
+        const FlatFrame& frame = top[-1];
         const FlatOp* from = opOf(frame);
         position = frame.position;
         registers()[from->registerIndex] = frame.limit;
+        popChoice(from);
         return jumpTo(from->target);
     }
 
@@ -749,6 +1226,8 @@ struct Machine {
     {
         FlatFrame* frame = top - 1;
         const FlatOp* from = opOf(*frame);
+        if (isMemoized(from)) [[unlikely]]
+            return resumeMemoizedGreedyRun<false>(from);
         position = --frame->position;
         if (position == frame->limit)
             --top;
@@ -760,6 +1239,8 @@ struct Machine {
     {
         FlatFrame* frame = top - 1;
         const FlatOp* from = opOf(*frame);
+        if (isMemoized(from)) [[unlikely]]
+            return resumeMemoizedGreedyRun<true>(from);
         position = frame->position - 1;
         while (position > frame->limit && !contains(firstSets[from->firstSet], input[position]))
             --position;
@@ -774,6 +1255,8 @@ struct Machine {
     {
         FlatFrame* frame = top - 1;
         const FlatOp* from = opOf(*frame);
+        if (isMemoized(from)) [[unlikely]]
+            return resumeMemoizedLazyRun<true>(from);
         position = frame->position;
         do {
             if (frame->limit == from->argument || position >= frame->extra || !contains(characterSets[from->set], input[position])) {
@@ -792,6 +1275,8 @@ struct Machine {
     {
         FlatFrame* frame = top - 1;
         const FlatOp* from = opOf(*frame);
+        if (isMemoized(from)) [[unlikely]]
+            return resumeMemoizedLazyRun<false>(from);
         if (frame->limit < from->argument && frame->position < frame->extra && contains(characterSets[from->set], input[frame->position])) {
             ++frame->limit;
             position = ++frame->position;
@@ -847,6 +1332,7 @@ struct Machine {
         case Kind::LazyRun:
         case Kind::GreedyRunBeforeKnownCharacters:
         case Kind::LazyRunBeforeKnownCharacters:
+        case Kind::RecordFailure:
             return;
         FOR_EACH_FLAT_OP_WITHOUT_FRAME(FLAT_OP_CASE_LABEL)
             break;
@@ -875,6 +1361,7 @@ struct Machine {
         case Kind::LoggedSavePosition:
         case Kind::LoggedSetRegister:
         case Kind::LoggedIncrement:
+        case Kind::RecordFailure:
             return false;
         FOR_EACH_FLAT_OP_WITHOUT_FRAME(FLAT_OP_CASE_LABEL)
             break;
@@ -935,8 +1422,14 @@ struct Machine {
     unsigned* const output;
     const unsigned slots;
     const size_t framesOfRegisters;
+    Enclosure<CharType>& enclosure;
     unsigned matchStart;
-    unsigned remainingSteps { 0 };
+    unsigned remainingSteps;
+    uint32_t* const memo;
+    // Every character of [knownRunBegin, knownRunEnd) is in the set of this index.
+    unsigned knownRunSet { std::numeric_limits<unsigned>::max() };
+    unsigned knownRunBegin { 0 };
+    unsigned knownRunEnd { 0 };
 
     const FlatOp* op { nullptr };
     unsigned position { 0 };
@@ -948,19 +1441,60 @@ struct Machine {
     size_t framesNeeded { 0 };
 };
 
-} // anonymous namespace
-
-JSRegExpResult matchFlatProgram(const FlatProgram& program, std::span<const Latin1Character> input, unsigned start, unsigned* output)
+template<typename CharType>
+static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output, unsigned steps)
 {
-    return Machine<Latin1Character>(program, input, start, output).run();
+    Enclosure<CharType> enclosure { start, length, steps };
+    JSRegExpResult result = Machine<CharType, false>(program, std::span { input, length }, start, output, enclosure).run();
+    return enclosure.resultUnlessGivenUp(program, result);
 }
 
-JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, unsigned start, unsigned* output)
+template<typename CharType>
+static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output)
+{
+    constexpr uint64_t maxMemoSize = 32 * MB;
+    uint64_t entries = static_cast<uint64_t>(program.memoRows) * (static_cast<uint64_t>(length) + 1);
+    Vector<uint32_t> memo;
+    if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries))
+        return matchForgetting(program, input, length, start, output, matchLimit);
+    zeroSpan(memo.mutableSpan());
+    Enclosure<CharType> enclosure { start, length, matchLimit };
+    JSRegExpResult result = Machine<CharType, true>(program, std::span { input, length }, start, output, enclosure, memo.mutableSpan().data()).run();
+    return enclosure.resultUnlessGivenUp(program, result);
+}
+
+template<typename CharType>
+static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, const CharType* input, const Enclosure<CharType>& enclosure, unsigned* output)
+{
+    if (enclosure.steps == matchLimit || program.jitCountsTurns)
+        return JSRegExpResult::ErrorHitLimit;
+    return matchRemembering(program, input, enclosure.length, enclosure.startOffset, output);
+}
+
+template<typename CharType>
+static ALWAYS_INLINE JSRegExpResult match(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
+{
+    unsigned length = input.size();
+    if (policy == FlatMatchPolicy::HandsOverEarly && program.stepsPerCharacterBeforeStopping) [[likely]]
+        return matchForgetting(program, input.data(), length, start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, program.stepsPerCharacterBeforeStopping * (static_cast<uint64_t>(length) + 32))));
+    if (policy != FlatMatchPolicy::RunsToMatchLimit && (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart))
+        return matchRemembering(program, input.data(), length, start, output);
+    return matchForgetting(program, input.data(), length, start, output, matchLimit);
+}
+
+} // anonymous namespace
+
+JSRegExpResult matchFlatProgram(const FlatProgram& program, std::span<const Latin1Character> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
+{
+    return match(program, input, start, output, policy);
+}
+
+JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy)
 {
     SuperSamplerScope superSamplerScope(false);
     if (input.is8Bit())
-        return matchFlatProgram(program, input.span8(), start, output);
-    return Machine<char16_t>(program, input.span16(), start, output).run();
+        return match(program, input.span8(), start, output, policy);
+    return match(program, input.span16(), start, output, policy);
 }
 
 void validateFlatProgramResult(const FlatProgram& program, StringView input, unsigned start, RegExpMatchOutcome flat, RegExpMatchOutcome interpreter)

@@ -264,8 +264,6 @@ void PlannedLayoutChecker::checkCellExtents()
         if (slot.storage == SlotStorage::Inline)
             extents.append(extentAt(slot.offset, slot.width()));
     }
-    if (auto offset = m_planned.isEscapedOffset)
-        extents.append(extentAt(*offset, sizeof(bool)));
     uint64_t start = isCompiledObject() ? offsetOfFirstField : offsetOfFirstEnvironmentVariable;
     if (!areDisjoint(extents.mutableSpan(), start, m_planned.size)) {
         fail(PlacementRule::CellOverlap);

@@ -199,24 +199,65 @@ static bool canBecomeParameter(FunctionAnalyses& analyses, ValueID id)
     });
 }
 
-// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made.
-static std::optional<Origin> findOriginOfSteps(const Function& function, const FusionCandidate& candidate)
+// next() of a generator is in no stack trace: the step stands where the innermost frame that is in one called it.
+static Origin visibleOriginOf(const Program& program, const Function& function, ValueID step)
 {
-    std::optional<Origin> running;
+    Origin origin = function.at(step).origin();
+    while (origin.inlineFrame) {
+        const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+        if (!frame.callee || !program.at(frame.callee).isHiddenInStackTraces())
+            break;
+        origin = { frame.callPosition, frame.parent };
+    }
+    return origin;
+}
+
+// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made.
+static Origin originOfSteps(const Program& program, const Function& function, const FusionCandidate& candidate)
+{
     std::optional<Origin> ending;
     for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1)) {
-        Origin origin = function.at(site.step).origin();
-        if (site.mode == ResumeMode::Return) {
-            ending = origin;
-            continue;
-        }
-        if (running && *running != origin)
-            return std::nullopt;
-        running = origin;
+        if (site.mode != ResumeMode::Return)
+            return visibleOriginOf(program, function, site.step);
+        ending = visibleOriginOf(program, function, site.step);
     }
-    if (running)
-        return running;
-    return ending ? ending : function.at(candidate.generator).origin();
+    return ending ? *ending : function.at(candidate.generator).origin();
+}
+
+static bool isRunFromOnePlace(const Program& program, const Function& function, const FusionCandidate& candidate)
+{
+    Origin origin = originOfSteps(program, function, candidate);
+    return std::ranges::all_of(candidate.sites.subspan(startSite + 1), [&](const GeneratorStepSite& site) {
+        return site.mode == ResumeMode::Return || visibleOriginOf(program, function, site.step) == origin;
+    });
+}
+
+// Behind a yield stands the throw of what a step may send in.
+static bool throwsWhatStepSends(const Function& body, const Terminator& terminator)
+{
+    if (terminator.kind != TerminatorKind::Throw)
+        return false;
+    const Value& thrown = body.at(terminator.valueOperand());
+    return thrown.opcode == Opcode::ResultAt && isYield(body, thrown.operand(0));
+}
+
+// Only what throws or runs other code has its callers listed.
+static bool mayHaveItsCallersListed(FunctionAnalyses& bodyAnalyses, const FusionCandidate& candidate)
+{
+    const Function& body = bodyAnalyses.function();
+    bool isSentWhatToThrow = candidate.sites.containsIf([](const GeneratorStepSite& site) {
+        return site.mode == ResumeMode::Throw;
+    });
+    auto listsCallers = [](const Effects& effects) {
+        return effects.mayThrow || effects.mayCallUnknownCode;
+    };
+    return std::ranges::any_of(bodyAnalyses.cfg().reversePostOrder(), [&](BlockID block) {
+        if (listsCallers(bodyAnalyses.effectsOfTerminator(block).onAnyEdge()) && (isSentWhatToThrow || !throwsWhatStepSends(body, body.at(block).terminator)))
+            return true;
+        return std::ranges::any_of(body.at(block).values, [&](ValueID id) {
+            return !isYield(body, id) && listsCallers(bodyAnalyses.effectsOf(id).onAnyEdge());
+        });
+    });
 }
 
 static GeneratorFusionDeclineReason findObstacle(FunctionPassContext& pass, const FusionCandidate& candidate, FunctionAnalyses& bodyAnalyses, const CarriedValues& carried)
@@ -225,7 +266,7 @@ static GeneratorFusionDeclineReason findObstacle(FunctionPassContext& pass, cons
         if (!pass.analyses.dominates(candidate.body.startAtCreation, pass.analyses.useLists().pointOf(site.step)))
             return GeneratorFusionDeclineReason::Unknown;
     }
-    if (!findOriginOfSteps(pass.function, candidate))
+    if (!isRunFromOnePlace(pass.program, pass.function, candidate) && mayHaveItsCallersListed(bodyAnalyses, candidate))
         return GeneratorFusionDeclineReason::Unknown;
     for (size_t index : carried.bodyValues) {
         ValueID id(index);
@@ -321,7 +362,7 @@ static void insertStateSeeds(Merge& merge)
     const Function& function = merge.pass.function;
     ProgramPoint point = merge.pass.analyses.useLists().pointAfter(merge.candidate.generator);
     merge.origin = function.at(merge.candidate.generator).origin();
-    merge.originOfSteps = *findOriginOfSteps(function, merge.candidate);
+    merge.originOfSteps = originOfSteps(merge.pass.program, function, merge.candidate);
     merge.frequency = function.at(point.block).frequency;
 
     merge.builder.setOrigin(merge.origin);

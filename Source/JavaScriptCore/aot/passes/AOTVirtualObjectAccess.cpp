@@ -87,6 +87,16 @@ static VirtualFieldAccess lookUpSlot(const Program& program, const VirtualObject
     }
 }
 
+// A deletion looks at nothing above the object. What lies in a slot is a data property, and it can be deleted unless the form of its field says otherwise.
+static VirtualFieldAccess lookUpDeletedField(const Program& program, const VirtualObjectDescription& description, PropertyKeyID key)
+{
+    VirtualField field = VirtualField::named(key);
+    std::optional<uint32_t> layoutField = description.kind == VirtualObjectKind::Object ? layoutFieldOf(program, description, field) : std::nullopt;
+    if (!layoutField || !fieldAt(program, { description.layout, *layoutField }).form.isEmpty())
+        return { };
+    return createFieldAccess(field, PresentField::IsOwnData, AbsentField::FindsNothing);
+}
+
 static bool isClassEvaluatedOnce(const Program& program, LayoutID declaringLayout)
 {
     return program.at(declaringLayout).classFlow.evaluations == ExecutionCount::AtMostOnce;
@@ -194,6 +204,8 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext& context, const Virtua
     case Opcode::PropHas:
     case Opcode::PropHasOwn:
         return lookUpPropertyByName(context, description, access);
+    case Opcode::PropDelete:
+        return lookUpDeletedField(context.program, description, access.key());
     case Opcode::ElemGet:
     case Opcode::ElemSet:
     case Opcode::ElemDefine:
@@ -208,6 +220,10 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext& context, const Virtua
         return arrayKinds.contains(description.kind) ? createLengthAccess() : VirtualFieldAccess { };
     case Opcode::GetStringLength:
         return description.kind == VirtualObjectKind::StringRange ? createLengthAccess() : VirtualFieldAccess { };
+    case Opcode::GetStringCodeUnit:
+        if (description.kind != VirtualObjectKind::StringRange)
+            return { };
+        return { FieldLookup::DynamicElement, AbsentField::Unknown, PresentField::IsOwnData, { }, access.positionOperand() };
     case Opcode::GetMappedArgument:
     case Opcode::SetMappedArgument:
         return lookUpMappedArgument(description, access);
@@ -290,7 +306,8 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
     }
 
     VirtualFieldAccess result = lookUpSlot(program, description, plan.operation, query->key);
-    if (plan.requiredProofs.contains(Proof::SlotFilled))
+    // A field of birth may have been deleted since: what is planned for a filled slot says nothing of an empty one.
+    if (plan.requiredProofs.contains(Proof::SlotFilled) || plan.requiredProofs.contains(Proof::BirthFieldsFilled))
         result.whenAbsent = AbsentField::Unknown;
     return result;
 }

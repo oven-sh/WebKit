@@ -54,8 +54,6 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
             checkValue(operand, get(operand));
         if (hasTestableBits(operand))
             checkClassProofs(operand, get(operand), type);
-        if (type.environment && representationOf(operand) == Representation::Cell)
-            checkIsNotReleased(context, in<CellPointer>(operand), type.environment);
         checkRetainedOperand(context, user, operand, operandIndex);
         checkIsNoFrameArray(context, user, operand, operandIndex);
     });
@@ -157,7 +155,8 @@ void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& cont
 
 void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t operandIndex)
 {
-    if (!mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
+    // An outlined body is a part of the function that calls it, and may hand back what lies in the frame of that function.
+    if (m_function.role == FunctionRole::OutlinedBody || !mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
         return;
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, m_function, m_function.at(operand));
     if (!numberOfResults) {
@@ -176,7 +175,7 @@ void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& conte
 
 void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t)
 {
-    if (mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall)
+    if (m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall)
         checkIsNotFrameCell(context, get(operand), std::nullopt);
 }
 

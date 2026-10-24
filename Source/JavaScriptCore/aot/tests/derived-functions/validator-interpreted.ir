@@ -17,7 +17,8 @@ layout L3 name="Inner" fields=[{key="x" declared={type=number}}]
 # CHECK-NEXT: [[n]]: anything = GetOwnDataProperty {{*}} key="n"
 # CHECK-NEXT: [[inner]]: anything = GetOwnDataProperty {{*}} key="inner"
 # CHECK-NEXT: [[plan]]:{{*}}= String string="[{\"shape\":\"Union\",\"arms\":[1,2],\"remembers\":true},{\"shape\":\"Object\",\"members\":[{\"key\":\"left\",\"node\":0,\"isOptional\":true,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Object\",\"members\":[{\"key\":\"right\",\"node\":0,\"isOptional\":true,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"}]"
-# CHECK-NEXT: [[pair]]: anything = CallBuiltin -, [[tree]], [[plan]] overload=CompilerHelpersInterpretNode/0
+# CHECK-NEXT: [[preparedAt2]]: anything = GetPreparedPlans
+# CHECK-NEXT: [[pair]]: anything = CallBuiltin -, [[tree]], [[plan]], [[preparedAt2]] overload=CompilerHelpersInterpretNode/0
 # CHECK-NEXT: [[zero]]: 0 = Integer
 # CHECK-NEXT: [[accepted]]: anything = ElemGet [[pair]], [[zero]]
 # CHECK: Branch {{*}} -> taken [[isAccepted]](), notTaken [[isRefused]]()

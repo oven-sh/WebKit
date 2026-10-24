@@ -1270,82 +1270,6 @@ static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
     AOT_TEST_CHECK(isFiled.bitCount() == numberOfPairs);
 }
 
-static void testAbsenceFilterListsNamesOfObjectAndWhatIsAboveIt(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    JSGlobalObject* realm = program.realm();
-    PropertyCaches& caches = *program.state().propertyCaches;
-    VMPropertyCaches& tables = caches.tables();
-    Identifier label = Identifier::fromString(vm, "label"_s);
-    std::optional<uint32_t> number = caches.nameOf(label.impl()).identifierNumber;
-    std::optional<uint32_t> inherited = caches.nameOf(vm.propertyNames->toString.impl()).identifierNumber;
-    AOT_TEST_CHECK(number);
-    auto validFilterOf = [&](JSObject* object) -> const AbsenceFilter* {
-        const AbsenceFilter& filter = tables.absenceFilterFor(object->structureID());
-        return filter.structureID == object->structureID().bits() && filter.generation == tables.absenceFilterGeneration() ? &filter : nullptr;
-    };
-    auto filterOf = [&](JSObject* object) {
-        tables.fileAbsenceFilter(realm, object);
-        return validFilterOf(object);
-    };
-
-    JSObject* empty = constructEmptyObject(realm);
-    const AbsenceFilter* ofEmpty = filterOf(empty);
-    AOT_TEST_CHECK(ofEmpty);
-    // A name has one bit of 256, found by its number, and may share it with a name of Object.prototype: the filter of whatever lies below that says nothing of the name then.
-    AbsenceFilter ofObjectPrototypeAlone { };
-    realm->objectPrototype()->structure()->forEachProperty(vm, [&](const auto& entry) {
-        if (std::optional<uint32_t> numberOfEntry = caches.nameOf(entry.key()).identifierNumber)
-            ofObjectPrototypeAlone.add(*numberOfEntry);
-        return true;
-    });
-    bool sharesNoBitWithObjectPrototype = ofObjectPrototypeAlone.rulesOut(*number);
-    AOT_TEST_CHECK(ofEmpty->rulesOut(*number) == sharesNoBitWithObjectPrototype);
-    AOT_TEST_CHECK(!(inherited && ofEmpty->rulesOut(*inherited)));
-
-    JSObject* labelled = constructEmptyObject(realm);
-    labelled->putDirect(vm, label, jsNumber(1));
-    const AbsenceFilter* ofLabelled = filterOf(labelled);
-    AOT_TEST_CHECK(ofLabelled && !ofLabelled->rulesOut(*number));
-
-    const AbsenceFilter* ofNothingAbove = filterOf(constructEmptyObject(vm, realm->nullPrototypeObjectStructure()));
-    AOT_TEST_CHECK(ofNothingAbove && ofNothingAbove->rulesOut(*number) && !(inherited && !ofNothingAbove->rulesOut(*inherited)));
-
-    JSObject* above = constructEmptyObject(realm);
-    JSObject* below = constructEmptyObject(realm);
-    below->setPrototypeDirect(vm, above);
-    const AbsenceFilter* ofBelow = filterOf(below);
-    AOT_TEST_CHECK(ofBelow && ofBelow->rulesOut(*number) == sharesNoBitWithObjectPrototype);
-    // What is above an object changes without the object's Structure changing.
-    PutPropertySlot slot(above);
-    above->methodTable()->put(above, realm, label, jsNumber(2), slot);
-    AOT_TEST_CHECK(!validFilterOf(below) && !validFilterOf(empty));
-    ofBelow = filterOf(below);
-    AOT_TEST_CHECK(ofBelow && !ofBelow->rulesOut(*number));
-
-    AOT_TEST_CHECK(!filterOf(constructEmptyArray(realm, nullptr)));
-    JSObject* indexed = constructEmptyObject(realm);
-    indexed->putDirectIndex(realm, 0, jsNumber(1));
-    AOT_TEST_CHECK(!filterOf(indexed));
-    JSObject* dictionary = constructEmptyObject(realm);
-    dictionary->convertToDictionary(vm);
-    AOT_TEST_CHECK(!filterOf(dictionary));
-    JSObject* belowDictionary = constructEmptyObject(realm);
-    belowDictionary->setPrototypeDirect(vm, dictionary);
-    // A dictionary that is a prototype reports what it gets, as every prototype does.
-    const AbsenceFilter* ofBelowDictionary = filterOf(belowDictionary);
-    AOT_TEST_CHECK(ofBelowDictionary && ofBelowDictionary->rulesOut(*number) == sharesNoBitWithObjectPrototype);
-    dictionary->putDirect(vm, label, jsNumber(3));
-    AOT_TEST_CHECK(!validFilterOf(belowDictionary));
-    ofBelowDictionary = filterOf(belowDictionary);
-    AOT_TEST_CHECK(ofBelowDictionary && !ofBelowDictionary->rulesOut(*number));
-
-    AOT_TEST_CHECK(filterOf(empty));
-    vm.heap.collectNow(Sync, CollectionScope::Full);
-    AOT_TEST_CHECK(!tables.absenceFilterFor(empty->structureID()).structureID);
-    ensureStillAliveHere(empty);
-}
-
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1427,7 +1351,6 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/presence-is-cached-under-name"_s, withProgram<testPresenceIsCachedUnderName> },
         { "property-lookup/store-is-filed-one-miss-earlier-than-read"_s, withProgram<testStoreIsFiledOneMissEarlierThanRead> },
         { "property-lookup/pairs-that-miss-in-turn-are-all-filed"_s, withProgram<testPairsThatMissInTurnAreAllFiled> },
-        { "property-lookup/absence-filter-lists-names-of-object-and-what-is-above-it"_s, withProgram<testAbsenceFilterListsNamesOfObjectAndWhatIsAboveIt> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },

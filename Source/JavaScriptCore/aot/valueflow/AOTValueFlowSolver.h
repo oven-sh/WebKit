@@ -311,8 +311,6 @@ public:
 
     // After the solve. The type of the node was taken on trust, and an object that the analysis follows has arrived there that lies outside it: nothing is proven about the node.
     bool holdsObjectOutsideFamily(ValueFlowNodeID node) const { return m_holdsObjectOutsideFamily.get(node.index()); }
-    // The set of the node was given up.
-    bool isSaturated(ValueFlowNodeID node) const { return m_isSaturated.get(node.index()); }
 
     // After a solve with Rounds::Due. The runs that added something in a round of every statement: each should have been due before. The solve has gone on from there, so what it holds is at rest all the same.
     uint64_t numberOfRunsThatWereNotDueAndAdded() const { return m_numberOfRunsThatWereNotDueAndAdded; }
@@ -341,6 +339,12 @@ public:
     ValueFlowReachWitness reachedBy(FunctionID function) const { return m_reachedBy[function.index()]; }
     // How the member has come into the node: the node first, then a predecessor that holds the member, and so on, on a shortest way, to a node that holds it for ever. After the solve only where the input has asked for it.
     Vector<ValueFlowNodeID> explain(ValueFlowNodeID, ValueFlowObjectID member) const;
+    // The closures that come to the callee of a construction by ways that pass through nothing made for the unknown object.
+    ValueSetID closuresFollowedToConstruction(ValueFlowNodeID callee) const
+    {
+        auto found = m_closuresFollowedToConstruction.find(callee.index());
+        return found == m_closuresFollowedToConstruction.end() ? ValueSets::nothing : found->value;
+    }
     // None for an edge of a body, for one that the solver has made itself (from what is written to what is read, into a masked node, between groups of callees) and where the input did not ask for it.
     ValueFlowStatementID statementThatLogged(ValueFlowEdge) const;
     struct LoggedEdge {
@@ -697,6 +701,8 @@ private:
     void saturate(std::span<const ValueFlowNodeID> moved);
     void spreadMarks();
     void findObjectsOutsideFamilies();
+    ValueSetID findClosuresFollowedTo(ValueFlowNodeID);
+    void findClosuresFollowedToConstructions();
     void findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk);
     Subject subjectOf(ValueFlowNodeID) const;
     void report();
@@ -1053,6 +1059,7 @@ private:
     BitVector m_statementsWithMembersNotToldApart;
     // In the order of the nodes.
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;
     // By node: zero for none, else one more than the source.
     Vector<uint8_t> m_unknownSourceOfNode;

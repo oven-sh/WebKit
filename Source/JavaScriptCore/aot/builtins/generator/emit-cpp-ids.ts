@@ -153,8 +153,8 @@ function hasUnseenCodeCondition({ attachments }: ModelBuiltin): boolean {
 }
 
 function hasForms({ attachments }: ModelBuiltin): boolean {
-  const { appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm } = attachments;
-  return [appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm].some(form => form !== null);
+  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = attachments;
+  return [appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].some(form => form !== null);
 }
 
 function hasBoxedCallStub({ attachments }: ModelBuiltin): boolean {

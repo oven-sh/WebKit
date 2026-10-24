@@ -1026,7 +1026,7 @@ ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
     return set;
 }
 
-std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID set, bool isConstruction)
+std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID set, const ValueFlowOperand* calleeOfConstruction)
 {
     if (ValueSets::isComplement(set))
         return std::nullopt;
@@ -1036,8 +1036,14 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
     ValueSetID arriving = expand(set, family);
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
     // The pass that hands the object it has allocated to the constructor above tests the link to that constructor at run time, and it finds in the list which version of the constructor is entered.
-    if (isConstruction && m_inputs.sets().size(arriving) - m_inputs.sets().size(listed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
-        listed = arriving;
+    bool isConstruction = !!calleeOfConstruction;
+    if (isConstruction && listed != arriving) {
+        ValueSetID followed = calleeOfConstruction->constant ? calleeOfConstruction->constant : ValueSets::nothing;
+        if (calleeOfConstruction->node)
+            followed = maker().unite(followed, m_inputs.solver().closuresFollowedToConstruction(calleeOfConstruction->node));
+        if (m_inputs.sets().size(followed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
+            listed = maker().unite(listed, maker().intersect(arriving, followed));
+    }
 
     CalleeSet callees;
     callees.isComplete = true;

@@ -78,7 +78,7 @@ static void stampCall(CallsOfFunction& calls, const ValueFlowStatement& call)
     ValueFlowNodeID callee = calls.inputs.bodies().operandsOf(call)[0].node;
     const Type& family = calls.inputs.program.typeOf(calls.function, calls.function.at(call.site).operand(0));
     ValueSetID held = calls.inputs.valueOf(calls.maker, calls.inputs.bodies().operandsOf(call)[0]);
-    std::optional<CalleeSet> callees = calls.positions.calleesAt(family, held, !!OperandPosition::newTarget(call.opcode));
+    std::optional<CalleeSet> callees = calls.positions.calleesAt(family, held, OperandPosition::newTarget(call.opcode) ? &calls.inputs.bodies().operandsOf(call)[0] : nullptr);
     calls.numberOfUnknownCallees += calls.inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
 
     AccessSiteID site = calls.accessSites.siteOfValue(calls.id, call.site);

@@ -1,7 +1,7 @@
 # Other code runs while a function is suspended, so a suspension in the loop keeps a read of a location it may change in the header
 # FORM: Prepared
 # RUN: pass HoistLoopInvariantReads
-# STATISTIC: HoistLoopInvariantReadsChanges = 4
+# STATISTIC: HoistLoopInvariantReadsChanges = 3
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="limit" declared={type=number}
@@ -123,11 +123,12 @@ function f5 name="storedOnceAndAwaitBehindRead" flags=[IsAsync] parameters=[{typ
   b3():
     Return v3
 }
+# What is read in front of the loop would be saved and brought back at every turn.
 # CHECK-LABEL: function f5 name="storedOnceAndAwaitBehindRead"
 # CHECK: b0(
-# CHECK-NEXT: v3: number = GetModuleVariable variable=g1
 # CHECK-NEXT: Jump -> next b1()
-# CHECK-NOT: GetModuleVariable
+# CHECK: LoopHint
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g1
 
 function f6 name="storedOnceAndAwaitBeforeRead" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):

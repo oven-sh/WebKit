@@ -67,6 +67,8 @@ struct FlowLayoutUpdate {
     bool objectsAreDictionaries { false };
     // The guards of a class watch the members of an ordinary object.
     bool objectsArePrototypesOfCreatedObjects { false };
+    // Some call of Object.create is handed an object of the layout and never anything else.
+    bool isHandedToObjectCreateAlone { false };
 };
 
 struct FlowVariableUpdate {
@@ -220,8 +222,8 @@ struct DictionaryTypeRewriter {
     const BitVector& typesNamingDictionaries;
 };
 
-// Of an operation that makes an object without a member below %Object.prototype%: `{}`.
-LayoutID layoutOfEmptyLiteral(const Program&, const Value&);
+// Of an operation that makes an object below %Object.prototype% and that an ordinary object can stand in for: `{}`, and a literal that lists its members, which are then defined by name.
+LayoutID layoutOfPlainLiteral(const Program&, const Value&);
 
 void remapTypes(FlowPositionUpdate&, const TypeRemap&);
 void remapTypes(FlowLayoutUpdate&, const TypeRemap&);

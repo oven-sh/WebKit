@@ -1008,7 +1008,6 @@ inline constexpr size_t maxLiteralPartNames = 4;
 struct BuiltinForms {
     BuiltinID builtin { };
     std::optional<InlineBuiltin> appendForm { };
-    bool hasHostAppendFunction { false };
     BuiltinID jsonTextForm { };
     std::optional<BuiltinOperand> jsonTextArgument { };
     // The function that does the same where the argument is an object literal that nobody else sees and that has no member but the names.

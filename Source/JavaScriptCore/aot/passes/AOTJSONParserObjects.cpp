@@ -386,7 +386,10 @@ void JSONParserBuilder::emitUnorderedMembers(const ObjectParse& parse)
 
     switch (parse.node.undeclared) {
     case UndeclaredMembers::Allowed:
-        emitExtraMembers(parse, state, parse.anyOrder);
+        if (exits.undeclaredMember)
+            builder().emitJump(exits.undeclaredMember);
+        else
+            emitExtraMembers(parse, state, parse.anyOrder);
         return;
     case UndeclaredMembers::Rejected:
         builder().emitJump(exits.rejected);

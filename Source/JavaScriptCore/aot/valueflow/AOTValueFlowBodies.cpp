@@ -247,13 +247,12 @@ private:
 class BodyReducer {
     WTF_MAKE_NONCOPYABLE(BodyReducer);
 public:
-    BodyReducer(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, FunctionID genericVersion)
+    BodyReducer(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
         : m_program(program)
         , m_tables(tables)
         , m_unobservedDefinitions(unobservedDefinitions)
         , m_id(id)
         , m_function(program.at(id))
-        , m_isTypedBody(genericVersion && program.at(id).role != FunctionRole::EntryChecks)
         , m_cfg(m_function)
         , m_constants(m_body.constants)
         , m_masks(m_body.masks)
@@ -283,8 +282,8 @@ public:
         sortAndRemoveRepeats(m_body.edgesOnceReached);
         sortAndRemoveRepeats(m_body.seedsOnceReached);
         sortAndRemoveRepeats(m_body.functionsEnteredOnceReached);
-        m_body.knowsValuesBehindChecks = !m_isTypedBody;
-        if (!m_isTypedBody && !m_isBehindCheck.isEmpty())
+        m_body.knowsValuesBehindChecks = true;
+        if (!m_isBehindCheck.isEmpty())
             m_body.valuesBehindChecks = WTF::move(m_isBehindCheck);
         return WTF::move(m_body);
     }
@@ -431,7 +430,7 @@ private:
         if (mask.admitsEverything())
             return 0;
         Hasher hasher;
-        add(hasher, static_cast<uint8_t>(mask.kind), mask.trustsInstancesOfRootClasses);
+        add(hasher, static_cast<uint8_t>(mask.kind));
         for (TypeID type : mask.inside)
             add(hasher, type);
         add(hasher, 0x5eed);
@@ -452,8 +451,7 @@ private:
 
     // Only a test turns something away.
     uint32_t maskOutside(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked }); }
-    uint32_t maskOutside(BuiltinID builtin, ModuleID module) { return internMask({ { }, { }, ValueFlowMaskKind::Checked, false, { { builtin, module } } }); }
-    uint32_t maskOutsideUnlessNewTargetDiffers(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked, true }); }
+    uint32_t maskOutside(BuiltinID builtin, ModuleID module) { return internMask({ { }, { }, ValueFlowMaskKind::Checked, { { builtin, module } } }); }
 
     uint32_t maskOfTruthinessTest(EdgeSide side)
     {
@@ -484,13 +482,12 @@ private:
             all.shrink(std::ranges::unique(all).begin() - all.begin());
             return all;
         };
-        bool trustsInstancesOfRootClasses = m_body.masks[first].trustsInstancesOfRootClasses || m_body.masks[second].trustsInstancesOfRootClasses;
         auto outsideBuiltinsOfModules = m_body.masks[first].outsideBuiltinsOfModules;
         for (auto object : m_body.masks[second].outsideBuiltinsOfModules) {
             if (!outsideBuiltinsOfModules.contains(object))
                 outsideBuiltinsOfModules.append(object);
         }
-        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, trustsInstancesOfRootClasses, WTF::move(outsideBuiltinsOfModules) });
+        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, WTF::move(outsideBuiltinsOfModules) });
     }
 
     // The mask of a value that an operation or a branch lets through from one type to another: none where the type it comes from says as much.
@@ -548,10 +545,8 @@ private:
         m_body.hasYieldedAndSent = isCoroutine(m_function) && m_function.has(FunctionFlags::IsGenerator);
         RELEASE_ASSERT(entry.parameters.size() == m_body.numberOfEntryParameters);
 
-        // Whoever enters a typed body has tested what it passes or knows that it fits. An operand of such a caller that later holds more goes to the tests as well, and only what fits goes on coming here.
-        ValueFlowMaskKind kindOfParameterMasks = m_isTypedBody ? ValueFlowMaskKind::Checked : ValueFlowMaskKind::Declared;
         for (ValueID parameter : entry.parameters) {
-            NodeName node = addNode(ValueFlowBodyNodeKind::EntryParameter, parameter, carriesValue(parameter) ? maskInside(m_function.at(parameter).type, kindOfParameterMasks) : 0);
+            NodeName node = addNode(ValueFlowBodyNodeKind::EntryParameter, parameter, carriesValue(parameter) ? maskInside(m_function.at(parameter).type, ValueFlowMaskKind::Declared) : 0);
             if (carriesValue(parameter))
                 at(parameter) = { .role = Role::Node, .name = node };
         }
@@ -641,8 +636,7 @@ private:
 
     void findValuesBehindChecks()
     {
-        if (!m_isTypedBody)
-            m_isBehindCheck = Typed::findValuesBehindChecks(m_program, m_function, m_cfg);
+        m_isBehindCheck = Typed::findValuesBehindChecks(m_program, m_function, m_cfg);
     }
 
     // The type of the result is read from the type of an operand: of the receiver of a read, of what a cast narrows, of what an operator converts.
@@ -948,15 +942,9 @@ private:
         const Function& callee = m_program.at(calleeID);
         std::span<const ValueID> arguments = value.variadicOperands();
         RELEASE_ASSERT(arguments.size() == callee.numberOfEntryParameters());
-        // The generic version runs only for a caller whose arguments fail a test. The statement of the tests reaches it and says what it is handed.
-        const auto* entryChecks = m_function.creator.tryAs<CreatorRecord::EntryChecks>();
-        if (entryChecks && entryChecks->fallback == calleeID)
-            m_testsArguments = true;
-        else {
-            for (uint32_t index = 0; index < arguments.size(); ++index)
-                connect(arguments[index], NodeName::entryParameter(calleeID, index));
-            m_body.functionsEnteredOnceReached.append(calleeID);
-        }
+        for (uint32_t index = 0; index < arguments.size(); ++index)
+            connect(arguments[index], NodeName::entryParameter(calleeID, index));
+        m_body.functionsEnteredOnceReached.append(calleeID);
 
         // The caller gets the promise or the generator. What the body returns and throws goes into that object.
         if (isCoroutine(callee)) {
@@ -1156,10 +1144,10 @@ private:
             at(id).role = Role::Result;
             return;
         }
-        // What the test turns away goes on through the same operations in the generic version of the function, so the result holds it too, unless that version is a function of its own.
+        // What the test turns away goes on through the same operations in the generic version of the function, so the result holds it too.
         if (value.opcode == Opcode::Check) {
             beginSources(id);
-            addSource(id, value.valueOperand(), maskInside(value.castType(), m_isTypedBody ? ValueFlowMaskKind::Checked : ValueFlowMaskKind::Expected));
+            addSource(id, value.valueOperand(), maskInside(value.castType(), ValueFlowMaskKind::Expected));
             m_checks.append(id);
             return;
         }
@@ -1593,14 +1581,6 @@ private:
                 // The type of a Builtin names the built-in alone. One with a rule also holds what the body of a compiled module makes.
                 bool isInsideType = type && resultRuleOf(opcode) != ResultRule::Results && opcode != Opcode::Builtin;
                 ValueFlowMaskKind kind = isTypedByChecks(id) ? ValueFlowMaskKind::Expected : kindOfResultMask(opcode);
-                // Typed code takes the type of a position for what a read of it gives: the read finds a value of the type in the slot, or it leaves typed code. So a read is a check of what it finds.
-                if (m_isTypedBody && isInsideType && kind == ValueFlowMaskKind::Declared && !typeOf(id).isAnything()) {
-                    description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, 0);
-                    description.mask = maskInside(type, ValueFlowMaskKind::Checked);
-                    if (!description.isLiveForComparisonsOnly)
-                        m_readsInTypedBody.append(id);
-                    continue;
-                }
                 description.name = addNode(ValueFlowBodyNodeKind::OperationResult, id, isInsideType ? maskInside(type, kind) : 0);
                 if (opcode == Opcode::IteratorResume && readsValueOfStepThatFindsEnd(block, id))
                     m_body.seedsOnceReached.append({ description.name, constantOf(Primitive::Undefined), 0 });
@@ -1963,8 +1943,6 @@ private:
             m_body.statements.append({ { }, { }, static_cast<uint32_t>(m_body.operands.size()), 0, { }, { }, ValueFlowStatementKind::ModuleEvaluation });
         if (isCoroutine(m_function))
             m_body.statements.append({ { }, { }, static_cast<uint32_t>(m_body.operands.size()), 0, { }, { }, ValueFlowStatementKind::Coroutine });
-        if (m_testsArguments || (m_isTypedBody && (!m_checks.isEmpty() || !m_readsInTypedBody.isEmpty())))
-            emitEntryChecks();
 
         for (auto [test, value] : m_observedValues)
             m_body.observedValues.append({ test, operandFormOf(value) });
@@ -1974,23 +1952,6 @@ private:
             if (m_descriptions[index].isLiveForComparisonsOnly)
                 m_body.valuesAliveForComparisonsOnly.append(ValueID(index));
         }
-    }
-
-    void emitEntryChecks()
-    {
-        uint32_t firstOperand = m_body.operands.size();
-        for (const Block& block : m_function.blocks) {
-            for (ValueID id : block.values) {
-                const Value& value = m_function.at(id);
-                if (m_testsArguments && value.opcode == Opcode::TypeTest)
-                    m_body.operands.append(throughMask(operandFormOf(value.valueOperand()), maskOutsideUnlessNewTargetDiffers(value.testedType())));
-                if (m_isTypedBody && value.opcode == Opcode::Check)
-                    m_body.operands.append(throughMask(operandFormOf(value.valueOperand()), maskOutsideUnlessNewTargetDiffers(value.castType())));
-            }
-        }
-        for (ValueID read : m_readsInTypedBody)
-            m_body.operands.append({ at(read).name, 0, maskOutsideUnlessNewTargetDiffers(m_function.at(read).type) });
-        m_body.statements.append({ { }, { }, firstOperand, static_cast<uint32_t>(m_body.operands.size()) - firstOperand, { }, { }, ValueFlowStatementKind::EntryChecks });
     }
 
     struct BlockParameter {
@@ -2028,9 +1989,6 @@ private:
     Vector<ObservedValue, 16> m_observedValues;
     Vector<std::pair<ValueID, ValueID>, 4> m_comparedValues;
     Vector<ValueID, 8> m_checks;
-    bool m_testsArguments { false };
-    Vector<ValueID, 8> m_readsInTypedBody;
-    const bool m_isTypedBody;
     BitVector m_isBehindCheck;
     Vector<Forms, 48> m_forms;
     Vector<std::pair<OperandForm, NodeName>, 4> m_filterNodes;
@@ -2062,14 +2020,12 @@ static ValueFlowBody makeBodyWithoutOperations(FunctionID id, uint32_t numberOfE
     return body;
 }
 
-ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, FunctionID genericVersion)
+ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     const Function& function = program.at(id);
     if (!function.hasBody())
         return makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), isCoroutine(function) && function.has(FunctionFlags::IsGenerator));
-    ValueFlowBody body = BodyReducer(program, tables, id, unobservedDefinitions, genericVersion).reduce();
-    body.genericVersion = genericVersion;
-    return body;
+    return BodyReducer(program, tables, id, unobservedDefinitions).reduce();
 }
 
 bool startsWithoutValueInSolve(const Program& program, const Variable& variable)

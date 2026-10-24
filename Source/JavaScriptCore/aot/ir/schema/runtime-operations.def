@@ -53,6 +53,8 @@ runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second
 runtime CloneObjectAs : JSCell* (EncodedJSValue source, uint32_t request, const EncodedJSValue* values) ; RuntimeAllocates
 runtime IsPlainDataObject : size_t (EncodedJSValue value) ; reads(all)
 runtime GetOwnDataProperty : EncodedJSValue (JSCell* object, uint32_t key) ; RuntimeCreatesConstant
+runtime GetPreparedPlans : EncodedJSValue () ; RuntimeCreatesConstant
+runtime IsThrownValueIgnored : size_t () ; reads(all) writes(RuntimeState) throws
 runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime TryPutProperties : size_t (SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
 runtime MaterializeEnvironment : JSCell* (uint32_t allocation, const EncodedJSValue* source) ; RuntimeAllocates
@@ -98,7 +100,6 @@ runtime StringBuilderBegin : JSCell* () ; reads(all) writes(StringBuilderContent
 runtime StringBuilderAppend : void (JSCell* builder, uint32_t count, const EncodedJSValue* parts) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderAppendString : void (JSCell* builder, JSCell* string) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderAppendStringRange : void (JSCell* builder, JSCell* string, int32_t start, int32_t end) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
-runtime StringBuilderAppendByHost : void (JSCell* builder, uint32_t builtin, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
 runtime StringBuilderAppendJSON : size_t (JSCell* builder, EncodedJSValue value, EncodedJSValue property) ; unknownCode
 runtime StringBuilderReserve : uint8_t* (JSCell* builder, uint64_t size) ; reads(all) writes(StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderRollBack : void (JSCell* builder, uint32_t checkpoint) ; reads(all) writes(StringBuilderContents, RuntimeState)

@@ -44,7 +44,6 @@
     v(FlattenInnerObjects) \
     v(AllocateInFrames) \
     v(AllocateInnerObjects) \
-    v(ReuseEnvironments) \
     v(NumberLiteralStrings) \
     v(EmbedConstantCollections) \
     v(CollectRegExpLiterals) \

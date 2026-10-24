@@ -7,3 +7,14 @@ enum PutMode { | engine Strict Sloppy Define }
 enum StubExit { | engine Miss Cannot }
 enum CacheLifetime { | engine StrongRoot WeakByKey ClearedEachCollection }
 enum EvaluationState { | engine SeenTwice PredictedOnce ProvenOnce }
+# Append only: these numbers are immediates in the code of a validated image. `disable`: the word of --aot-disable that takes away the statement which the check holds a run against, where one word does that.
+enum ValidationFailureKind (disable: Text) {
+    ValueType("") UnreachableValue("") FrameCellEscaped("") SavedFrameRootMissing("") VisitedCellsDiffer("") OperationEnteredVM("") OperationCollected("")
+    CacheHitDiffers("") CacheEntryDropped("") ImpossibleMutation("") TypeTestsDiffer("") BarrierWasNeeded("") BuiltinNotImmutable("")
+    ArrayNotPristine("flow:PristineInstances") ShapeWordInvalid("") StackTraceDiffers("") FastPathResultDiffers("") OperationPreconditionBroken("")
+    NativeCallChangedOperand("") NativeCallWroteHeap("") NativeCallRanCode("") NativeCallThrew("") NativeCallCollected("") NativeCallKeptOperand("") AssumedType("")
+    UnlistedCallee("flow:CalleeSets") SecondRun("") ReadsDiffer("") ContainerContents("flow:ProvenContents") ArrayStorageKind("flow:ArrayStorageKinds")
+    RemovedFieldNamed("") ReceiverShape("") CallChangedKeptRegister("") UnwindingChangedKeptRegister("") ArrayElementsNotOrdinary("flow:PristineInstances") KeysListed("")
+    LegacyRegExpStaticRead("") GuardNoLongerHolds("") BindingReadBeforeStore("") SlotEmpty("") LookupDiffers("") HeapSlotType("") MaskCutKnownValue("")
+    FamilyNotClosed("") FunctionCellInFrameGotProperties("") OperationConvertedCell("") OperationWroteHeap("") UnspecifiedValueInspected("") CallCollected("")
+}

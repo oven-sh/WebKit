@@ -19,7 +19,7 @@ namespace JSC { namespace AOT {
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (Instance* instance, EncodedJSValue value, uint32_t kind, uint32_t function, uint32_t valueIndex))
 {
-    RELEASE_ASSERT(kind < numberOfValidationFailureKinds);
+    RELEASE_ASSERT(kind < numberOfEnumerators<ValidationFailureKind>);
     DeferGCForAWhile deferGC(*instance->vm);
     auto failureKind = static_cast<ValidationFailureKind>(kind);
     if (failureKind == ValidationFailureKind::ArrayElementsNotOrdinary && hasOrdinaryElements(*instance->vm, JSValue::decode(value)))

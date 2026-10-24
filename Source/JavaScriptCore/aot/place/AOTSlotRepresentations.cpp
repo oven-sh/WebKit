@@ -35,6 +35,7 @@ struct MemberFacts {
     {
         mayReachUnknownJavaScript |= other.mayReachUnknownJavaScript;
         isFilledByNativeCode |= other.isFilledByNativeCode;
+        isParsedByType |= other.isParsedByType;
         needsWideReference |= other.needsWideReference;
         mayHaveUnorderedShape |= other.mayHaveUnorderedShape;
         canHaveExtension &= other.canHaveExtension;
@@ -43,6 +44,7 @@ struct MemberFacts {
 
     bool mayReachUnknownJavaScript { false };
     bool isFilledByNativeCode { false };
+    bool isParsedByType { false };
     bool needsWideReference { false };
     bool mayHaveUnorderedShape { false };
     bool canHaveExtension { true };
@@ -186,7 +188,7 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
         return !isRemovedField(context.program, field.reference);
 
     // Only a store that finds its key at run time gives an object such a property. The object keeps it with the properties that its layout does not declare.
-    if (!field.isNamedSomewhere && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isFilledByNativeCode)
+    if (!field.isNamedSomewhere && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isParsedByType)
         return false;
 
     bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites && !field.use.storesIntoNewObjects;
@@ -338,6 +340,7 @@ static MemberFacts memberFactsOf(const SlotPlanContext& context, FieldReference 
     return {
         .mayReachUnknownJavaScript = !everyAllocationClassCannot(context.program, context.inputs.flow, id, ObjectMutation::ReachUnknownJavaScript),
         .isFilledByNativeCode = isFilledByNativeCode(context.program.at(id)),
+        .isParsedByType = context.program.at(id).flow.observedUses.contains(ObservedUse::IsParsedByType),
         .needsWideReference = needsWideReference(context, reference),
         .mayHaveUnorderedShape = mayHaveUnorderedShape(context.program, context.inputs.flow, id),
         .canHaveExtension = canHaveExtension(context, id),

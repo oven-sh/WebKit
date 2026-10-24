@@ -279,14 +279,18 @@ ParsedValue JSONParserBuilder::emitArmsInOrder(std::span<const ResultNodeRef> ar
     if (arms.size() == 1)
         return emitNode(arms[0], cursor, exits);
 
+    // What a validator makes of a member that it does not declare is its own rule.
+    auto exitsOfArm = [&](ResultNodeRef arm, BlockID rejected) -> ParseExits {
+        return { rejected, exits.unknown, arm.isValidated() ? BlockID() : rejected };
+    };
     ValueMerge merge = createValueMerge(*this, arms);
     for (ResultNodeRef arm : arms.first(arms.size() - 1)) {
         BlockID nextArm = builder().addBlock();
-        ParsedValue parsed = emitNode(arm, cursor, { nextArm, exits.unknown });
+        ParsedValue parsed = emitNode(arm, cursor, exitsOfArm(arm, nextArm));
         builder().emitJump(merge.block, { parsed.value, parsed.next });
         builder().moveToEndOf(nextArm);
     }
-    ParsedValue parsed = emitNode(arms.back(), cursor, exits);
+    ParsedValue parsed = emitNode(arms.back(), cursor, exitsOfArm(arms.back(), exits.rejected));
     builder().emitJump(merge.block, { parsed.value, parsed.next });
 
     builder().moveToEndOf(merge.block);

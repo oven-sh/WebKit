@@ -43,6 +43,7 @@ static bool visitsSymbolKeys(OwnKeyWalk walk)
     case OwnKeyWalk::Spread:
     case OwnKeyWalk::Copy:
         return true;
+    case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
     case OwnKeyWalk::Stringify:
@@ -181,6 +182,8 @@ void OwnKeyWalkExpander::emitArms(const OwnKeyWalkSite& site, const OwnKeyWalkPl
     auto emitWalk = [&](const TestedObject& object, const OwnKeyWalkArm& arm) -> ValueID {
         Vector<WalkedField, 8> fields = fieldsWalkedBy(site.walk, arm);
         switch (site.walk) {
+        case OwnKeyWalk::Keys:
+            return emitKeys(fields.span());
         case OwnKeyWalk::Values:
             return emitValues(object, arm, fields.span());
         case OwnKeyWalk::Entries:
@@ -274,6 +277,14 @@ auto OwnKeyWalkExpander::emitArmTests(ValueID source, const OwnKeyWalkPlan& plan
     if (object.guard || !plan.unchangedAllocation || !needsGuardForReads(program(), typeOf(object.object), arm))
         return object;
     return { plan.unchangedAllocation, plan.unchangedAllocation };
+}
+
+ValueID OwnKeyWalkExpander::emitKeys(std::span<const WalkedField> fields)
+{
+    Vector<ValueID, 8> keys(fields.size(), [&](size_t index) {
+        return appendString(program().at(fields[index].key).text);
+    });
+    return appendArray(builder(), elementTypeOfArray(program(), m_originalOperation.type), keys.span());
 }
 
 ValueID OwnKeyWalkExpander::emitValues(const TestedObject& object, const OwnKeyWalkArm& arm, std::span<const WalkedField> fields)

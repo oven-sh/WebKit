@@ -152,6 +152,19 @@ private:
         return argumentsFitParametersAfterCasts(m_program, m_function, m_builder.types(), Target { targetOf(m_function, edge).block, argumentsWithoutTest(m_function, edge), { } });
     }
 
+    // A test is decided against what was expected of it: the arm that was to run seldom runs whenever the test does, and so does what only that arm leads to.
+    void raiseFrequenciesBehind(Edge decided, const Vector<BlockID>& reachableBlocks)
+    {
+        BlockFrequency expected = m_function.at(targetOf(m_function, decided).block).frequency;
+        BlockFrequency actual = m_function.at(decided.from).frequency;
+        if (!isRarerThan(expected, actual))
+            return;
+        for (BlockID block : reachableBlocks) {
+            if (m_function.at(block).frequency == expected && m_analyses.dominates(decided, block))
+                m_function.edit(block, BlockEdit::Rest).frequency = actual;
+        }
+    }
+
     void decideBranches(const Vector<BlockID>& reachableBlocks)
     {
         std::optional<TypeTestBranches> typeTests;
@@ -185,6 +198,8 @@ private:
 
         if (decided.isEmpty())
             return;
+        for (auto [block, target] : decided)
+            raiseFrequenciesBehind(Edge { block, target }, reachableBlocks);
         for (auto [block, target] : decided)
             decideTerminator(m_builder, block, target);
         for (auto [block, target] : decided)

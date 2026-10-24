@@ -114,12 +114,12 @@ function f7 name="reflectOwnKeys" parameters=[{type=object}] results=[{type=anyt
 # CHECK-NEXT: v1: Array<string|symbol> = CallBuiltin -, v0 overload=ReflectOwnKeys/0
 # CHECK-NEXT: Return v1
 
-function f8 name="objectKeys" parameters=[{type=object}] results=[{type=anything}] {
+function f8 name="listOfKeysThatLivesOn" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     Return v1
 }
-# CHECK-LABEL: function f8 name="objectKeys"
+# CHECK-LABEL: function f8 name="listOfKeysThatLivesOn"
 # CHECK: b0(v0: object ~ L0):
 # CHECK-NEXT: v1: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0
 # CHECK-NEXT: Return v1

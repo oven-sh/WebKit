@@ -24,7 +24,7 @@ flags ObjectMutation {
     StoreAfterCreation StoreOfOtherType
 }
 flags FieldStability { | engine IsNeverDeleted IsNeverRedefined IsNeverStoredWithOtherType }
-flags ObservedUse { | engine Serialized ReachesTypedParse }
+flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType }
 
 record LocationFlow engine {
     writers: WriterState stores: StoreCount storeNaming: StoreNaming initialization: InitializationState reads: ReadState deferral: ClosureDeferral
@@ -63,5 +63,5 @@ record AllocationClass engine {
     layout: Layout? builtinClass: BuiltinClass? closureFunction: Function(Closure)? impossibleMutations: ObjectMutation
     keys: KeyEnumeration locality: FrameLocality addedKeys: List<PropertyKey> addedKeysAreComplete: Bool isReachedThroughUnknownReceivers: Bool
     cause: UnprovenCause witness: Witness
-    isStoredUnderUnnamedKeys: Bool
+    isStoredUnderUnnamedKeys: Bool inheritsFromListedFunctions: Bool
 }

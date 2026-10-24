@@ -115,9 +115,9 @@ enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime FailPredictions GenerateColdCodeDirectly }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite

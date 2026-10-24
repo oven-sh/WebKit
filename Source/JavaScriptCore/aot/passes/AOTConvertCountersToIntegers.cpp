@@ -102,14 +102,14 @@ static bool hasStepWithinLimit(FunctionPassContext& context, const InductionVari
     return false;
 }
 
-// What another loop hands over arrives in a join in front of this one, and it is an integer if that loop's counter becomes one.
+// What another loop hands over, in a join in front of this one or as it has counted it up, is an integer if that loop's counter becomes one.
 static bool mayBecomeInteger(FunctionPassContext& context, ValueID start)
 {
     const Type& type = context.program.typeOf(context.function, start);
     if (type.isInteger())
         return true;
     ValueLocation location = context.analyses.useLists().locationOf(context.analyses.identityOf(start));
-    return type.isNumberWithoutFraction() && location.placement == ValuePlacement::Parameter && location.block != entryBlock;
+    return type.isNumberWithoutFraction() && (location.placement != ValuePlacement::Parameter || location.block != entryBlock);
 }
 
 static std::optional<CounterCandidate> findCandidate(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
@@ -192,29 +192,42 @@ static std::optional<CounterCandidate> findCandidateTestedAheadOfStep(FunctionPa
 static constexpr OpcodeSet orderComparisons { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
 // A loop and the copy of its failed tests, which has a loop of its own, hand each other the counter: the way back gives the typed loop what the copy has counted up, and a failed test gives the copy what the typed loop has.
-static void appendComparedParametersOfCyclesWithSeveralEntries(FunctionPassContext& context, Vector<CounterCandidate, 4>& candidates)
+// Where the copy comes back in the middle of the body the step adds to a join, and the loop has no induction variable though its cycle has one entry.
+// `while (b)`: that b is neither zero nor NaN says nothing of a number without a fraction, so nobody kept it, and it is all that a remainder by b needs to be an integer.
+static void appendComparedParametersOfCycles(FunctionPassContext& context, Vector<CounterCandidate, 4>& candidates)
 {
     constexpr uint32_t takenTargetIndex = 0;
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
     const BlockCycles& cycles = context.analyses.blockCycles();
+    // What goes up or down by a constant has been judged as a counter.
+    BitVector isJudgedAsCounter;
+    for (const LoopInduction& loop : context.analyses.inductionVariables().loops()) {
+        for (const InductionVariable& variable : loop.variables) {
+            if (variable.step.kind == InductionStepKind::Constant)
+                isJudgedAsCounter.set(variable.parameter.index());
+        }
+    }
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch)
             continue;
         std::optional<unsigned> cycle = cycles.innermostCycleOf(block);
-        if (!cycle || cycles.forest()[*cycle].isReducible())
+        if (!cycle)
             continue;
         const Value& comparison = function.at(terminator.conditionOperand());
-        if (!orderComparisons.contains(comparison.opcode))
+        bool testsForTruth = comparison.opcode == Opcode::ToBoolean;
+        if (!testsForTruth && !orderComparisons.contains(comparison.opcode))
             continue;
-        for (uint32_t operandIndex = 0; operandIndex < 2; ++operandIndex) {
+        for (uint32_t operandIndex = 0; operandIndex < comparison.numberOfOperands(); ++operandIndex) {
             const Type& tested = context.program.typeOf(function, comparison.operand(operandIndex));
-            if (!tested.isNumberWithoutFraction() || tested.isInteger() || !context.program.typeOf(function, comparison.operand(1 - operandIndex)).isInteger())
+            if (!tested.isNumberWithoutFraction() || tested.isInt32() || (!testsForTruth && !context.program.typeOf(function, comparison.operand(1 - operandIndex)).isInteger()))
                 continue;
             ValueID parameter = context.analyses.identityOf(comparison.operand(operandIndex));
             ValueLocation location = useLists.locationOf(parameter);
             if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || terminator.taken().proofs.contains(operandIndex))
+                continue;
+            if (!testsForTruth && cycles.forest()[*cycle].isReducible() && isJudgedAsCounter.get(parameter.index()))
                 continue;
             Edge taken { block, takenTargetIndex };
             bool isListed = std::ranges::any_of(candidates, [&](const CounterCandidate& candidate) {
@@ -223,6 +236,26 @@ static void appendComparedParametersOfCyclesWithSeveralEntries(FunctionPassConte
             if (!isListed)
                 candidates.append(CounterCandidate { parameter, terminator.conditionOperand(), operandIndex, taken });
         }
+    }
+}
+
+// What has failed the test for an integer is none. Where the loop by itself keeps its counter an integer nothing is left of it on that edge, so what the copy behind the edge counts up comes back to nobody.
+static void appendParametersThatFailedTestForInteger(FunctionPassContext& context, Vector<CounterCandidate, 4>& candidates)
+{
+    constexpr uint32_t notTakenTargetIndex = 1;
+    const Function& function = context.function;
+    const BlockCycles& cycles = context.analyses.blockCycles();
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || !cycles.innermostCycleOf(block))
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::TypeTest || !context.types.at(test.testedType()).isInteger() || terminator.notTaken().proofs.contains(OperandIndex::TypeTest::value))
+            continue;
+        const Type& tested = context.program.typeOf(function, test.valueOperand());
+        ValueID parameter = context.analyses.identityOf(test.valueOperand());
+        if (tested.isNumberWithoutFraction() && !tested.isInteger() && context.analyses.useLists().locationOf(parameter).placement == ValuePlacement::Parameter)
+            candidates.append(CounterCandidate { parameter, terminator.conditionOperand(), OperandIndex::TypeTest::value, Edge { block, notTakenTargetIndex } });
     }
 }
 
@@ -237,7 +270,8 @@ static Vector<CounterCandidate, 4> findCandidates(FunctionPassContext& context, 
                 candidates.append(*candidate);
         }
     }
-    appendComparedParametersOfCyclesWithSeveralEntries(context, candidates);
+    appendComparedParametersOfCycles(context, candidates);
+    appendParametersThatFailedTestForInteger(context, candidates);
     return candidates;
 }
 

@@ -127,7 +127,6 @@ aot/codegen/AOTConstantEmitter.cpp
 aot/codegen/AOTConstantEmitterClosures.cpp
 aot/codegen/AOTControlEmitter.cpp
 aot/codegen/AOTConversionEmitter.cpp
-aot/codegen/AOTDirectCodeGenerator.cpp
 aot/codegen/AOTElementAccessEmitter.cpp
 aot/codegen/AOTElementAccessEmitterStores.cpp
 aot/codegen/AOTElementEmitterAllocation.cpp
@@ -441,7 +440,6 @@ aot/passes/AOTResolveCallsMembers.cpp
 aot/passes/AOTResolveCallsMethodTable.cpp
 aot/passes/AOTResolveCallsTestSites.cpp
 aot/passes/AOTRestartInGenericVersion.cpp
-aot/passes/AOTReuseEnvironments.cpp
 aot/passes/AOTRewrite.cpp
 aot/passes/AOTSelectTypedResults.cpp
 aot/passes/AOTSelectTypedResultsSites.cpp

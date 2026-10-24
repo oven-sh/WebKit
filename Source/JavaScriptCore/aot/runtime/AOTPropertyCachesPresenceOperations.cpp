@@ -151,10 +151,6 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     Structure* structureBefore = WTF::opaque(object->structure());
     PresenceLookup lookup { instance, object, structureBefore, name, shouldFile };
     bool result = question == Question::In ? hasPropertyAndCache(lookup) : hasOwnPropertyAndCache(lookup);
-#if !CPU(X86_64)
-    if (!result && object->structure() == structureBefore)
-        instance->state->propertyCaches->tables().fileAbsenceFilter(instance->globalObject, object);
-#endif
     ensureStillAliveHere(structureBefore);
     return result;
 }

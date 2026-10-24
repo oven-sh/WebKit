@@ -113,11 +113,24 @@ static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject
         object.setOrderAndCount(order.orderAndCount());
         return true;
     }
+    // A list of keys lasts as long as its text; a number lasts.
+    bool isFinishedAlikeNextTime = extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered;
+    JSONRuntime::FinishedObject* finished = isFinishedAlikeNextTime ? &instance.json.runtime->finishedObjectFor(object.structure(), extraProperties->structure()) : nullptr;
+    if (finished && finished->structureAtBirth == object.structure() && finished->extraStructure == extraProperties->structure() && finished->order == order.word() && finished->orderWordAtBirth == object.orderWord()) {
+        object.setInitialKeyOrder(vm, { finished->orderAndCount, finished->structure }, extraProperties);
+        return true;
+    }
+    JSONRuntime::FinishedObject born { object.structure(), extraProperties ? extraProperties->structure() : nullptr, order.word(), object.orderWord() };
     Object::KeyOrderStorage keys(entriesOf(instance, object.layout(), order));
     std::optional<Object::InitialKeyOrder> initial = object.initialKeyOrder(vm, keys.span(), extraProperties);
     if (!initial)
         return false;
     object.setInitialKeyOrder(vm, *initial, extraProperties);
+    if (finished) {
+        born.orderAndCount = initial->orderAndCount;
+        born.structure = initial->structure;
+        *finished = born;
+    }
     return true;
 }
 

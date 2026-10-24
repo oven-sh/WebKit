@@ -155,27 +155,20 @@ struct StructureRowWords {
 // The names that an object of one Structure, or an object above it, may have: a bit for each, found by the number of the name.
 struct AbsenceFilter {
     static constexpr unsigned numberOfFilters = 256;
-    static constexpr unsigned sizeShift = 6;
-    static constexpr unsigned numberOfWords = 4;
+    static constexpr unsigned sizeShift = 5;
     static constexpr unsigned bitsOfWordShift = 6;
 
     static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> StructureRowWords::granuleShift) & (numberOfFilters - 1); }
-    void add(uint32_t identifierNumber) { names[(identifierNumber >> bitsOfWordShift) & (numberOfWords - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
-    bool rulesOut(uint32_t identifierNumber) const { return !(names[(identifierNumber >> bitsOfWordShift) & (numberOfWords - 1)] >> (identifierNumber & 63) & 1); }
     static constexpr unsigned numberOfWordsForStores = 2;
     void addNameThatStopsStores(uint32_t identifierNumber) { namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
     bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
 
     uint32_t structureID;
-    uint32_t generation;
-    uint64_t names[numberOfWords];
-    // A read asks the tables first, and what the filter answers is never filed. So one read in readsBetweenMisses leaves as if the filter had said nothing: a pair that comes again and again gets its slot.
-    static constexpr uint32_t readsBetweenMisses = 64;
-    uint32_t readsAnswered;
     // A name that an object on some chain gets, loses or has changed is noted by itself, in PropertyCacheWords::namesChangedOnChains. Only a change that is reported without a name starts a new generation of these.
     uint32_t generationForStores;
-    // Of the names, those under which an object above may have anything but a data property that can be written. A store to the object passes every other name and creates the object's own property.
+    // The names under which an object above may have anything but a data property that can be written. A store to the object passes every other name and creates the object's own property.
     uint64_t namesThatStopStores[numberOfWordsForStores];
+    uint64_t unused;
 };
 
 // The name that a short text is, for a key that is no atom: a piece of a longer string, or a string made a moment ago.
@@ -213,22 +206,24 @@ struct KeyedValuePlace {
         return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
     }
 
-    // No StructureID is odd.
+    // The low bits of a StructureID are zero. What a place says beside the absence bit holds until an object of some chain changes: PropertyCacheWords::placesSayAbsence.
     static constexpr uint32_t absenceBit = 1;
+    static constexpr uint32_t fieldBit = 2;
 
     JSCell* key;
     uint32_t structureID;
     union {
         // Slot::wordIndexFor().
         int32_t wordIndex;
-        // Beside the absence bit: PropertyCacheWords::absenceFilterGeneration when this was written. It holds for as long as that stays.
-        uint32_t generation;
+        // Beside the field bit: SlotData::bits() of a field that lies in the cell.
+        uint32_t slotData;
     };
 };
 
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
-    static constexpr uint32_t missesBetweenFilings = 64;
+    static constexpr uint32_t missesBetweenFilings = 16;
+    static constexpr uint32_t missesBetweenFilingsOfDictionaries = 64;
 };
 
 struct FrontWords {
@@ -243,18 +238,16 @@ struct PropertyCacheWords {
     const HashedSlot* hashedSlots;
     uint64_t hashedSlotOffsetMask;
     AbsenceFilter* absenceFilters;
-    uint32_t absenceFilterGeneration;
     uint32_t absenceFilterGenerationForStores;
     // A bit for the number of every name that the Object.prototype of some realm of the VM has or has had.
     const uint64_t* namesOfObjectPrototypes;
     // A bit for the number of every name under which an object that is a prototype has got anything but a data property that can be written.
     const uint64_t* namesChangedOnChains;
-    // As AbsenceFilter::readsAnswered, for the reads that a Structure's flag answers.
-    uint32_t absentReadsAnswered;
     // How often a read of a Structure and a name has found them in no table, by a hash of the two.
     uint8_t* missesOfPairs;
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
+    uint8_t placesSayAbsence;
     // What the Structure of a stand-in for the prototype object of a class has as its ClassInfo.
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
@@ -281,7 +274,7 @@ static_assert(numberOfSlotAccesses <= HashedSlot::accessMask + 1 && alignof(Uniq
 static_assert(hasOneBitSet(HashedSlot::ways));
 static_assert(sizeof(FrontWords) == 2 * sizeof(void*) && OBJECT_OFFSETOF(FrontWords, plane) == sizeof(void*));
 static_assert(1u << StructureRowWords::wordShift == sizeof(uint32_t));
-static_assert(sizeof(AbsenceFilter) == 1u << AbsenceFilter::sizeShift && hasOneBitSet(AbsenceFilter::numberOfFilters) && hasOneBitSet(AbsenceFilter::numberOfWords));
+static_assert(sizeof(AbsenceFilter) == 1u << AbsenceFilter::sizeShift && hasOneBitSet(AbsenceFilter::numberOfFilters) && hasOneBitSet(AbsenceFilter::numberOfWordsForStores));
 static_assert(std::is_trivially_copyable_v<AbsenceFilter> && std::is_aggregate_v<AbsenceFilter>);
 static_assert(sizeof(NameOfText) == 1u << NameOfText::sizeShift && NameOfText::numberOfPairs == 1u << (64 - NameOfText::pairShift));
 static_assert(sizeof(KeyedValuePlace) == 1u << KeyedValuePlace::sizeShift && hasOneBitSet(KeyedValuePlace::numberOfPlacesPerAccess));

@@ -1780,7 +1780,7 @@ private:
                     allocate(part, list, type.freshness);
                     value = maker.unite(value, maker.of(list));
                     for (const BuiltinSlotContents& contents : part.contents)
-                        handListOfChildrenToHost(m_context, m_builtins.canonicalID(m_builtin), list, valueInSlot(contents.slot, contents.type));
+                        handChildrenToWhatReplacesTheirList(m_context, valueInSlot(contents.slot, contents.type));
                     break;
                 }
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {

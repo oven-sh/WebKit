@@ -41,7 +41,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxBlocksForDominatorSelfCheck(Any, CompileTime, NotOptimized, 2048, 2048, 0, "the size of a function whose dominators are double-checked")
 
     MaxValueFlowEdgesLogged(AnalyzeFlow, Memory, NotOptimized, 268435456, 268435456, 268435456, "edges the analysis logs before it stops tracking sets that still change")
-    MaxValueFlowSetMembers(AnalyzeFlow, CompileTime, DeclaredType, 16777216, 16777216, 0, "shapes and callees tracked per value")
+    MaxValueFlowSetMembers(AnalyzeFlow, CompileTime, DeclaredType, 16777216, 16777216, 16777216, "shapes and callees tracked per value")
     MaxValueFlowMembersToldApart(AnalyzeFlow, CompileTime, NotOptimized, 64, 64, 0, "receivers of a method call or names of a computed key looked at one by one")
     MaxObjectsOfTypedResult(AnalyzeFlow, CompileTime, GenericPath, 256, 256, 0, "object and array types reachable from the type that one call parses or validates by")
     MaxAppendedFieldsPerLayout(AnalyzeFlow, Memory, OutOfLineStorage, 96, 96, 0, "properties added to an object type after creation")

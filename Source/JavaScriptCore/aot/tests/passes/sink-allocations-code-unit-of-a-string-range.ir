@@ -1,0 +1,56 @@
+# A code unit of a range of a string is read in the string that the range was cut from, and the range is never made
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="unitOfRange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[0, 100]):
+    v4 = Substring v0, v1, v2
+    v5 = GetStringLength v4
+    v6 = Less v3, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = GetStringCodeUnit v4, v3
+    Return v7
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="unitOfRange"
+# CHECK-NOT: Substring
+# CHECK: [[position]]:{{*}}= Add v1, v3
+# CHECK: = GetStringCodeUnit v0, [[position]]
+# CHECK-NOT: Substring
+
+function f1 name="rangeThatIsReturned" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
+    v3 = Substring v0, v1, v2
+    v4 = Integer integer=0
+    v5 = GetStringCodeUnit v3, v4
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="rangeThatIsReturned"
+# CHECK: = GetStringCodeUnit v0,
+# CHECK: b1()
+# CHECK: = Substring v0, v1, v2
+
+function f2 name="unitOfRangeOfRange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[0, 100]):
+    v4 = Substring v0, v1, v2
+    v5 = Substring v4, v3, v3
+    v6 = Integer integer=2
+    v7 = GetStringCodeUnit v5, v6
+    Return v7
+}
+# CHECK-LABEL: function f2 name="unitOfRangeOfRange"
+# CHECK-NOT: Substring
+# CHECK: [[inOuter]]:{{*}}= Add v3, v6
+# CHECK: [[inString]]:{{*}}= Add v1, [[inOuter]]
+# CHECK: = GetStringCodeUnit v0, [[inString]]
+# CHECK-NOT: Substring

@@ -1,0 +1,55 @@
+# Object.keys whose list does not live on makes the array of the names of the enumerable string fields and reads no slot
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[1, 0]}]}
+layout L1 name="Mixed" fields=[{key=@@iterator declared={type=anything}}, {key="a" declared={type=number}}, {key=#"p"@L1 declared={type=number} flags=[IsPrivate]}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+
+function f0 name="expected" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="expected"
+# CHECK: b0(v0: object ~ L0):
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: [[done0]](v1: Array<string>):
+# CHECK-NEXT: v2:{{*}}= CallBuiltin v1 overload=ArrayPrototypeLength/0
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[call0]]: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0
+# CHECK-NEXT: Jump -> next [[done0]]([[call0]])
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0]
+# CHECK-NOT: GetSlot
+# CHECK: [[yKey]]: "y" = String string="y"
+# CHECK-NEXT: [[xKey]]: "x" = String string="x"
+# CHECK-NEXT: [[keys]]: Array<string> = NewArray [[yKey]], [[xKey]] contents=string
+# CHECK-NEXT: Jump -> next [[done0]]([[keys]])
+
+function f1 name="symbolAndPrivateFields" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="symbolAndPrivateFields"
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
+# CHECK: [[aKey]]: "a" = String string="a"
+# CHECK-NEXT: = NewArray [[aKey]] contents=string
+
+function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = CallBuiltin -, v2 overload=ObjectKeys/0
+    v4 = CallBuiltin v3 overload=ArrayPrototypeLength/0
+    Return v4
+}
+# CHECK-LABEL: function f2 name="unchangedAllocation"
+# CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[xKey2]]: "x" = String string="x"
+# CHECK-NEXT: [[yKey2]]: "y" = String string="y"
+# CHECK-NEXT: [[keys2]]: Array<string> = NewArray [[xKey2]], [[yKey2]] contents=string
+# CHECK-NOT: ObjectKeys

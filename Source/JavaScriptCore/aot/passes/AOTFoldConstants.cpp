@@ -15,8 +15,10 @@
 #include "AOTFlowResults.h"
 #include "AOTFoldConstants.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTPropertyAccessReceivers.h"
 #include "AOTRegExpFlags.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
@@ -106,7 +108,7 @@ using FoldingRules = OptionSet<FoldingRule>;
 constexpr OpcodeSet opcodesWithOwnFoldingRule {
     Opcode::TypeTest, Opcode::IsClosureOf, Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::ToString, Opcode::ToPropertyKey,
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet,
-    Opcode::CopyDataProperties, Opcode::CallBuiltin,
+    Opcode::CopyDataProperties, Opcode::CallBuiltin, Opcode::HasInPrototypeChain,
 };
 
 constexpr FoldingRules foldingRulesOf(Opcode opcode)
@@ -243,9 +245,23 @@ private:
             return foldCopyDataProperties(id, value);
         case Opcode::CallBuiltin:
             return foldStringCall(id, value);
+        case Opcode::HasInPrototypeChain:
+            return foldWalkFromNewObject(id, value);
         default:
             return false;
         }
+    }
+
+    // `this instanceof F` in the body of F, behind the allocation: an object that is handed no prototype is born with the prototype object of its class, and no object of the layout ever gets another.
+    bool foldWalkFromNewObject(ValueID id, const Value& walk)
+    {
+        const Value& object = m_function.at(sameObjectThroughCasts(m_function, walk.valueOperand()));
+        const Value& prototype = m_function.at(sameObjectThroughCasts(m_function, walk.prototypeOperand()));
+        if (object.opcode != Opcode::NewObject || object.prototypeOperand() || prototype.opcode != Opcode::GetClassPrototype)
+            return false;
+        if (!allocatesOwnLayout(m_program, object) || declaredLayoutOf(m_program, object.layout()) != prototype.layout())
+            return false;
+        return receiverStateOf(m_program, object.layout()).cannot(ObjectMutation::ChangePrototype) && becomeBoolean(id, KnownBoolean::True);
     }
 
     // `stream.emit === emit`: the program makes one closure of the function, so whatever is a closure of it is that object.

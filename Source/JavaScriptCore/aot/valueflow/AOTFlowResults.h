@@ -280,6 +280,8 @@ public:
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }
     bool objectsNeverChange(AllocationSiteID site) const { return m_tables.sites.sitesOfObjectsThatNeverChange.get(site.index()); }
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
+    // A lookup of the key that starts at a closure of the function comes to Function.prototype.
+    bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     // Such a call enters the target, and its callee is no closure of the target.

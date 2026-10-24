@@ -64,7 +64,10 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
     if (type.isNever() || type.opaque)
         return;
     if (!type.environment) {
-        checkHasType(id, operand, type, ValidationFailureKind::ValueType);
+        // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
+        const Value& definition = m_function.at(id);
+        bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
+        checkHasType(id, operand, readsMemberKeptInVariable ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
         return;
     }
     if (operand.is<CellPointer>())
@@ -338,7 +341,10 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     if (!hasTestableBits(kept) || !hasTestableBits(replacement))
         return;
     // A builder makes a new string each time it is asked for one: the same characters in another object.
-    if (m_function.at(definitionThroughUpcasts(m_function, replacement)).opcode == Opcode::StringBuilderToString)
+    auto isMadeByBuilder = [&](ValueID id) {
+        return m_function.at(definitionThroughUpcasts(m_function, id)).opcode == Opcode::StringBuilderToString;
+    };
+    if (isMadeByBuilder(kept) || isMadeByBuilder(replacement))
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
@@ -500,15 +506,6 @@ void RuntimeValidationEmitter::checkEnvironmentShape(CellPointer cell, LayoutID 
     failUnless(hasShape, ValidationFailureKind::ValueType, { }, id);
 }
 
-void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& context, CellPointer environment, LayoutID layout)
-{
-    std::optional<uint32_t> freeCellOffset = m_placement.freeCellOffset(layout);
-    if (!freeCellOffset)
-        return;
-    CellPointer freeCell(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.collectorState, *freeCellOffset)));
-    failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
-}
-
 void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer)
 {
     if (!mayHoldPointer(operand))
@@ -591,11 +588,6 @@ void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
     m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSObject_butterfly);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-}
-
-void RuntimeValidationEmitter::poisonEnvironment(CellPointer environment, LayoutID layout)
-{
-    poisonFields(environment, layout, AbstractHeap::EnvironmentFields);
 }
 
 // The fields become absent: checkHasType reports that at the next read of one that is always filled.

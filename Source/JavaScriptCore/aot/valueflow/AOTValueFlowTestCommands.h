@@ -19,9 +19,7 @@ void runValueFlowWhyTestCommand(TestCommandContext&);
 void runValueFlowResultsTestCommand(TestCommandContext&);
 void runValueFlowApplyTestCommand(TestCommandContext&);
 
-// The word `split` of valueflow-solve and valueflow-why.
-void prepareAsInFrontOfFlow(TestCommandContext&);
-// What every valueflow-* command runs first: GuardTaintedPositions, as Pipeline::runFlowStage() does. `unguarded` skips it, `split` is prepareAsInFrontOfFlow().
+// What every valueflow-* command runs first: GuardTaintedPositions, as Pipeline::runFlowStage() does. `unguarded` skips it.
 void prepareForFlow(TestCommandContext&);
 
 } } } // namespace JSC::AOT::Typed

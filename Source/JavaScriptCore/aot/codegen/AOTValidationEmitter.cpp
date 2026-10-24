@@ -8,9 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTFlowResults.h"
+#include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -35,7 +38,26 @@ void ValidationEmitter::generateIsPlainDataObject(const ValueContext& value)
 void ValidationEmitter::generateGetOwnDataProperty(const ValueContext& value)
 {
     CellPointer object = in<CellPointer>(value->objectOperand());
-    define(value, callOperation<Boxed>(value, RuntimeOperation::GetOwnDataProperty, { object, identifierNumber(value->key()) }));
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
+    if (!identifier || m_program.isIndexLike(value->key())) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::GetOwnDataProperty, { object, identifierNumber(value->key()) }));
+        return;
+    }
+
+    // What a plain data object has of its own, an ordinary read finds, and runs nothing. The stubs of ordinary code answer both questions from their tables.
+    Boxed receiver = boxCell(object);
+    LBasicBlock present = newBlock();
+    LBasicBlock done = newBlock();
+    LValue hasOwn = m_out.castToInt32(callStub(value, inById(PresenceQuestion::HasOwn), { receiver.value() }, { .immediate = *identifier }).first);
+    ValueFromBlock whenAbsent = m_out.anchor(undefined().value());
+    m_out.branch(hasOwn, normalEdge(present), normalEdge(done));
+
+    m_out.appendTo(present);
+    ValueFromBlock whenPresent = m_out.anchor(emitter<AccessEmitter>().getById(value, receiver, value->key(), { }).value());
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+    define(value, Boxed(m_out.phi(B3::Int64, whenAbsent, whenPresent)));
 }
 
 void ValidationEmitter::generateCloneAs(const ValueContext& value)
@@ -54,6 +76,16 @@ void ValidationEmitter::generateCloneAs(const ValueContext& value)
     Boxed source = boxCell(in<CellPointer>(value->sourceOperand()));
     Pointer values = argumentBuffer(replacedValues.span());
     define(value, callOperation<CellPointer>(value, RuntimeOperation::CloneObjectAs, { source, word32(static_cast<int32_t>(request->value())), values }));
+}
+
+void ValidationEmitter::generateGetPreparedPlans(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::GetPreparedPlans, { }));
+}
+
+void ValidationEmitter::generateIsThrownValueIgnored(const ValueContext& value)
+{
+    defineTest(value, isNotZero(callOperation<Integer>(value, RuntimeOperation::IsThrownValueIgnored, { })));
 }
 
 void ValidationEmitter::generateExpectRows(const ValueContext& value)

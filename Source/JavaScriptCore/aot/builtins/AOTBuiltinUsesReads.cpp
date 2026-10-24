@@ -150,7 +150,7 @@ static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite&
         // The closure of a coroutine inherits from the prototype of its own kind of function.
         if (inputs.program.at(function).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }))
             return false;
-        return inputs.flow.areClosuresAsCreated(function, singleElementSpan(site.key));
+        return inputs.flow.areClosuresAsCreated(function, singleElementSpan(site.key)) || inputs.flow.closuresInheritFromFunctionPrototype(function, site.key);
     });
 }
 

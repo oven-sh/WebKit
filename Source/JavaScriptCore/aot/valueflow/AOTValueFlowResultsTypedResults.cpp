@@ -105,7 +105,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
 
         // One site for each layout: whatever parser or validator allocates the layout, for whichever call.
         for (LayoutID layout : result.layouts) {
-            application.layouts[layout.index()].flow.observedUses.add(ObservedUse::ReachesTypedParse);
+            application.layouts[layout.index()].flow.observedUses.add({ ObservedUse::ReachesTypedParse, ObservedUse::IsParsedByType });
             const Vector<AllocationClassID>& classes = application.layouts[layout.index()].flow.allocationClasses;
             AllocationSiteID& site = tables.sites.typedResultSites[layout.index()];
             if (site || classes.isEmpty())

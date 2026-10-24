@@ -128,10 +128,6 @@ static void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID functi
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
     // One node holds what a function returns to all its callers.
-    if (callee.role == FunctionRole::EntryChecks) {
-        enterFromNativeCode(context, universe.genericVersionOf(function), caller, closure);
-        return;
-    }
     // A parameter that the function returns as it came gives native code back what native code has passed. What the callers of the program pass there stays with them.
     if (const auto* summary = nodes.resultSummaryOf(function))
         context.connect(summary->ownResult, escaped);
@@ -954,16 +950,10 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
     }
 }
 
-void handListOfChildrenToHost(ValueFlowRuleContext& context, BuiltinID entry, ValueFlowObjectID list, ValueSetID children)
+void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext& context, ValueSetID children)
 {
-    for (const BuiltinCalledFunction& called : context.program().builtins().calledFunctionsOf(entry)) {
-        const RuntimeFunctionEntry* row = findRuntimeFunction(context.program(), called.function);
-        if (!row || !row->function || context.program().at(row->function).numberOfPositionalParameters() < 2)
-            continue;
-        unsigned first = context.program().at(row->function).firstParameterIndex();
-        context.add(context.nodes().entryParameter(row->function, first), only(context, list));
-        context.add(context.nodes().entryParameter(row->function, first + 1), children);
-    }
+    if (context.holdsAnyOf(only(context, context.universe().objectOf(Builtins::ModuleObjectChildren)), context.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins)))
+        context.add(ValueFlowProgramNodes::escaped(), children);
 }
 
 // Native code looks up no member of a built-in object of the realm that no entry declares, and a lookup by name through the unknown object finds the member in the table.

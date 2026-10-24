@@ -746,10 +746,6 @@ static void checkStaticsExtents(const PlacementCheckContext& context)
     }
     for (auto& cell : statics.moduleBuiltinCells)
         add(cell.offset, sizeOfStaticsWord);
-    for (auto offset : statics.freeCellOffsets) {
-        if (offset)
-            add(*offset, sizeOfStaticsWord);
-    }
     if (!areAligned || !areDisjoint(extents.mutableSpan(), 0, statics.size)) {
         context.failures.fail(PlacementRule::VariableOverlap);
         return;
@@ -802,16 +798,6 @@ static void checkClearedRanges(const PlacementCheckContext& context)
         bool containsRoot = firstRoot != statics.roots.end() && *firstRoot < endOf(range);
         if (range.offset < statics.sizeFilledAtProgramEntry || endOf(range) > statics.size || containsRoot)
             context.failures.fail(PlacementRule::ClearedRangeIsFilledAtProgramEntry);
-    }
-    for (unsigned i = 0; i < statics.freeCellOffsets.size(); ++i) {
-        auto offset = statics.freeCellOffsets[i];
-        if (!offset)
-            continue;
-        bool isCleared = std::ranges::any_of(statics.clearedEachCollection, [&](const StaticsRange& range) {
-            return range.offset <= *offset && static_cast<uint64_t>(*offset) + sizeOfStaticsWord <= endOf(range);
-        });
-        if (!isCleared)
-            context.failures.fail(PlacementRule::ClearedRangeIsFilledAtProgramEntry, LayoutID(i));
     }
 }
 

@@ -1,0 +1,71 @@
+# A loop tests its counter for an integer in every turn, and the copy behind the failed test counts on in numbers and hands the join in front of the loop what it has counted up.
+# The counter goes on along the failing edge too. From never on nothing is left of it there: the loop by itself keeps it below its bound, so the copy hands back nothing and the test goes.
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="failed" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b5()
+  b3(v6):
+    v7 = Less v6, v0
+    Branch v7 -> taken b4(| 0), notTaken b7(v6)
+  b4(v8):
+    v9 = Increment v8
+    Jump -> next b2(v9)
+  b5() frequency=Rare:
+    v10 = Less v3, v0
+    Branch v10 -> taken b6(), notTaken b7(v3)
+  b6() frequency=Rare:
+    v11 = Increment v3
+    Jump -> next b1(v11)
+  b7(v12):
+    Return v12
+}
+# CHECK-LABEL: function f0 name="failed"
+# CHECK: b1(v2: 0):
+# CHECK: b2(v3: int[0, 2147483647]):
+# CHECK: v5: true = TypeTest v3 testedType=i32
+# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b5(| 0)
+# CHECK: v9: int[1, 2147483647] = Increment v8
+# CHECK: b5([[failed]]: never) frequency=Rare:
+# CHECK-NEXT: Unreachable
+
+# The copy hands what it has counted up to the middle of the body, so the step adds to a join and the loop has no induction variable. The cycle has one entry. The compared value goes on along the staying edge all the same.
+function f1 name="compared" parameters=[{type=i32}, {type=boolean}] results=[{type=number}] {
+  b0(v0: i32, v1: boolean):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b6(v3)
+  b2():
+    Branch v1 -> taken b3(v3), notTaken b4()
+  b3(v6):
+    v7 = Increment v6
+    Jump -> next b1(v7)
+  b4() frequency=Unlikely:
+    v8 = Increment v3
+    v9 = TypeTest v8 testedType=int[0, 2147483647]
+    Branch v9 -> taken b5(| 0), notTaken b6(v8)
+  b5(v10) frequency=Unlikely:
+    Jump -> next b3(v10)
+  b6(v11):
+    Return v11
+}
+# CHECK-LABEL: function f1 name="compared"
+# CHECK: b1(v3: int[0, 2147483648]
+# CHECK: Branch v5 -> taken b2(| 0), notTaken b6(v3)
+# CHECK-NEXT: b2([[compared]]: int[0, 2147483646]):
+# CHECK: b3(v6: int[0, 2147483647]
+# CHECK: v8: int[1, 2147483647] = Increment [[compared]]
+# CHECK-NEXT: v9: true = TypeTest v8 testedType=int[0, 2147483647]

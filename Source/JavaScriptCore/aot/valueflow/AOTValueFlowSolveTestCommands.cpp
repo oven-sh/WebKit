@@ -11,7 +11,6 @@
 #include "AOTAddGenericVersion.h"
 #include "AOTBuiltinTable.h"
 #include "AOTSort.h"
-#include "AOTSplitBehindEntryChecks.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowResultsUnseenCode.h"
@@ -139,20 +138,11 @@ static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
 }
 
 // valueflow-solve [full] [times] [calls] [primitives] [unreached] [unseen] [used] [protocols] [views].
-void prepareAsInFrontOfFlow(TestCommandContext& context)
-{
-    guardTaintedPositions(*context.program, context.build, TaintedPositionsRun::BeforeFlow);
-    ProgramEditor editor(*context.program);
-    splitBehindEntryChecks(editor, nullptr, context.build);
-}
-
 void prepareForFlow(TestCommandContext& context)
 {
     auto isGiven = [&](ASCIILiteral word) {
         return std::ranges::any_of(context.arguments, [&](const String& argument) { return argument == word; });
     };
-    if (isGiven("split"_s))
-        return prepareAsInFrontOfFlow(context);
     if (!isGiven("unguarded"_s) && context.program->form() == IRForm::AsRead)
         guardTaintedPositions(*context.program, context.build, TaintedPositionsRun::BeforeFlow);
 }
@@ -189,7 +179,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsProtocols = true;
         else if (word == "views"_s)
             printsViews = true;
-        else if (word != "split"_s && word != "unguarded"_s)
+        else if (word != "unguarded"_s)
             return printBadArgument(context.out, word);
     }
 

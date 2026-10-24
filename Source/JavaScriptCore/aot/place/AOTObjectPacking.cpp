@@ -396,7 +396,6 @@ ObjectPacker::ObjectPacker(const SlotPlanContext& context, const SlotUses& uses,
     m_packed.sizes.fill(0, numberOfLayouts);
     m_packed.inlineLimits.fill(0, numberOfLayouts);
     m_packed.extensionSizes.fill(0, numberOfLayouts);
-    m_packed.isEscapedOffsets.grow(numberOfLayouts);
     m_packed.bytesKeptZero.grow(numberOfLayouts);
     m_packed.sharedLocationOfRow.fill(noSharedLocation, context.rows.count());
     m_limitsBeforeGrowth.fill(0, numberOfLayouts);
@@ -1454,8 +1453,6 @@ OccupiedBytes occupiedBytesOf(const SlotPlanContext& context, const PackedLayout
     }
     for (ReservedBytes reserved : packed.bytesKeptZero[id.index()])
         words[reserved.offset / 64] |= bytesAt(reserved.offset, reserved.width);
-    if (auto offset = packed.isEscapedOffsets[id.index()])
-        words[*offset / 64] |= bytesAt(*offset, sizeof(bool));
     return words;
 }
 

@@ -316,6 +316,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTLocationsReadAtRunTimeTests.cpp
     aot/tests/AOTLockedRealmMemberTests.cpp
     aot/tests/AOTLockedRealmTests.cpp
+    aot/tests/AOTLookupBehindTablesProgramTests.cpp
     aot/tests/AOTMemberGuardTests.cpp
     aot/tests/AOTMembersNamedLikeBuiltinsTests.cpp
     aot/tests/AOTModuleGraphTests.cpp

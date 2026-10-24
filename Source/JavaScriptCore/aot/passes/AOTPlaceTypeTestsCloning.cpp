@@ -611,6 +611,16 @@ void TestPlacer::addWayBackIntoLoop(const PreparedLoop& loop)
             continue;
         }
         emitTestsOnWayBack(planned, nextInCopy);
+        for (uint32_t parameterIndex = 0; parameterIndex < planned.typesOfCounters.size(); ++parameterIndex) {
+            if (!planned.typesOfCounters[parameterIndex])
+                continue;
+            BlockFrequency frequency = m_function.at(m_builder.currentBlock()).frequency;
+            IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(m_builder.appendTypeTest(next.arguments[parameterIndex], planned.typesOfCounters[parameterIndex]), testedOperandIndex, frequency, frequency);
+            m_builder.moveToEndOf(branch.notTaken);
+            m_builder.emitJump(nextInCopy.block, Arguments(nextInCopy.arguments));
+            m_builder.moveToEndOf(branch.taken);
+            next.arguments[parameterIndex] = branch.provenOnTaken;
+        }
         m_builder.emitJump(loop.blockOnEnteringEdge, WTF::move(next.arguments));
     }
 }

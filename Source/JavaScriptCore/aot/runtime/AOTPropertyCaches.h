@@ -63,14 +63,11 @@ public:
     std::optional<Slot> find(StructureID, const CachedName&, SlotAccess) const;
     void remove(StructureID, const CachedName&, SlotAccess);
 
-    // For an ordinary object right below the Object.prototype of the realm. Does nothing for any other.
-    void fileAbsenceFilter(JSGlobalObject*, JSObject*);
     // For a store that creates a property of the object: it asks whether anything above the object stops it.
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
-    uint32_t absenceFilterGeneration() const { return m_absenceFilterGeneration; }
     // uidOrNull as in didChangeChainObject().
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
@@ -104,8 +101,6 @@ private:
     using ColumnsByNameAddress = UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>>;
 
     void publishWordsToEveryInstance() const;
-    enum class FilterUse : bool { Reads, Stores };
-    void fileAbsenceFilterOf(JSGlobalObject*, JSObject*, FilterUse);
     std::optional<uint32_t> columnOf(UniquedStringImpl*) const;
     std::optional<uint32_t> findColumnByAddress(UniquedStringImpl*) const;
     void ensureColumnByAddress(UniquedStringImpl*, uint32_t column);
@@ -117,7 +112,6 @@ private:
     ColumnsByNameAddress m_columnsByNameAddress;
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> m_absenceFilters { };
     // Never zero, which is the generation of a filter that is not filled.
-    uint32_t m_absenceFilterGeneration { 1 };
     uint32_t m_absenceFilterGenerationForStores { 1 };
     std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64> m_namesChangedOnChains { };
     std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64> m_namesOfObjectPrototypes { };

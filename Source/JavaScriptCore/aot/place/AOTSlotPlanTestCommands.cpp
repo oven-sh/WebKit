@@ -12,7 +12,6 @@
 #include "AOTFrameAllocation.h"
 #include "AOTHeat.h"
 #include "AOTPlacementTestSupport.h"
-#include "AOTReuseEnvironments.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
@@ -124,7 +123,6 @@ static SlotUses collectSlotUsesFor(const SlotPlanViewContext& view)
         .callGraph = view.placed.callGraph,
         .heat = *output.heat,
         .frameAllocation = *output.frameAllocation,
-        .environmentReuse = *output.environmentReuse,
     };
     CellSizeClasses sizeClasses(view.build.options().sizeClassProgression);
     SlotRows rows(program);

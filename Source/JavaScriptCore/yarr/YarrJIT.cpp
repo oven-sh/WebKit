@@ -6541,6 +6541,9 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                     } else
                         dataLogLnIf(Options::verboseRegExpCompilation(), "BM search candidates were not efficient enough. Not using BM search");
+#if defined(YARR_FOR_IMAGE)
+                    if (range || !op.m_prefilters.startPositionSearch)
+#endif
                     return;
                 }
 
@@ -10844,7 +10847,7 @@ class YarrGenerator final : public YarrJITInfo {
     std::optional<StartPositionSearch> planStartPositionSearch(const PatternDisjunction& body, size_t firstRepeatedAlternative, size_t beginOpIndex)
     {
         const YarrOp& beginOp = m_ops[beginOpIndex];
-        if (m_direction != Forward || m_pattern.sticky() || m_decodeSurrogatePairs || m_executionMode == ExecutionMode::InlineTest)
+        if (m_direction != Forward || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest)
             return std::nullopt;
         if (!body.m_minimumSize || beginOp.m_bodyDispatch.info || beginOp.m_prefilters.maskedAlternatives)
             return std::nullopt;
@@ -10859,6 +10862,8 @@ class YarrGenerator final : public YarrJITInfo {
             if (!firstCharacters)
                 return std::nullopt;
             for (auto [begin, end] : firstCharacters->ranges) {
+                if (m_decodeSurrogatePairs && end > lastCharacter)
+                    nonASCIIRanges.append({ 0xd800, 0xdbff });
                 if (begin > lastCharacter)
                     break;
                 end = std::min(end, lastCharacter);
@@ -10900,7 +10905,7 @@ class YarrGenerator final : public YarrJITInfo {
             return std::nullopt;
 
         bool isExact = !nonASCIICount || nonASCIICount == lastCharacter - firstNonASCII + 1;
-        if (isExact && firstRepeatedAlternative + 1 == alternatives.size())
+        if (isExact && !m_decodeSurrogatePairs && firstRepeatedAlternative + 1 == alternatives.size())
             search.settledTermOp = findSettledTermOp(beginOpIndex, alternatives[firstRepeatedAlternative]->m_firstSet);
         return search;
     }
@@ -10914,6 +10919,10 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned claimed = beginOp.m_checkedOffset.value();
 
         JIT_COMMENT(m_jit, "start-position search");
+        if (search.matchesAllNonASCII) {
+            readCharacterRaw(claimed, m_regs.regT0);
+            matched.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT0, MacroAssembler::TrustedImm32(BoyerMooreBitmap::mapSize)));
+        }
         m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
         if (routine.words == ClassWords::Both) {
             BoyerMooreBitmap::Map map;

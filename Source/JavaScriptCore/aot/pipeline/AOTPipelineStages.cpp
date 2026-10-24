@@ -35,7 +35,6 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
-#include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTThreads.h"
@@ -131,7 +130,6 @@ static std::unique_ptr<PipelineOutput> createOutput(BuildContext& build)
     createDefaultResult(output->heat);
     createDefaultResult(output->callingConventions);
     createDefaultResult(output->frameAllocation);
-    createDefaultResult(output->environmentReuse);
     createDefaultResult(output->literalStrings);
     createDefaultResult(output->constantCollections);
     createDefaultResult(output->slots);
@@ -167,6 +165,11 @@ PipelineOutput::PipelineOutput() = default;
 
 PipelineOutput::~PipelineOutput()
 {
+    waitForRegExps();
+}
+
+void PipelineOutput::waitForRegExps()
+{
     if (compilationOfRegExps)
         compilationOfRegExps->finish();
 }
@@ -195,7 +198,6 @@ void PipelineOutput::releaseCodeGenerationInputs(BuildContext& build)
     build.destroyLater(WTF::move(effects));
     build.destroyLater(WTF::move(callingConventions));
     build.destroyLater(WTF::move(frameAllocation));
-    build.destroyLater(WTF::move(environmentReuse));
     build.destroyLater(WTF::move(literalStrings));
     build.destroyLater(WTF::move(constantCollections));
     build.destroyLater(WTF::move(slots));
@@ -361,7 +363,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);
     stage.run(PassID::AllocateInnerObjects);
-    stage.run(PassID::ReuseEnvironments);
     stage.verifyAtEndOfPreparedForm();
 }
 
@@ -567,6 +568,7 @@ std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, Bu
     PassRunner runner(build);
     auto output = runPasses(WTF::move(program), runner, readBesideLastEffectSummaries);
     if (build.diagnostics().hasErrors()) {
+        output->waitForRegExps();
         build.diagnostics().finish(output->program.get());
         return nullptr;
     }

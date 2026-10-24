@@ -99,7 +99,7 @@ function f2 name="twoChecksShareOneCopy" parameters=[{type=anything}, {type=anyt
 # COPIES-COUNT-2: = Add
 # COPIES-NOT: = Add
 
-# The sum stays a number in the typed loop. What goes around the copy is tested at the end of the turn, and what passes enters the block in front of the typed header, so the copy is no part of the typed loop
+# The sum stays a number in the typed loop. What goes around the copy is tested at the end of the turn, and what passes enters the block in front of the typed header, so the copy is no part of the typed loop. The copy hands its counter back as an int32 alone
 function f3 name="checkInLoop" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):
     v1 = Integer integer=0
@@ -124,7 +124,7 @@ function f3 name="checkInLoop" parameters=[{type=number}] results=[{type=anythin
 # CHECK: v9: number = Add v3, v8
 # CHECK-NEXT: v10: int|whole = Increment v4
 # CHECK-NEXT: Jump -> next b1(v9, v10)
-# CHECK: [[entry3]]([[sum3]]: number{{*}}, [[index3]]: int|whole{{*}}):
+# CHECK: [[entry3]]([[sum3]]: number{{*}}, [[index3]]: int[0, 2147483647]{{*}}):
 # CHECK-NEXT: Jump -> next b1([[sum3]], [[index3]])
 # COPIES-LABEL: function f3 name="checkInLoop"
 # BACK-LABEL: function f3 name="checkInLoop"
@@ -136,8 +136,13 @@ function f3 name="checkInLoop" parameters=[{type=number}] results=[{type=anythin
 # BACK-NEXT: [[test3]]: boolean = TypeTest [[carried3]] testedType=number
 # BACK-NEXT: Branch [[test3]] -> taken [[passed3]](| 0), notTaken [[failed3]](
 # BACK: [[passed3]]([[narrowed3]]: number) frequency=
-# BACK-NEXT: Jump -> next [[entry3]]([[narrowed3]], [[counter3]])
+# BACK-NEXT: [[testOfCounter3]]: boolean = TypeTest [[counter3]] testedType=int[0, 2147483647]
+# BACK-NEXT: Branch [[testOfCounter3]] -> taken [[counted3]](| 0), notTaken [[beyond3]](
 # BACK: [[failed3]]({{*}}) frequency=
+# BACK-NEXT: Jump -> next [[header3]]([[carried3]], [[counter3]])
+# BACK: [[counted3]]([[integer3]]: int[0, 2147483647]) frequency=
+# BACK-NEXT: Jump -> next [[entry3]]([[narrowed3]], [[integer3]])
+# BACK: [[beyond3]]({{*}}) frequency=
 # BACK-NEXT: Jump -> next [[header3]]([[carried3]], [[counter3]])
 
 # Behind the call the typed code has nothing left to lose but the type of the sum, which is read there: the copy tests its own sum

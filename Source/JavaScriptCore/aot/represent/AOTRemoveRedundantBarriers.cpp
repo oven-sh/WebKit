@@ -384,7 +384,7 @@ private:
         if (newObject.storage() != AllocationStorage::Heap)
             return true;
         LayoutID layout = newObject.layout();
-        return placement().layout(layout).hasSlots() && !placement().freeCellOffset(layout) && !newObject.prototypeOperand() && !newObject.takesCellOfInnerObject();
+        return placement().layout(layout).hasSlots() && !newObject.prototypeOperand() && !newObject.takesCellOfInnerObject();
     }
 
     void findStoresToYoungOwners(const YoungOwnersProblem& problem, BlockID block, BitVector& young)

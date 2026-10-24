@@ -515,7 +515,7 @@ static void appendWaysBackIntoLoops(TestPlacementPlan& plan, FunctionPassContext
         if (!firstRange->isCloned)
             continue;
 
-        PlannedWayBackIntoLoop wayBack { firstRange->stretch, head, { }, { }, { } };
+        PlannedWayBackIntoLoop wayBack { firstRange->stretch, head, { }, { }, { }, { } };
         std::optional<Edge> enteringEdge;
         bool hasTestsOnEnteringEdge = false;
         bool isEnteredWithArgumentsOnly = true;
@@ -550,6 +550,7 @@ static void appendWaysBackIntoLoops(TestPlacementPlan& plan, FunctionPassContext
         if (!tests)
             continue;
         wayBack.tests = WTF::move(*tests);
+        wayBack.typesOfCounters = typesOfCountersOnWayBack(context.analyses, context.types, head);
         plan.waysBackIntoLoops.append(WTF::move(wayBack));
     }
 }

@@ -391,9 +391,9 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
     m_file.runs.append(RunDirective { prefix.toString(), words[0].toString(), WTF::move(arguments), directive.line });
 }
 
-// Under AddressSanitizer compiled code asks the shadow memory in front of an access: a run that expects sizes, faults or the direct generator finds other code there.
+// Under AddressSanitizer compiled code asks the shadow memory in front of an access: a run that expects sizes or faults finds other code there.
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
-// For Windows the direct generator is left out, and the code of x86-64 follows another calling convention.
+// For Windows the code of x86-64 follows another calling convention.
 static constexpr ASCIILiteral notWindows = "not-windows"_s;
 // A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;

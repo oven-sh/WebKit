@@ -22,7 +22,8 @@ function f0 name="validated" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-NOT: CallDirect
 # CHECK: [[plan]]:{{*}}= String string="[{\"shape\":\"Union\"
 # CHECK-NEXT: [[isRefused]]: false = Boolean
-# CHECK-NEXT: = CallBuiltin -, v0, [[plan]], [[isRefused]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[prepared]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, v0, [[plan]], [[isRefused]], [[prepared]] overload=CompilerHelpersValidateByPlan/0
 # CHECK-NOT: CallDirect
 # CHECK-NOT: BunBundleValidate
 # CHECK: }
@@ -37,7 +38,8 @@ function f1 name="interpretedBelowTheRoot" parameters=[{type=anything}] results=
 # CHECK-NOT: CallDirect
 # CHECK: [[planOfHolder]]:{{*}}= String string="[{\"shape\":\"Object\"
 # CHECK-NEXT: [[isHolderRefused]]: false = Boolean
-# CHECK-NEXT: = CallBuiltin -, v0, [[planOfHolder]], [[isHolderRefused]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[preparedOfHolder]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, v0, [[planOfHolder]], [[isHolderRefused]], [[preparedOfHolder]] overload=CompilerHelpersValidateByPlan/0
 # CHECK-NOT: CallDirect
 # CHECK-NOT: BunBundleValidate
 # CHECK: }

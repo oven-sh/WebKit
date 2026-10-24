@@ -13,6 +13,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTExpandOwnKeysInternal.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTPropertyAccess.h"
+#include "AOTPropertyAccessReceivers.h"
+#include "AOTResolveCallsDirectCall.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTTypeTestSite.h"
 #include "AOTVector.h"
@@ -598,6 +601,30 @@ static std::optional<IterationPlan> planOwnEntries(FunctionPassContext& pass, co
     });
     plan.replacedValues = WTF::move(chain);
     return plan;
+}
+
+// A generator that nobody has changed gives itself for its iterator, so a loop over the object walks what the method makes.
+FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID iterable)
+{
+    const Program& program = pass.program;
+    PropertyAccessQuery query;
+    query.key = program.keyOf(program.builtins().nameOf(WellKnownSymbol::Iterator));
+    query.receivers = receiverCandidates(program, pass.function, iterable);
+    query.isOnlyCalled = true;
+    query.usesOnlyPlansWithoutTests = true;
+    if (!query.receivers.isProven() || program.typeOf(pass.function, iterable).mayBeUndefinedOrNull())
+        return { };
+    PropertyAccessPlan plan = planPropertyAccess({ program, &pass.inputs.flow }, query);
+    if (plan.form != AccessForm::Method || !plan.needsNoTest() || plan.capturesReceiver || !mayBeCalledDirectly(program, plan.member.method))
+        return { };
+
+    const Function& method = program.at(plan.member.method);
+    if (method.results.size() != 1 || method.results[0].flags.contains(PositionFlags::IsExpected))
+        return { };
+    const Type& made = program.at(method.results[0].type);
+    IterationArm arm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator };
+    bool isUnchangedGenerator = made.isSubsetOf(Type::builtinClass(BuiltinClasses::Generator), program) && pristineAspectsProvenBy(made, BuiltinClasses::Generator).contains(PristineAspects::Names);
+    return isUnchangedGenerator && hasConstantIteratorMethod(pass, arm) ? plan.member.method : FunctionID();
 }
 
 IterationPlan planIteration(FunctionPassContext& pass, const Iteration& iteration)

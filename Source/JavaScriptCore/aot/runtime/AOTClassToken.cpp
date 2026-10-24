@@ -111,6 +111,33 @@ void ClassToken::addKnownStructure(VM& vm, JSCell* token, uint32_t field, Struct
     }
 }
 
+static constexpr unsigned numberOfStructuresWithoutNames = 8;
+
+static unsigned placeOfStructureWithoutName(StructureID structure, uint32_t field)
+{
+    return ((structure.bits() >> 4) + field) % numberOfStructuresWithoutNames * 2;
+}
+
+bool ClassToken::isKnownToLackName(JSCell* token, uint32_t field, JSObject* object)
+{
+    JSValue places = uncheckedDowncast<JSCellButterfly>(token)->get(structuresWithoutNamesSlot);
+    if (!places)
+        return false;
+    const WriteBarrier<Unknown>* place = uncheckedDowncast<JSCellButterfly>(places.asCell())->toButterfly()->contiguous().data() + placeOfStructureWithoutName(object->structureID(), field);
+    return place[0].get() == JSValue(object->structure()) && place[1].get() == jsNumber(field);
+}
+
+void ClassToken::rememberStructureWithoutName(VM& vm, JSCell* token, uint32_t field, Structure* structure)
+{
+    auto* butterfly = uncheckedDowncast<JSCellButterfly>(token);
+    if (!butterfly->get(structuresWithoutNamesSlot))
+        butterfly->setIndex(vm, structuresWithoutNamesSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, numberOfStructuresWithoutNames * 2));
+    auto* places = uncheckedDowncast<JSCellButterfly>(butterfly->get(structuresWithoutNamesSlot).asCell());
+    unsigned place = placeOfStructureWithoutName(structure->id(), field);
+    places->setIndex(vm, place, structure);
+    places->setIndex(vm, place + 1, jsNumber(field));
+}
+
 uint32_t ClassToken::classIndexOf(JSCell* token)
 {
     return uncheckedDowncast<JSCellButterfly>(token)->get(classIndexSlot).asUInt32();

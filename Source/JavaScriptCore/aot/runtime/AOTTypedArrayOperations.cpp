@@ -68,13 +68,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedArray, JSCell*, (Instance* instance
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Bytes whose length is fixed and whose memory is there: neither detached nor over a buffer that can change its size.
+// The length is fixed and the memory is there: the view is neither detached, nor empty without memory, nor over a buffer that can change its size.
+static ALWAYS_INLINE bool isFixed(const JSArrayBufferView* view)
+{
+    return !isResizableOrGrowableShared(view->mode()) && view->vector();
+}
+
 static ALWAYS_INLINE JSUint8Array* asFixedBytes(JSValue value)
 {
     if (!value.isCell() || value.asCell()->type() != Uint8ArrayType)
         return nullptr;
     auto* view = uncheckedDowncast<JSUint8Array>(value.asCell());
-    return isResizableOrGrowableShared(view->mode()) || view->isDetached() ? nullptr : view;
+    return isFixed(view) ? view : nullptr;
 }
 
 // The characters of a text that has 8 bits a character. UTF-8 writes those below 128 as they are and each of the others as two bytes.
@@ -262,18 +267,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEncodeTextIntoBytes, EncodedJSValue, (Insta
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
-// `target.set(source, offset)`, the function known. Bytes into bytes, at a place where they fit, are moved. Nothing is answered for anything else.
+// `target.set(source, offset)`, the function known. The elements of a typed array go into one of the same kind, at a place where they fit, as they lie in memory. Nothing is answered for anything else.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (Instance*, EncodedJSValue encodedReceiver, EncodedJSValue encodedSource, EncodedJSValue encodedOffset))
 {
+    JSValue receiver = JSValue::decode(encodedReceiver);
+    JSValue given = JSValue::decode(encodedSource);
     JSValue offset = JSValue::decode(encodedOffset);
-    JSUint8Array* target = asFixedBytes(JSValue::decode(encodedReceiver));
-    JSUint8Array* source = asFixedBytes(JSValue::decode(encodedSource));
-    if (target && source && (offset.isUndefined() || (offset.isInt32() && offset.asInt32() >= 0))) [[likely]] {
+    if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && (offset.isUndefined() || (offset.isInt32() && offset.asInt32() >= 0))) [[likely]] {
+        auto* target = uncheckedDowncast<JSArrayBufferView>(receiver.asCell());
+        auto* source = uncheckedDowncast<JSArrayBufferView>(given.asCell());
         size_t position = offset.isUndefined() ? 0 : offset.asInt32();
         size_t count = source->lengthRaw();
         size_t room = target->lengthRaw();
-        if (position <= room && count <= room - position) [[likely]] {
-            memmove(target->typedVector() + position, source->typedVector(), count);
+        if (isFixed(target) && isFixed(source) && position <= room && count <= room - position) [[likely]] {
+            unsigned shift = logElementSize(target->type());
+            memmove(static_cast<uint8_t*>(target->vector()) + (position << shift), source->vector(), count << shift);
             return { JSValue::encode(jsUndefined()), nullptr };
         }
     }

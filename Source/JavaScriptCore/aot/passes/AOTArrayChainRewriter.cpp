@@ -93,8 +93,13 @@ static ErasedIndexes findErasedIndexes(FunctionPassContext& context, const Array
             RELEASE_ASSERT(consumer);
             CastChain receiver(function, consumer->receiver);
             RELEASE_ASSERT(receiver.last() == producer);
-            for (ValueID value : receiver)
+            for (ValueID value : receiver) {
                 erased.otherValues.set(indexInBlock(useLists, chain.block, value));
+                for (const Use& use : useLists.usesOf(value)) {
+                    if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ValidateType)
+                        erased.otherValues.set(indexInBlock(useLists, chain.block, use.user));
+                }
+            }
         }
         markUnsharedHiddenRest(context, chain.block, call, erased.otherValues);
         producer = call;
@@ -168,7 +173,10 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
     ValueInsertion insertion { context.analyses.context(), function, context.types, origin, insert };
 
     StepArguments arguments = createStepArguments(context, chain, insert);
-    ValueID fused = insert(makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() }));
+    Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
+    const Value& lastCall = function.at(chain.lastCall);
+    call.setIsDemotedTailCall(FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
+    ValueID fused = insert(WTF::move(call));
     ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
     builder.applyInsertions();
 
@@ -258,8 +266,14 @@ PassOutcome fuseArrayChains(FunctionPassContext& context)
         FunctionAnalyses analyses(context.analyses.context(), fused);
         FunctionPassContext fusedContext { context.program, context.inputs, context.id, fused, analyses, context.types, context.strings, context.build };
         IRBuilder builder(analyses.context(), fused, context.types, &analyses);
-        for (const ArrayChain& chain : accepted)
+        for (const ArrayChain& chain : accepted) {
+            const Terminator& terminator = fused.at(chain.block).terminator;
+            if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == chain.lastCall) {
+                builder.demoteReturnCall(chain.block);
+                context.build.statistics().count(StatisticID::ReturnCallsDemoted);
+            }
             rewriteArrayChain(fusedContext, builder, chain);
+        }
     }
     FunctionAnalyses analysesOfFused(context.analyses.context(), fused);
     if (endsGuardInUse(analysesOfFused)) {

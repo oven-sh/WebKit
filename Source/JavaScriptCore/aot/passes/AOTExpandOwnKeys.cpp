@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEscapeAnalysis.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTSort.h"
@@ -49,6 +50,7 @@ struct SpreadOfMergedLiterals {
 static bool isExpandedByPlan(OwnKeyWalk walk)
 {
     switch (walk) {
+    case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
     case OwnKeyWalk::Assign:
@@ -62,6 +64,16 @@ static bool isExpandedByPlan(OwnKeyWalk walk)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The built-in copies the list that the run time keeps for the order, which is the cheaper way to a list that lives on.
+static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite& site)
+{
+    if (site.walk != OwnKeyWalk::Keys)
+        return false;
+    const EscapeAnalysis& escape = context.analyses.escape();
+    std::optional<ObjectID> list = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(site.value);
+    return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
+}
+
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     Vector<OwnKeyWalkSite, 4> sites = findOwnKeyWalkSites(context);
@@ -70,7 +82,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             return true;
         HeatClass heat = heatClassOf(context, site.block);
         // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-        return isCold(heat) || (site.walk == OwnKeyWalk::Copy && !isHot(heat));
+        return isCold(heat) || (site.walk == OwnKeyWalk::Copy && !isHot(heat)) || isListThatLivesOn(context, site);
     });
     Vector<OwnKeyWalkSite, 4> sitesExpandedByPlan;
     for (const OwnKeyWalkSite& site : sites) {

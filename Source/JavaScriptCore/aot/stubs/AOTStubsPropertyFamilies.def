@@ -43,8 +43,6 @@ v(GetByIdIsTruthy, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Nev
 v(GetByIdEqualsLiteral, CalledByCode, (), CountAxis, 1, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByIdEqualsLiteral)
 
 // AOTStubsPropertyMethodCalls.cpp
-v(FindMethodById, CalledByCode, (Callable, Cell), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindMethodById)
-v(FindMethodByIdAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindMethodByIdAtSite)
 v(CallMethodById, CalledByCode, (), CountAxis | ImmediateAxis, 0, N, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, CallMethodById)
 v(TryGetSuperById, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TryGetSuperById)
 v(GetSuperBaseOfClass, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetSuperBaseOfClass)
@@ -65,12 +63,6 @@ v(PutByIdBehindFieldTable, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 
 // AOTStubsPropertyStoreHandlers.cpp
 v(StoreSlot, Handler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName, SloppyById, SloppyByIdPacked, SloppyByVal, SloppyFreeName, DefineById, DefineByIdPacked, DefineByVal), FormAxis | CountAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlot)
 v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByValMiss, StrictByValUncached, StrictFreeNameMiss, StrictFreeNameUncached, SloppyByIdMiss, SloppyByIdUncached, SloppyByValMiss, SloppyByValUncached, SloppyFreeNameMiss, SloppyFreeNameUncached, DefineByIdMiss, DefineByIdUncached, DefineByValMiss, DefineByValUncached), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlotExit)
-
-// AOTStubsPropertyExtraProperties.cpp
-v(GetExtraPropertyFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetExtraPropertyFrontEnd)
-v(PutExtraPropertyFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutExtraPropertyFrontEnd)
-AOT_STUB_FRONT_END(GetExtraProperty, GetExtraPropertyFrontEnd)
-AOT_STUB_FRONT_END(PutExtraProperty, PutExtraPropertyFrontEnd)
 
 // AOTStubsObjectCopy.cpp
 v(CopyDataPropertiesFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyDataPropertiesFrontEnd)

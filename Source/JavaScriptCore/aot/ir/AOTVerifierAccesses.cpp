@@ -276,9 +276,6 @@ void FunctionVerifier::verifyStringBuilderOperation(BlockID block, ValueID id, c
         }
         return;
     }
-
-    if (value.opcode == Opcode::StringBuilderAppendBuiltin && !overloadCanAppend(typing(), value))
-        fail(InternalErrorKind::InvalidBuiltinCall, block, id);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -593,7 +593,7 @@ public:
     static constexpr ptrdiff_t offsetOfFlatProgramFor8BitSubjects() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgramFor8BitSubjects); }
 
     std::unique_ptr<FlatProgram> m_flatProgram;
-    // One with runsOnlyOn8BitSubjects, beside the bytecode for the other subjects.
+    // One with givesUpAtSurrogates, beside the bytecode for the matches that it gives up. In a subject of 8-bit characters it gives none up.
     std::unique_ptr<FlatProgram> m_flatProgramFor8BitSubjects;
     std::optional<FlatProgramDecline> m_flatProgramDecline;
     // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.

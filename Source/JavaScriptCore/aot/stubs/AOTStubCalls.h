@@ -21,11 +21,12 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
-enum class ValidationFailureKind : uint8_t;
 class CodeUnitRecorder;
 class StubCatalog;
 struct CodeBody;
 struct StubSummary;
+
+using Typed::ValidationFailureKind;
 
 // The payload of a word on the stack is its offset from the frame pointer, or from the stack pointer at the entry of the thunk.
 enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, Stack32OffStackPointer, Stack64OffStackPointer };

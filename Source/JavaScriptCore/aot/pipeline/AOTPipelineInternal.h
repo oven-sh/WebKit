@@ -111,7 +111,6 @@ public:
     PassOutcome allocateInFrames();
     PassOutcome allocateInnerObjects();
     PassOutcome flattenInnerObjects();
-    PassOutcome reuseEnvironments();
     PassOutcome numberLiteralStrings();
     PassOutcome embedConstantCollections();
     PassOutcome collectRegExpLiterals();

@@ -648,7 +648,6 @@ bool ClosuresTakenOutOfMembers::leavesClosuresInPlace(Walk& walk, ValueFlowState
     case ValueFlowStatementKind::Escape:
     case ValueFlowStatementKind::ModuleEvaluation:
     case ValueFlowStatementKind::Coroutine:
-    case ValueFlowStatementKind::EntryChecks:
     case ValueFlowStatementKind::HostRoots:
     case ValueFlowStatementKind::UsedBuiltins:
     case ValueFlowStatementKind::UnseenCode:
@@ -1314,8 +1313,19 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
     for (const auto& [holder, classLayout] : holders) {
         if (!classLayout || states[classLayout.index()] != State::Known)
             continue;
-        if (LayoutID layout = universe.layoutOf(ValueFlowObjectID(holder)))
-            application.layouts[layout.index()].objectsArePrototypesOfCreatedObjects = true;
+        LayoutID layout = universe.layoutOf(ValueFlowObjectID(holder));
+        if (!layout)
+            continue;
+        application.layouts[layout.index()].objectsArePrototypesOfCreatedObjects = true;
+        for (const auto& [created, handed] : handedToObjectCreate) {
+            if (created != classLayout)
+                continue;
+            unsigned numberHanded = 0;
+            inputs.sets().forEachMember(handed, [&](ValueFlowObjectID) {
+                ++numberHanded;
+            });
+            application.layouts[layout.index()].isHandedToObjectCreateAlone |= numberHanded == 1;
+        }
     }
 }
 

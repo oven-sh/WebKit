@@ -150,8 +150,7 @@ applies the engine-only fields. In form `AsRead` that is all for `print`, `round
 the pipeline themselves: a test runs `pass TypeValues` or `verify` itself, and `verify` refuses a program that still has a `Convert` (`RequestAfterTyping`). A command registered with `ProgramAsRead::TypedAndVerified` (the commands of the flow analysis, of the
 analyses and of effects) gets the program after the read stage of the pipeline: every value typed, every request resolved, the program verified. In a later form every
 value is typed by its rule, the types the text states are applied again, and the program is verified. Then the command runs on a new
-`BuildContext`, and what it printed is matched against the check lines with its prefix. A command registered with `RawWordCheck::Skip` gets a program that was verified
-without the check of raw words, and verifies it itself after its rewrite.
+`BuildContext`, and what it printed is matched against the check lines with its prefix.
 
 A front end always sends the library functions that the built-ins table names. So that a test need not, every command that runs the flow analysis on a program in form `AsRead` (all but `print`, `round-trip`, `verify`, `result-types` and `pass`) gets a
 stand-in library: one more module without a body (`flags=[IsLibrary]`, as a front end sends the library's files) and in it one more function, `role=Library`, that returns `undefined`, registered for every runtime function of the table that the text has no `runtimefunction` line for. A test

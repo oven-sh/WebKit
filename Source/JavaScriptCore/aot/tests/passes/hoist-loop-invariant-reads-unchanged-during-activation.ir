@@ -1,7 +1,7 @@
 # A read of a location that cannot change while the function runs moves in front of the loop past unknown code of the header
 # FORM: Prepared
 # RUN: pass HoistLoopInvariantReads
-# STATISTIC: HoistLoopInvariantReadsChanges = 3
+# STATISTIC: HoistLoopInvariantReadsChanges = 2
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="neverStored" declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation isUnchangedDuringActivation=true}
@@ -115,10 +115,9 @@ function f5 name="behindSuspension" flags=[IsAsync] parameters=[{type=number}, {
 }
 # CHECK-LABEL: function f5 name="behindSuspension"
 # CHECK: b0(
-# CHECK-NEXT: v4: number = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: = Await v1
-# CHECK-NEXT: = Less v0, v4
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g0
 
 function f6 name="environmentMadeInTheLoop" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
   b0(v0: number, v1: anything):

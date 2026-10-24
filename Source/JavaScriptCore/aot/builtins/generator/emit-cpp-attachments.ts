@@ -259,14 +259,13 @@ function formatNamedMemberCall(context: AttachmentContext, call: ModelNamedMembe
 }
 
 function formatForms(builtin: ModelBuiltin): string[] {
-  const { appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm } = builtin.attachments;
-  if ([appendForm, hostAppendSymbol, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null))
+  const { appendForm, jsonTextForm, literalPartsForm, bodyBytesForm } = builtin.attachments;
+  if ([appendForm, jsonTextForm, literalPartsForm, bodyBytesForm].every(form => form === null))
     return [];
   return [
     formatAggregate([
       ["builtin", formatId("BuiltinID", builtin)],
       ["appendForm", appendForm === null ? null : formatEnumerator("InlineBuiltin", appendForm)],
-      ["hasHostAppendFunction", hostAppendSymbol === null ? null : "true"],
       ["jsonTextForm", formatId("BuiltinID", jsonTextForm === null ? null : jsonTextForm.builtin)],
       ["jsonTextArgument", formatOperand(jsonTextForm === null ? null : jsonTextForm.argument)],
       ["literalPartsForm", formatId("BuiltinID", literalPartsForm === null ? null : literalPartsForm.builtin)],

@@ -35,7 +35,7 @@ static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
-    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendBuiltin, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
+    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
 };
 static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
 
@@ -55,14 +55,6 @@ static Value makeAppend(ValueID handle, std::span<const ValueID> parts)
 {
     Value append = IRBuilder::make(Opcode::StringBuilderAppend, { handle });
     append.setPartsOperands(parts);
-    return append;
-}
-
-static Value makeAppendBuiltin(ValueID handle, const Value& call)
-{
-    Value append = IRBuilder::make(Opcode::StringBuilderAppendBuiltin, { handle, call.receiverOperand() });
-    append.setOverload(call.overload());
-    append.setArgumentsOperands(call.argumentsOperands());
     return append;
 }
 
@@ -149,12 +141,6 @@ private:
         ValueID member;
         ProgramPoint point;
         ValueID string;
-    };
-
-    struct HostAppendFold {
-        ValueID append;
-        ProgramPoint point;
-        BitVector operands;
     };
 
     const Type& typeOf(ValueID id) const { return m_context.program.typeOf(m_function, id); }
@@ -511,19 +497,10 @@ private:
     // Every fold is found before the first value is added: FunctionAnalyses answers for the values it has seen.
     void foldAppendForms()
     {
-        Vector<HostAppendFold, 4> folds;
         for (ValueID append : m_appends) {
-            ValueLocation location = m_useLists->locationOf(append);
-            if (location.placement != ValuePlacement::InBlock)
-                continue;
-            foldConversions(append);
-            ProgramPoint point { location.block, location.index };
-            BitVector operands = findHostAppends(append, point);
-            if (!operands.isEmpty())
-                folds.append(HostAppendFold { append, point, WTF::move(operands) });
+            if (m_useLists->locationOf(append).placement == ValuePlacement::InBlock)
+                foldConversions(append);
         }
-        for (const HostAppendFold& fold : folds)
-            splitAppend(fold);
         if (m_blocksWithErasedValues.isEmpty())
             return;
 
@@ -580,65 +557,6 @@ private:
             m_function.edit(append, ValueEdit::Definition).setOperand(operandIndex, converted);
             erase(part);
         }
-    }
-
-    BitVector findHostAppends(ValueID append, ProgramPoint point)
-    {
-        BitVector foldedOperands;
-        ValueID handle = m_function.at(append).builderOperand();
-        m_function.at(append).forEachOperand([&](ValueID part, uint32_t operandIndex) {
-            if (operandIndex < OperandIndex::StringBuilderAppend::parts)
-                return;
-            const BuiltinForms* forms = appendFormsOf(append, part);
-            if (forms && forms->hasHostAppendFunction && overloadCanAppend(m_context.program, m_function, makeAppendBuiltin(handle, m_function.at(part))))
-                foldedOperands.set(operandIndex);
-        });
-        size_t numberOfCandidates = foldedOperands.bitCount();
-        const BlockValues& values = m_function.at(point.block).values;
-        Effects effectsUpToAppend = Effects::none();
-        uint32_t firstFoldedOperand = m_function.at(append).numberOfOperands();
-        for (uint32_t index = point.index; index-- && numberOfCandidates;) {
-            ValueID id = values[index];
-            if (m_valuesToErase.get(id.index()))
-                continue;
-            Effects effects = m_context.analyses.effectsOf(id).onAnyEdge();
-            std::optional<Use> use = m_useLists->singleUse(id);
-            if (use && use->user == append && foldedOperands.get(use->operandIndex)) {
-                --numberOfCandidates;
-                Effects allowedEffects = declaredEffectsOf(m_context.program, makeAppendBuiltin(handle, m_function.at(id)));
-                if (use->operandIndex < firstFoldedOperand && effects.isSubsetOf(allowedEffects) && !effects.interferesWith(effectsUpToAppend)) {
-                    firstFoldedOperand = use->operandIndex;
-                    continue;
-                }
-                foldedOperands.clear(use->operandIndex);
-            }
-            effectsUpToAppend.merge(effects);
-        }
-        return foldedOperands;
-    }
-
-    void splitAppend(const HostAppendFold& fold)
-    {
-        Origin origin = m_function.at(fold.append).origin();
-        ValueID handle = m_function.at(fold.append).builderOperand();
-        uint32_t numberOfOperands = m_function.at(fold.append).numberOfOperands();
-        Vector<ValueID, 8> parts;
-        for (uint32_t operandIndex = OperandIndex::StringBuilderAppend::parts; operandIndex < numberOfOperands; ++operandIndex) {
-            ValueID part = m_function.at(fold.append).operand(operandIndex);
-            if (!fold.operands.get(operandIndex)) {
-                parts.append(part);
-                continue;
-            }
-            if (!parts.isEmpty())
-                insert({ fold.point, origin }, makeAppend(handle, parts.span()));
-            parts.shrink(0);
-            insert({ fold.point, m_function.at(part).origin() }, makeAppendBuiltin(handle, m_function.at(part)));
-            erase(part);
-        }
-        if (parts.isEmpty())
-            erase(fold.append);
-        else
-            m_function.edit(fold.append, ValueEdit::Definition).setPartsOperands(parts.span());
     }
 
     void erase(ValueID value)

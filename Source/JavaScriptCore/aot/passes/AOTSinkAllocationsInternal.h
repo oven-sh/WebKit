@@ -24,6 +24,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+inline constexpr OpcodeSet storesWithoutValue { Opcode::AppendHole, Opcode::PropDelete };
+
 class AllocationSinking;
 class ObjectInterpreter;
 
@@ -63,7 +65,6 @@ struct Candidate {
     bool needsGuard { false };
     bool diesVirtual { false };
     bool diesOutsideJoins { false };
-    bool isStoredLate { false };
     bool isBuiltBeforeBranches { false };
     bool wasFruitlessBefore { false };
     // Abandoned before the families were made: no field of it is known, so nothing may take it up again.
@@ -73,6 +74,7 @@ struct Candidate {
     unsigned numberOfBorrowingBuilds { 0 };
     unsigned numberOfFoldedStores { 0 };
     unsigned numberOfRepeatedStores { 0 };
+    Vector<VirtualObjectID, 1> holdersThatStoreItLate;
     BlockID mergeBlock;
     std::optional<BuildCause> firstCause;
     LimitID abandonedBy { LimitID::None };
@@ -380,7 +382,7 @@ private:
     bool paysToSink(const Candidate&) const;
     void resetCounters();
 
-    bool meetsWholeResultOfCallee(const Candidate&) const;
+    bool meetsObjectMadeOnAnotherWay(const Candidate&) const;
     bool handOnToNextJoin(IRBuilder&, const Candidate& join);
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);

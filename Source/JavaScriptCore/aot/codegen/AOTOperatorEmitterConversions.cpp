@@ -34,6 +34,7 @@ public:
 
     CellPointer convert(const OperationContext&, Operand, const Type&, OperatorForm);
     CellPointer convertAddend(const OperationContext&, ValueID);
+    CellPointer convertByType(const OperationContext&, Operand, const Type&);
 
 private:
     OperatorForm formOf(const OperationContext&, const Type&);
@@ -129,7 +130,7 @@ CellPointer ToStringEmitter::convert(const OperationContext& context, Operand op
     case OperatorForm::Generic:
         return callToString(context, operand.as<Boxed>());
     case OperatorForm::String:
-        return operand.as<CellPointer>();
+        return operand.is<Boxed>() ? unboxCell(operand.as<Boxed>()) : operand.as<CellPointer>();
     case OperatorForm::Number:
     case OperatorForm::NumberByOperation:
         return convertNumber(context, operand, form);
@@ -195,7 +196,11 @@ CellPointer ToStringEmitter::convertAddend(const OperationContext& context, Valu
     Operand operand = get(id);
     if (operand.is<CellPointer>())
         return operand.as<CellPointer>();
-    const Type& type = typeOf(id);
+    return convertByType(context, operand, typeOf(id));
+}
+
+CellPointer ToStringEmitter::convertByType(const OperationContext& context, Operand operand, const Type& type)
+{
     return convert(context, operand, type, operand.is<Boxed>() ? formOfBoxedValue(context, type) : formOf(context, type));
 }
 
@@ -257,8 +262,10 @@ void OperatorEmitter::generateToString(const ValueContext& value)
 
 CellPointer OperatorEmitter::toString(const OperationContext& context, Operand operand, const Type& type)
 {
-    Boxed boxed = emitter<ConversionEmitter>().box(context, operand, type);
-    return ToStringEmitter(generator()).convert(context, boxed, type, OperatorForm::Generic);
+    bool isPlainNumber = operand.is<Word32>() || operand.is<Integer>() || operand.is<Number>();
+    if (!isPlainNumber || !type.isNumber())
+        operand = emitter<ConversionEmitter>().box(context, operand, type);
+    return ToStringEmitter(generator()).convertByType(context, operand, type);
 }
 
 void OperatorEmitter::generateStrcat(const ValueContext& value)

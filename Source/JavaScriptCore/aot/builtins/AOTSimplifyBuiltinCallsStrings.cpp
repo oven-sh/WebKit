@@ -61,9 +61,6 @@ static std::optional<CodeUnitRead> codeUnitReadOf(FunctionPassContext& context, 
     const Type& position = program.typeOf(context.function, arguments[0]);
     if (!position.isNumber() || !(position.primitives & Primitive::Integer))
         return std::nullopt;
-    // Selection reads the characters of a range in the string it was cut from, and knows the call for that.
-    if (stringRangeSourceOf(program, context.function, context.function.at(context.analyses.sameObjectThroughCasts(string))))
-        return std::nullopt;
     return CodeUnitRead { .site = site, .string = string, .position = arguments[0], .readsCodePoint = builtin == Builtins::StringPrototypeCodePointAt };
 }
 

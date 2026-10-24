@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="helper" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
   b0(v0: anything, v1: string):
-    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersHoldsRule/0
+    v2 = CallBuiltin -, v0, v1, v0 overload=CompilerHelpersHoldsRule/0
     Return
 }
 function f1 name="functionOfBunBundle" parameters=[{type=anything}] results=[{type=undefined}] {

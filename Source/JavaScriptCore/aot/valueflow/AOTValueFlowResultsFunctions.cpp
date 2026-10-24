@@ -172,7 +172,6 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     case ValueFlowStatementKind::Operation:
     case ValueFlowStatementKind::ModuleEvaluation:
     case ValueFlowStatementKind::Coroutine:
-    case ValueFlowStatementKind::EntryChecks:
     case ValueFlowStatementKind::HostRoots:
     case ValueFlowStatementKind::UsedBuiltins:
     case ValueFlowStatementKind::UnseenCode:

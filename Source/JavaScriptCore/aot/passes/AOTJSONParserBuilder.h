@@ -24,6 +24,8 @@ struct ParsedValue {
 struct ParseExits {
     BlockID rejected;
     BlockID unknown;
+    // Set where the object is one of several types that are tried in turn: a member that this type does not declare says that the text is of another.
+    BlockID undeclaredMember { };
 };
 
 std::optional<Vector<uint8_t>> quotedIfPlain(std::span<const uint8_t> text);

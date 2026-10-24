@@ -154,7 +154,6 @@ aot/select/AOTDataRules.cpp
 aot/select/AOTNumberPathRules.cpp
 aot/select/AOTObjectCreationRules.cpp
 aot/select/AOTPromiseRulesInlineForms.cpp
-aot/select/AOTRawWordWebs.cpp
 aot/select/AOTStringBuiltinForms.cpp
 aot/select/AOTSwitchRules.cpp
 aot/stubs/AOTStubArgumentThunks.cpp

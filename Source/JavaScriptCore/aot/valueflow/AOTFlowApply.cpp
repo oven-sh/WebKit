@@ -231,7 +231,6 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     narrowContentsOfData(context);
     times.didFinish("removeUnreachedBodies"_s);
     applyBodyUpdates(context, editor, fieldsExpectedAsRead);
-    cutCallsOfUnreachedVersions(context);
     times.didFinish("applyBodyUpdates"_s);
     ProgramCaches caches(program, build);
     computeOperandSummaries(program, results, build);

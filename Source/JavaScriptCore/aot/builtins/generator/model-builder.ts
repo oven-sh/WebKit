@@ -145,7 +145,6 @@ function createAttachments(): ModelAttachments {
     moduleLoads: [],
     calledFunctions: [],
     appendForm: null,
-    hostAppendSymbol: null,
     jsonTextForm: null,
     literalPartsForm: null,
     bodyBytesForm: null,

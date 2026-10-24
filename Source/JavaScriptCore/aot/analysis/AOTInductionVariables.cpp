@@ -188,7 +188,7 @@ private:
     void findTests(Variables&);
     Vector<BlockID, 4> findTestingBlocks() const;
     void findTestsIn(BlockID, Variables&);
-    static std::optional<TestedVariable> findTestedVariable(Variables&, ValueID);
+    std::optional<TestedVariable> findTestedVariable(Variables&, ValueID);
     LoopBoundKind boundKindOf(ValueID bound);
     bool isComputedInLoop(ValueID bound);
     EntryRelation entryRelationOf(ValueID start, const InductionTest&);
@@ -542,6 +542,18 @@ std::optional<TestedVariable> InductionFinder::findTestedVariable(Variables& var
     for (InductionVariable& variable : variables) {
         if (variable.steppedValues.contains(id))
             return TestedVariable { &variable, TestedValue::AfterStep };
+    }
+    // `i + 2 <= n; i += 2`: another sum than the step, of the same two.
+    const Value& sum = m_function.at(id);
+    if (sum.opcode != Opcode::Add)
+        return std::nullopt;
+    for (InductionVariable& variable : variables) {
+        if (variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+            continue;
+        for (uint32_t side = 0; side < 2; ++side) {
+            if (numericIdentityOf(sum.operand(side)) == variable.parameter && integerConstantOf(sum.operand(1 - side)) == variable.step.constant)
+                return TestedVariable { &variable, TestedValue::AfterStep };
+        }
     }
     return std::nullopt;
 }

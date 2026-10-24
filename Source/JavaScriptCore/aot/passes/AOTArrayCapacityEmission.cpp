@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -20,6 +21,8 @@
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
 #include "AOTSort.h"
+#include "AOTTypeTestSite.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -59,6 +62,8 @@ struct FailedStorageTest {
     Edge edge;
     ValueID array;
     Origin origin;
+    // The array that the tested one is a copy of.
+    ValueID copied { };
 };
 
 struct PlacedConversion {
@@ -438,6 +443,28 @@ static bool asksForStorageOf(const Function& function, BlockID block, ValueID ar
     return test.opcode == Opcode::HasArrayStorage && test.arrayOperand() == array;
 }
 
+// A copy has the storage of the array that it is made from. Once that one is converted, the copies to come pass the test.
+static ValueID findCopiedArrayToConvert(FunctionPassContext& context, ValueID array)
+{
+    static constexpr std::array copyingBuiltins { Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSpliced, Builtins::ArrayPrototypeWith };
+    const Program& program = context.program;
+    const Value& copy = context.function.at(sameObjectThroughCasts(context.function, array));
+    if (copy.opcode != Opcode::CallBuiltin)
+        return { };
+    BuiltinCall call = builtinCallOf(program, copy);
+    BuiltinID builtin = program.builtins().canonicalID(program.builtins().at(call.overload).builtin);
+    bool copies = call.receiver && std::ranges::any_of(copyingBuiltins, [&](BuiltinID other) {
+        return builtin == program.builtins().canonicalID(other);
+    });
+    if (!copies)
+        return { };
+    // A reader of that array would test for the same kind and convert it.
+    const ClassPart* copied = program.typeOf(context.function, call.receiver).singleBuiltinClass();
+    if (!copied || copied->arrayStorage != ArrayStorage::Other || arrayStorageDeclaredBy(program, *copied) != ArrayStorage::Double)
+        return { };
+    return call.receiver;
+}
+
 static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -454,9 +481,12 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
         if (test.opcode != Opcode::HasArrayStorage || test.arrayStorage() != ArrayStorage::Double)
             continue;
         ValueID array = test.arrayOperand();
-        if (convertsAtHead(function, terminator.notTaken().block, array) || asksForStorageOf(function, terminator.notTaken().block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
+        if (convertsAtHead(function, block, array) || convertsAtHead(function, terminator.notTaken().block, array) || asksForStorageOf(function, terminator.notTaken().block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
             continue;
-        failedTests.append(FailedStorageTest { Edge { block, indexOfNotTakenTarget }, array, test.origin() });
+        ValueID copied = findCopiedArrayToConvert(context, array);
+        if (copied && !summaryAllowsConversion(context, *summary, functionMaySuspend, copied))
+            copied = { };
+        failedTests.append(FailedStorageTest { Edge { block, indexOfNotTakenTarget }, array, test.origin(), copied });
     }
     return failedTests;
 }
@@ -516,6 +546,8 @@ PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext& context)
     for (size_t index = 0; index < failedTests.size(); ++index) {
         builder.setOrigin(failedTests[index].origin);
         builder.insertBefore(conversions[index].point, IRBuilder::make(Opcode::ConvertToDoubleStorage, { failedTests[index].array }));
+        if (failedTests[index].copied)
+            builder.insertBefore(conversions[index].point, IRBuilder::make(Opcode::ConvertToDoubleStorage, { failedTests[index].copied }));
     }
     builder.applyInsertions();
 
@@ -526,6 +558,19 @@ PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext& context)
             builder.redirectEdge(conversion.edge, WTF::move(conversion.targetBeforeSplit));
         else
             ++numberOfConversions;
+    }
+    // An array that holds what no Double storage holds is made from one that holds it too.
+    for (size_t index = 0; index < conversions.size(); ++index) {
+        if (conversions[index].mayEndProof || !failedTests[index].copied)
+            continue;
+        builder.setOrigin(failedTests[index].origin);
+        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { conversions[index].point.block, 1 });
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(makeArrayStorageTest(failedTests[index].array, ArrayStorage::Double)), BlockFrequency::Rare, BlockFrequency::Unlikely);
+        builder.moveToEndOf(blocks.taken);
+        builder.append(Opcode::ConvertToDoubleStorage, { failedTests[index].copied });
+        builder.endExpansion(expansion, std::span<const ValueID> { });
+        builder.moveToEndOf(blocks.notTaken);
+        builder.endExpansion(expansion, std::span<const ValueID> { });
     }
     if (numberOfConversions < conversions.size())
         builder.emptyUnreachableBlocks();

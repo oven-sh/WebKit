@@ -409,7 +409,6 @@ inline StubRunner::StubRunner(const StubOptions& options, StubPolicy&& policy, s
     instance.notCellMask = JSValue::NotCellMask;
     std::ranges::copy(WTF::intHashSecrets, instance.numbers.hashSecrets);
     instance.propertyCaches.absenceFilters = m_environment->absenceFilters.data();
-    instance.propertyCaches.absenceFilterGeneration = 1;
     instance.propertyCaches.missesOfPairs = m_environment->missesOfPairs.data();
     instance.prefix().structureIDBase = std::bit_cast<uintptr_t>(m_environment->emptyStructures.data());
     for (SlotHandlerTable table : allSlotHandlerTables) {

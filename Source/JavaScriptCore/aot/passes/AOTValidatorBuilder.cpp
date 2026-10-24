@@ -191,7 +191,7 @@ ValueID ValidatorBuilder::emitCallOfValidator(ResultNodeRef ref, const ResultNod
 ValueID ValidatorBuilder::emitInterpretedNode(ResultNodeRef ref, ValueID value, const ValidationExits& exits)
 {
     StringID plan = validationPlanText(program(), inputs().strings, ref.expectedResult(), ref.part);
-    ValueID pair = appendHelperCall(Builtins::CompilerHelpersInterpretNode, { value, appendString(plan) });
+    ValueID pair = appendHelperCall(Builtins::CompilerHelpersInterpretNode, { value, appendString(plan), builder().append(Opcode::GetPreparedPlans, { }) });
     ValueID verdict = builder().append(Opcode::ElemGet, { pair, builder().appendInteger(interpretedVerdictIndex) });
     emitJumpUnless(builder().append(Opcode::ToBoolean, { verdict }), exits.rejected);
     return builder().append(Opcode::ElemGet, { pair, builder().appendInteger(interpretedValueIndex) });

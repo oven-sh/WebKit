@@ -28,8 +28,6 @@ static bool shouldPreferResolvedPlan(const LoopVersionPlan& resolved, const Loop
     bool creditsRemovedValues = !resolved.mayExitEveryIteration;
     unsigned left = valuesLeftInLoop(resolved, creditsRemovedValues) + (creditsRemovedValues ? 0 : resolved.hoisted.numberOfSpeculativeHoists);
     unsigned leftOtherwise = plain ? valuesLeftInLoop(*plain, creditsRemovedValues) : resolved.numberOfClonedValues;
-    if (resolved.countedLoop && resolved.countedLoop->isTopTested)
-        return left * Limits::topTestedVersionCostDenominator <= leftOtherwise * Limits::topTestedVersionCostNumerator;
     return left < leftOtherwise;
 }
 

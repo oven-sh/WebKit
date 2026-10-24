@@ -20,62 +20,7 @@ enum class Entry : uint16_t;
 struct Instance;
 struct RuntimeType;
 
-// Append only: these numbers are immediates in the code of a validated image.
-enum class ValidationFailureKind : uint8_t {
-    ValueType,
-    UnreachableValue,
-    FrameCellEscaped,
-    SavedFrameRootMissing,
-    VisitedCellsDiffer,
-    OperationEnteredVM,
-    OperationCollected,
-    CacheHitDiffers,
-    CacheEntryDropped,
-    ImpossibleMutation,
-    TypeTestsDiffer,
-    BarrierWasNeeded,
-    BuiltinNotImmutable,
-    ArrayNotPristine,
-    ShapeWordInvalid,
-    StackTraceDiffers,
-    FastPathResultDiffers,
-    OperationPreconditionBroken,
-    NativeCallChangedOperand,
-    NativeCallWroteHeap,
-    NativeCallRanCode,
-    NativeCallThrew,
-    NativeCallCollected,
-    NativeCallKeptOperand,
-    AssumedType,
-    UnlistedCallee,
-    SecondRun,
-    ReadsDiffer,
-    ContainerContents,
-    ArrayStorageKind,
-    RemovedFieldNamed,
-    ReceiverShape,
-    CallChangedKeptRegister,
-    UnwindingChangedKeptRegister,
-    ArrayElementsNotOrdinary,
-    KeysListed,
-    LegacyRegExpStaticRead,
-    GuardNoLongerHolds,
-    BindingReadBeforeStore,
-    SlotEmpty,
-    LookupDiffers,
-    HeapSlotType,
-    MaskCutKnownValue,
-    FamilyNotClosed,
-    FunctionCellInFrameGotProperties,
-    OperationConvertedCell,
-    OperationWroteHeap,
-    UnspecifiedValueInspected,
-    CallCollected,
-};
-
-static constexpr unsigned numberOfValidationFailureKinds = 49;
-
-ASCIILiteral nameOf(ValidationFailureKind);
+using Typed::ValidationFailureKind;
 
 struct ValidationFailure {
     ValidationFailureKind kind;

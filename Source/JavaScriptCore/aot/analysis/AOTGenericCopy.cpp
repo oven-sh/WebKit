@@ -12,6 +12,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTInductionVariables.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPass.h"
 #include "AOTResultRules.h"
@@ -576,7 +577,7 @@ void GenericCopy::recordTestedRejoins()
     for (BlockID block : m_testedRejoinBlocks) {
         if (!canLeaveCopyAt(block) || mergesAllocationThatSinksWithItsCopyAt(block))
             continue;
-        TestedRejoin rejoin { block, depthOfLoopEnteredAt(block), { }, { } };
+        TestedRejoin rejoin { block, depthOfLoopEnteredAt(block), { }, { }, typesOfCountersOnWayBack(m_analyses, m_context.types, block) };
         for (ValueID value : liveness.liveAtHead(block)) {
             if (m_mayBeNarrowed.get(value.index()))
                 rejoin.narrowedLiveValues.append(value);
@@ -790,6 +791,8 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
     PropertyAccessContext accessContext { program, &m_context.inputs.flow };
     auto addTest = [&](std::optional<uint32_t> parameterIndex, ValueID inTypedCode, TypeID typeInCopy) {
         TypeID typeInTypedCode = typeAssumedInTypedCode(inTypedCode, rejoinTypes.ignoringCopy[inTypedCode.index()], isCopy);
+        if (parameterIndex && !rejoin.typesOfCounters.isEmpty() && rejoin.typesOfCounters[*parameterIndex])
+            typeInTypedCode = types.intersectionOf(typeInTypedCode, rejoin.typesOfCounters[*parameterIndex]);
         if (m_typesTestedOnWayBack == TypesTestedOnWayBack::Expected && m_mayBeNarrowed.get(inTypedCode.index())) {
             if (TypeID expected = m_function.at(inTypedCode).expected())
                 typeInTypedCode = types.intersectionOf(typeInTypedCode, types.intern(types.at(expected).withoutClassProofs()));
@@ -1076,6 +1079,30 @@ void GenericCopy::addVariablesTo(SSARepair& repair)
         for (; !remaining.empty() && remaining.front().inTypedCode == value; remaining = remaining.subspan(1))
             repair.addDefinition(*variable, remaining.front().definition);
     }
+}
+
+Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses& analyses, TypeArena& types, BlockID head)
+{
+    const Function& function = analyses.function();
+    auto mayBeCounter = [&](ValueID parameter) {
+        const Type& type = types.at(function.at(parameter).type);
+        return type.isNumberWithoutFraction() && !type.isInteger();
+    };
+    const CompactList<ValueID>& parameters = function.at(head).parameters;
+    if (std::ranges::none_of(parameters, mayBeCounter) || !analyses.cfg().hasCycle() || !analyses.naturalLoops().headerOf(head))
+        return { };
+
+    Vector<TypeID, 4> tested(parameters.size());
+    for (const InductionVariable& counter : analyses.inductionVariables().of(*analyses.naturalLoops().headerOf(head)).variables) {
+        if (!mayBeCounter(counter.parameter) || counter.step.kind != InductionStepKind::Constant || !counter.start || !counter.boundingTest())
+            continue;
+        const Type& start = types.at(function.at(counter.start).type);
+        if (!start.isInt32())
+            continue;
+        bool isIncreasing = counter.direction == InductionDirection::Increasing;
+        tested[counter.parameterIndex] = types.intern(Type::integer(isIncreasing ? Range { start.integers.minimum, INT32_MAX } : Range { INT32_MIN, start.integers.maximum }));
+    }
+    return tested;
 }
 
 bool isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalLoop& loop)

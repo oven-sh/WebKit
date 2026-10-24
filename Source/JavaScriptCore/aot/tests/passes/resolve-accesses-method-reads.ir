@@ -1,7 +1,7 @@
 # A read of a method or of a deferred closure field whose value is only called becomes a closure of the function, which stands in for the one the class or the object holds. A method that is read for any other use is the closure that the closure table holds
 # FORM: Prepared
 # RUN: pass ResolveAccesses
-# STATISTIC: ResolveAccessesChanges = 12
+# STATISTIC: ResolveAccessesChanges = 13
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -144,7 +144,7 @@ function f19 name="method-needs-its-closure" parameters=[{type=L0}] results=[{ty
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="capturing"
 # CHECK-NEXT: = Call v1
-# CHECK-NEXT: = PropGet v0 key="recursive"
+# CHECK-NEXT: v3: f4 = NewClosure function=f4 [isHeldByClosureTable]
 function f20 name="method-may-be-replaced" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="changing"

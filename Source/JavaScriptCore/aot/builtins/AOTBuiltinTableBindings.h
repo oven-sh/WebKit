@@ -48,11 +48,6 @@ struct BuiltinCustomGetterBinding {
     GetValueFunc::Ptr function { nullptr };
 };
 
-struct BuiltinAppendFunctionBinding {
-    BuiltinID builtin { };
-    const void* function { nullptr };
-};
-
 // One parameter of a native function that compiled code calls without a function object and without a frame for the callee.
 enum class BuiltinDirectValue : uint8_t {
     // JSGlobalObject*. No operand of the call.
@@ -116,7 +111,6 @@ struct BuiltinBindingSet {
     std::span<const BuiltinClassBinding> classes { };
     std::span<const BuiltinCachedGetterBinding> cachedGetters { };
     std::span<const BuiltinCustomGetterBinding> customGetters { };
-    std::span<const BuiltinAppendFunctionBinding> appendFunctions { };
     std::span<const BuiltinDirectFunctionBinding> directFunctions { };
     std::span<const BuiltinNativeFunctionBinding> nativeFunctions { };
     std::span<const BuiltinHostNumberBinding> hostNumbers { };
@@ -166,7 +160,6 @@ public:
     static std::optional<uint32_t> cachedValueOffsetOf(BuiltinOverloadID);
     static std::optional<uint32_t> cachedValueOffsetOf(const ClassInfo*, WTF::UniquedStringImpl* getterName);
     static GetValueFunc::Ptr customGetterOf(BuiltinOverloadID);
-    static const void* appendFunctionOf(BuiltinID);
     // None without a host, and for a binding that this build of the host leaves out.
     JS_EXPORT_PRIVATE static std::optional<uint16_t> hostNumberOf(BuiltinID);
     // The number of the overload's native function among those of the host, for directFunctionAt().

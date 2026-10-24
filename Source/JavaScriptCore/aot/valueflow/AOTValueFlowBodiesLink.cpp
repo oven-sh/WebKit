@@ -560,12 +560,6 @@ ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Pr
     return members;
 }
 
-ValueSetID ValueFlowUniverse::membersInsideUnlessNewTargetDiffers(ValueSetMaker& maker, const Program& program, TypeID type) const
-{
-    ValueSetID instances = maker.intersect(objectsWithLayoutIn(maker, program, program.at(type).layouts), m_instancesOfRootClasses);
-    return maker.unite(membersSurelyInside(maker, program, type), instances);
-}
-
 FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
 {
     if (node.index() < m_firstNodeOfFunction[0])
@@ -678,14 +672,6 @@ public:
         m_result.m_unobservedDefinitions = UnobservedFieldDefinitions(m_program, m_build, [&](FunctionID function) {
             return m_result.holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::CallDirect }));
         });
-        Vector<FunctionID>& genericVersionOf = m_result.m_universe.m_genericVersionOf;
-        genericVersionOf.fill(FunctionID(), m_numberOfFunctions);
-        for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
-            if (const auto* entryChecks = m_program.functions[index].creator.tryAs<CreatorRecord::EntryChecks>()) {
-                genericVersionOf[index] = entryChecks->fallback;
-                genericVersionOf[entryChecks->body.index()] = entryChecks->fallback;
-            }
-        }
         Vector<uint32_t> largestFirst = largeFunctions(m_program, m_loops);
         largestFirst.insert(0, m_numberOfFunctions);
         runTasksInParallel(m_loops, {
@@ -696,7 +682,7 @@ public:
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
                         return makeHostBody(m_program, tables, m_result.m_notedOperations.span());
-                    return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions, genericVersionOf[index]);
+                    return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions);
                 });
             },
         });
@@ -968,16 +954,12 @@ private:
             allocatedByAnyClass.append(universe.m_objectOfSite[site]);
         }
         Vector<ValueFlowObjectID> objectsThatPickTheirLayout = allocatedByAnyClass;
-        Vector<ValueFlowObjectID> instancesOfRootClasses;
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
             if (m_program.layouts[index].kind != LayoutKind::Instance || !m_program.layouts[index].constructor)
                 continue;
             objectsThatPickTheirLayout.append(universe.instanceOf(LayoutID(index)));
-            if (!m_program.layouts[index].has(LayoutFlags::HasHeritage))
-                instancesOfRootClasses.append(universe.instanceOf(LayoutID(index)));
         }
         m_result.m_universe.m_objectsThatPickTheirLayout = maker.of(objectsThatPickTheirLayout.span());
-        m_result.m_universe.m_instancesOfRootClasses = maker.of(instancesOfRootClasses.span());
         Vector<ValueFlowObjectID> instancesOfClasses;
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
             if (layoutIsDefinedByClass(m_program.layouts[index]))
@@ -1456,8 +1438,7 @@ private:
                 linked.familyObjects = linked.familyObjects ? maker.intersect(linked.familyObjects, sets.familyObjects) : sets.familyObjects;
         }
         for (TypeID type : mask.outside) {
-            ValueSetID inside = mask.trustsInstancesOfRootClasses ? universe.membersInsideUnlessNewTargetDiffers(maker, m_program, type) : universe.membersSurelyInside(maker, m_program, type);
-            linked.set = maker.intersect(linked.set, ValueSets::complement(inside));
+            linked.set = maker.intersect(linked.set, ValueSets::complement(universe.membersSurelyInside(maker, m_program, type)));
         }
         for (auto [builtin, module] : mask.outsideBuiltinsOfModules) {
             if (ValueFlowObjectID object = universe.objectOf(builtin, module))

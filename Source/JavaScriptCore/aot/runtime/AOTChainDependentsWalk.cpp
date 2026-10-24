@@ -93,6 +93,9 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
         // Those caches leave out what a function answers for by itself. An array and a String object look `name` and `prototype` up like any other name.
         return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
     }
+    // The put of a native constructor refuses names on the constructor itself. For whoever inherits from it, it is the put of an ordinary object.
+    if (type == InternalFunctionType && !typeInfo.overridesGetOwnPropertySlot() && structure->classInfoForCells()->methodTable.put == InternalFunction::info()->methodTable.put)
+        return true;
     // A slim closure that has properties has all of them in its table, its length, its name and its prototype too.
     return answersOnlyForLength || type == JSFunctionType || type == SlimClosureWithPropertiesType;
 }

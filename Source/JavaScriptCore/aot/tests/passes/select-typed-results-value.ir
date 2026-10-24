@@ -28,17 +28,24 @@ function f0 name="validated" parameters=[{type=anything}] results=[{type=anythin
 # CHECK: [[accepted0]]():
 # CHECK-NEXT: Jump -> next [[merge0]]([[copy0]])
 # CHECK: [[rejected0]]() frequency=Rare:
-# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
-# CHECK-NEXT: Jump -> next [[general0]]([[yes0]])
+# CHECK-NEXT: [[isIgnored0]]: boolean = IsThrownValueIgnored
+# CHECK-NEXT: Branch [[isIgnored0]] -> taken [[ignored0]](), notTaken [[lookedAt0]]()
 # CHECK: [[unknown0]]() frequency=Rare:
 # CHECK-NEXT: [[no0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[general0]]([[no0]])
 # CHECK: [[general0]]([[isRefused0]]: boolean) frequency=Rare:
 # CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
-# CHECK-NEXT: [[byPlan0]]: anything = CallBuiltin -, v0, [[plan0]], [[isRefused0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[prepared0]]: anything = GetPreparedPlans
+# CHECK-NEXT: [[byPlan0]]: anything = CallBuiltin -, v0, [[plan0]], [[isRefused0]], [[prepared0]] overload=CompilerHelpersValidateByPlan/0
 # CHECK: Jump -> next [[merge0]](
 # CHECK: [[merge0]]([[validated0]]:{{*}}):
 # CHECK: Jump -> next [[done0]](
+# CHECK: [[ignored0]]() frequency=Rare:
+# CHECK-NEXT: = ThrowNewError errorKind=TypeError message=""
+# CHECK-NEXT: Unreachable
+# CHECK: [[lookedAt0]]() frequency=Rare:
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[general0]]([[yes0]])
 # CHECK-NOT: BunBundleValidate
 
 function f1 name="noCallOfTheHostFunctionIsLeft" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {

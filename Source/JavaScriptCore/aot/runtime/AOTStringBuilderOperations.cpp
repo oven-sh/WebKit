@@ -90,18 +90,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendStringRange, void, (Inst
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendByHost, void, (Instance* instance, JSCell* builder, uint32_t builtin, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderAppendByHost);
-    auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderAppendByHost);
-    auto function = reinterpret_cast<HostAppendForm>(const_cast<void*>(BuiltinBindings::appendFunctionOf(BuiltinID(builtin))));
-    RELEASE_ASSERT(function);
-    uint32_t checkpoint = storage->length();
-    if (!function(globalObject, storage, thisValue, arguments, count))
-        storage->rollBack(checkpoint);
-    OPERATION_RETURN(scope);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty))
 {
     constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSON;

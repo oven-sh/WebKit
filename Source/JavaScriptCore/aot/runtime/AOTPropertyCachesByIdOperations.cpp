@@ -114,11 +114,6 @@ JSValue getAndCache(const NamedAccess& access, JSValue base)
     if (!shouldFile || (base.isCell() && hasSlotForEveryClosure(access, base.asCell())) || (compiledBase && hasPendingStars(*compiledBase))) {
         JSValue result = getWithoutCaches(access.instance, base, ident);
         RETURN_IF_EXCEPTION(scope, { });
-#if !CPU(X86_64)
-        // Whatever this name found: the next name that the object has not is answered without leaving.
-        if (base.isObject() && !(compiledBase && hasPendingStars(*compiledBase)))
-            access.caches.tables().fileAbsenceFilter(globalObject, asObject(base));
-#endif
         return result;
     }
     if (base.isCell()) {

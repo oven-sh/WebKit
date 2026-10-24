@@ -428,53 +428,6 @@ static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleConte
     }
 }
 
-static void runEntryChecks(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
-{
-    const ValueFlowProgramNodes& nodes = context.nodes();
-    const Function& function = context.program().at(statement.function);
-    std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
-    Vector<ValueFlowNodeID, 8> testedWhereSomeTestMayFail;
-    bool someInstanceMayHaveOtherLayout = false;
-    for (const ValueFlowOperand& turnedAway : operands) {
-        bool mayHaveOtherLayout = mayHaveOtherLayoutThanItsClass(context, context.valueOf(ValueFlowOperand { turnedAway.node, turnedAway.constant, ValueSets::anything }));
-        someInstanceMayHaveOtherLayout |= mayHaveOtherLayout;
-        if ((mayHaveOtherLayout || context.meet(context.valueOf(turnedAway), ValueSets::anything)) && !testedWhereSomeTestMayFail.contains(turnedAway.node))
-            testedWhereSomeTestMayFail.append(turnedAway.node);
-    }
-    if (testedWhereSomeTestMayFail.isEmpty())
-        return;
-
-    FunctionID genericVersion = context.universe().genericVersionOf(statement.function);
-    context.reach(genericVersion);
-    if (function.role != FunctionRole::EntryChecks) {
-        // Behind a check that has failed in the typed body, generic code goes on with what the typed body was handed, and returns to the caller of the typed body. The generic version, run from its head, covers what that code does.
-        for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index)
-            context.connect(nodes.entryParameter(statement.function, index), nodes.entryParameter(genericVersion, index));
-        for (unsigned index = 0; index < function.results.size(); ++index)
-            context.connect(nodes.result(genericVersion, index), nodes.result(statement.function, index));
-        if (const auto* summary = nodes.resultSummaryOf(statement.function))
-            context.connect(nodes.result(genericVersion, 0), summary->ownResult);
-        context.connect(nodes.thrown(genericVersion), nodes.thrown(statement.function));
-        if (function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator))
-            context.connect(nodes.yielded(genericVersion), nodes.yielded(statement.function));
-        return;
-    }
-
-    // The generic version gets a parameter as it came where the test of another parameter may have failed. Where only its own tests may fail, it gets what they turn away.
-    for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
-        ValueFlowNodeID parameter = nodes.entryParameter(statement.function, index);
-        bool testOfAnotherMayFail = someInstanceMayHaveOtherLayout || testedWhereSomeTestMayFail.size() > 1 || testedWhereSomeTestMayFail[0] != parameter;
-        if (testOfAnotherMayFail) {
-            context.connect(parameter, nodes.entryParameter(genericVersion, index));
-            continue;
-        }
-        for (const ValueFlowOperand& turnedAway : operands) {
-            if (turnedAway.node == parameter)
-                context.connect(context.masked(parameter, turnedAway.mask, turnedAway.maskKind), nodes.entryParameter(genericVersion, index));
-        }
-    }
-}
-
 static void runRuleOnNodesNamed(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 void runValueFlowRule(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -506,9 +459,6 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         return;
     case ValueFlowStatementKind::Coroutine:
         runCoroutine(statement, context);
-        return;
-    case ValueFlowStatementKind::EntryChecks:
-        runEntryChecks(statement, context);
         return;
     case ValueFlowStatementKind::HostRoots:
         runHostRoots(statement, context);

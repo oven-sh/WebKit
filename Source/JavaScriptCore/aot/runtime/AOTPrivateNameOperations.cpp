@@ -323,9 +323,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateHas, EncodedJSValue, (Instance* inst
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    if (tryReadFromSlot(vm, *instance->state, asObject(base), classToken, field))
+    JSObject* holder = asObject(base);
+    if (tryReadFromSlot(vm, *instance->state, holder, classToken, field) || ClassToken::findInKnownStructure(classToken, field, holder))
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(true)));
-    PrivateLocation location = locate(vm, *instance->state, asObject(base), classToken, field);
+    if (ClassToken::isKnownToLackName(classToken, field, holder))
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    PrivateLocation location = locate(vm, *instance->state, holder, classToken, field);
+    rememberLocation(vm, holder, classToken, field, location);
+    // Under the declared name the brand says which evaluation of the class an object belongs to, and the brand is in the object.
+    if (location.kind == PrivateLocation::Kind::Absent && !location.compiledObject && !location.underDeclaredName.value && !holder->structure()->isDictionary())
+        ClassToken::rememberStructureWithoutName(vm, classToken, field, holder->structure());
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(location.kind != PrivateLocation::Kind::Absent)));
 }
 

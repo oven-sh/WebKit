@@ -96,7 +96,9 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
         join(atOp[next], states.atLookaheadBegin[op.registerIndex]);
         break;
     case Kind::Match:
+    case Kind::DotStarEnclosure:
     case Kind::NegativeLookaheadEnd:
+    case Kind::RecordFailure:
         break;
     case Kind::LoggedCaptureStart:
     case Kind::LoggedCaptureEnd:
@@ -121,6 +123,7 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
     case Kind::SavePosition:
     case Kind::FailIfEmpty:
     case Kind::NeedsInput:
+    case Kind::StepBack:
     case Kind::CountTurn:
     case Kind::InputStart:
     case Kind::LineStart:

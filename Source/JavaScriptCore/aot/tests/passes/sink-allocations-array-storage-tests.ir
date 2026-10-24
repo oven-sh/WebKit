@@ -223,7 +223,7 @@ function f10 name="numbersAreAskedForAnotherKind" parameters=[{type=number}, {ty
     Branch v4 -> taken b1(| 0), notTaken b2()
   b1(v5):
     v6 = Call v0, -, v3
-    Return v6
+    Unreachable
   b2():
     v7 = ElemGet v3, v2
     Return v7

@@ -269,26 +269,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeFlattenedObjectAt, JSCell*, (I
     crashOnWrongOperand(entry);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetExtraProperty, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t key))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetExtraProperty);
-    auto* object = cellArgument<Object>(cell, Entry::operationAOTGetExtraProperty);
-    const Identifier& identifier = identifierAt(instance, key);
-
-    Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-    Structure* structure = WTF::opaque(object->structure());
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    bool found = object->getPropertySlot(globalObject, identifier, slot);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    JSValue value = found ? slot.getValue(globalObject, identifier) : jsUndefined();
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    PropertyCaches& caches = *instance->state->propertyCaches;
-    caches.cache({ structure, caches.nameOf(key), SlotAccess::Read }, classifyRead({ globalObject, object, structure, identifier.impl(), slot }));
-    ensureStillAliveHere(structure);
-    OPERATION_RETURN(scope, JSValue::encode(value));
-}
-
 static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Instance*, JSCell*, uint32_t key);
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasExtraProperty, size_t, (Instance* instance, JSCell* cell, uint32_t key))
@@ -322,24 +302,6 @@ static size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Instance* instan
     }
     JSObject* extra = object->extraProperties();
     OPERATION_RETURN(scope, extra && extra->getDirectOffset(vm, identifier) != invalidOffset);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTPutExtraProperty, void, (Instance* instance, JSCell* cell, uint32_t key, EncodedJSValue encodedValue))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPutExtraProperty);
-    auto* object = cellArgument<Object>(cell, Entry::operationAOTPutExtraProperty);
-    const Identifier& identifier = identifierAt(instance, key);
-
-    Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-    Structure* structure = WTF::opaque(object->structure());
-    PutPropertySlot slot(object, true);
-    object->methodTable()->put(object, globalObject, identifier, JSValue::decode(encodedValue), slot);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-
-    PropertyCaches& caches = *instance->state->propertyCaches;
-    caches.cache({ structure, caches.nameOf(key), SlotAccess::Store }, classifyStore({ globalObject, object, structure, identifier.impl(), slot, PutMode::Strict }));
-    ensureStillAliveHere(structure);
-    OPERATION_RETURN(scope);
 }
 
 } } // namespace JSC::AOT

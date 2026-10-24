@@ -4,8 +4,8 @@
 # FORM: AsRead
 # REQUIRES: x86_64
 # OPTIONS: limit=MaxWarmCodeValues:1
-# RUN: generate-code FunctionsGeneratedDirectly
-# CHECK: statistic FunctionsGeneratedDirectly {{*}}
+# RUN: generate-code
+# CHECK: f0: size={{*}}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

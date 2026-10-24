@@ -239,20 +239,20 @@ static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
     return false;
 }
 
-// No instance of a built-in class holds data under the name: they have nothing there, or a method.
-static bool isFieldWhereBuiltinsHaveMethods(FunctionPassContext& context, ValueID access, PropertyKeyID key)
+static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
     if (!isOrdinaryText(context.program, key) || !name || name.isPrivateAlias)
         return false;
-    bool haveOnlyMethods = std::ranges::all_of(builtins.classesWithInstanceMember(name.name), [&](BuiltinClassID builtinClass) {
-        BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
-        return found.outcome == BuiltinMemberLookup::Outcome::Found && builtins.at(builtins.canonicalID(found.member)).kind == BuiltinKind::Method;
-    });
-    if (!haveOnlyMethods)
+    bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalledInPlace(context, access);
+    std::span<const BuiltinClassID> classes = builtins.classesWithInstanceMember(name.name);
+    if (asksForMethod && classes.empty())
         return false;
-    return accessOf(context.function.at(access).opcode) != Access::Read || !isCalledInPlace(context, access);
+    return std::ranges::all_of(classes, [&](BuiltinClassID builtinClass) {
+        BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
+        return found.outcome == BuiltinMemberLookup::Outcome::Found && (builtins.at(builtins.canonicalID(found.member)).kind == BuiltinKind::Method) != asksForMethod;
+    });
 }
 
 static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& context)
@@ -294,7 +294,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             bool tellsLayouts = tellsLayoutsApart(program, key);
             bool isBuiltinMethodCall = !tellsLayouts && callsBuiltinMethod(context, id, key);
             // Among the layouts such a name tells as much as any other. Whether the object has a layout at all is for the other names to say.
-            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isFieldWhereBuiltinsHaveMethods(context, id, key);
+            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isOfOtherKindInBuiltins(context, id, key);
             if (isAnsweredByBuiltins && !isOrdinaryText(program, key))
                 continue;
             uses.append(NamedUse { { }, id, receiver, block, key, PayloadWord::receivers(opcode) ? access.receivers() : LayoutSetID(), demandOf(context, id, key), true, isBuiltinMethodCall, isAnsweredByBuiltins });
@@ -550,20 +550,21 @@ static bool holdsOnlyFunctionsUnder(const Program& program, LayoutID layout, Pro
     return !slotType.isUndefinedOrNull() && !(slotType.primitives & ~Primitive::UndefinedOrNull) && slotType.withOnlyObjects().isSubsetOf(Type::function(), program);
 }
 
-// `node.return = parent`: an iterator written as a literal has a `return` too, and it is a method.
-static LayoutList withoutLayoutsWithMethodsWhereDataIsMeant(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
+static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
     LayoutList kept = layouts;
     for (const NamedUse& use : uses) {
-        if (use.demand == NameDemand::Required)
+        bool asksForMethod = use.demand == NameDemand::Required && isCalledInPlace(context, use.access);
+        if (use.demand == NameDemand::Required && !asksForMethod)
             continue;
-        LayoutList layoutsWithMethod;
+        LayoutList layoutsOfOtherKind;
         for (LayoutID layout : kept) {
-            if (holdsOnlyFunctionsUnder(context.program, layout, use.key))
-                layoutsWithMethod.add(layout);
+            bool hasField = !!findField(context.program, layout, use.key, BaseChain::Predicted);
+            if (hasField && holdsOnlyFunctionsUnder(context.program, layout, use.key) != asksForMethod)
+                layoutsOfOtherKind.add(layout);
         }
-        if (layoutsWithMethod.size() < kept.size())
-            kept.subtract(layoutsWithMethod);
+        if (layoutsOfOtherKind.size() < kept.size())
+            kept.subtract(layoutsOfOtherKind);
     }
     return kept;
 }
@@ -572,7 +573,7 @@ static LayoutsToTest chooseLayoutsToTest(FunctionPassContext& context, std::span
 {
     if (layoutsWithNames.isEmpty() || layoutsWithNames.size() > limits.maxLayouts)
         return { };
-    LayoutList expected = withoutLayoutsWithMethodsWhereDataIsMeant(context, uses, layoutsWithNames);
+    LayoutList expected = withoutLayoutsOfOtherKind(context, uses, layoutsWithNames);
     LayoutsToTest chosen = keepLikeliestDeclarations(context, expected, uses, limits.maxDeclarations, layoutsMetElsewhere);
     if (chosen.layouts.isEmpty() || !resolvesSomeUse(context, uses, chosen.layouts))
         return { };

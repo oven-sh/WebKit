@@ -115,7 +115,11 @@ static ChainAnswers followChains(const Program& program, const LayoutList& layou
         ChainEnd end = followChain(program, layout, tested, conditions);
         bool testsObject = false;
         // The run time defines the class of a constructor function at the first construction that is carried out, with whatever the function has as its prototype property then.
-        bool isMadeByConstructorFunction = program.at(layout).kind == LayoutKind::Instance && program.at(declaredLayoutOf(program, layout)).has(LayoutFlags::IsConstructorFunction);
+        // Where nothing replaces that property it is the one object, and the bits of the tested class, which is the function's own or one above it, say that the class was defined.
+        // That the chain misses a class no bit says: another function may have been given the object and been constructed first, and then this one has no class.
+        const Layout* maker = program.at(layout).kind == LayoutKind::Instance ? &program.at(declaredLayoutOf(program, layout)) : nullptr;
+        bool keepsPrototypeObject = maker && maker->classFlow.prototypeProperty == MemberMutability::Fixed && end == ChainEnd::MeetsClass;
+        bool isMadeByConstructorFunction = maker && maker->has(LayoutFlags::IsConstructorFunction) && !keepsPrototypeObject;
         if (end != ChainEnd::Unknown && (isMadeByConstructorFunction || !neverChangesPrototype(program, layout))) {
             switch (knownBy) {
             case PrototypeKnownBy::BitOfClass:

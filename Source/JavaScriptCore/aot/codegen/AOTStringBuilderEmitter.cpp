@@ -253,23 +253,6 @@ void StringBuilderEmitter::generateStringBuilderBegin(const ValueContext& value)
     }));
 }
 
-void StringBuilderEmitter::generateStringBuilderAppendBuiltin(const ValueContext& value)
-{
-    const BuiltinOverload& overload = m_builtins.at(value->overload());
-    const BuiltinForms* forms = m_builtins.formsOf(overload.builtin);
-    if (!forms || !forms->hasHostAppendFunction) {
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
-    CellPointer builder = in<CellPointer>(value->builderOperand());
-    Boxed thisValue = inOptional<Boxed>(value->receiverOperand()).value_or(undefined());
-    Vector<Boxed, 8> arguments;
-    for (ValueID argument : value->argumentsOperands())
-        arguments.append(in<Boxed>(argument));
-    Word32 count = word32(static_cast<int32_t>(arguments.size()));
-    callVoidOperation(value, RuntimeOperation::StringBuilderAppendByHost, { builder, word32(overload.builtin.index()), thisValue, count, argumentBuffer(arguments.span()) });
-}
-
 void StringBuilderEmitter::generateStringBuilderAppendJSON(const ValueContext& value)
 {
     defineTest(value, callOperation<Condition>(value, RuntimeOperation::StringBuilderAppendJSON, { in<CellPointer>(value->builderOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->propertyOperand()) }));
@@ -285,9 +268,17 @@ void StringBuilderEmitter::generateStringBuilderLength(const ValueContext& value
     define(value, lengthOf(in<CellPointer>(value->builderOperand())));
 }
 
+// The text that was made last is the text until something is appended: StringBuilderStorage::validLastString().
 void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& value)
 {
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderToString, { in<CellPointer>(value->builderOperand()), word32(0) }));
+    CellPointer builder = in<CellPointer>(value->builderOperand());
+    Integer lastString(m_out.load64(storageField(builder, StringBuilderStorage::offsetOfLastString())));
+    Word32 lengthOfLastString(m_out.load32(storageField(builder, StringBuilderStorage::offsetOfLengthOfLastString())));
+    define(value, either<CellPointer>(logicalAnd(isNotZero(lastString), equal(lengthOfLastString, lengthOf(builder))), [&] {
+        return CellPointer(lastString.value());
+    }, [&] {
+        return callOperation<CellPointer>(value, RuntimeOperation::StringBuilderToString, { builder, word32(0) });
+    }));
 }
 
 void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value)

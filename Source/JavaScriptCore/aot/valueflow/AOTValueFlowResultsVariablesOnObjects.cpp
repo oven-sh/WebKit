@@ -485,9 +485,13 @@ bool AccessCollector::storesValueInside(const ValueFlowStatement& statement, Var
     std::optional<uint32_t> index = indexOfValueStoredIntoProperty(statement.opcode);
     if (!index || !holdsFewMembers(m_inputs.bodies().operandsOf(statement)[*index]))
         return false;
+    // A set knows integers by kind alone, so the kind is never surely inside a range. The type of the value that the operation stores says which integers it can be.
+    const Function& function = m_inputs.program.at(statement.function);
+    const Type& type = m_inputs.program.at(declared.type);
+    bool storesIntegersInside = type.primitives & Primitive::Integer && m_inputs.program.typeOf(function, function.at(statement.site).operand(*index)).integers.isSubsetOf(type.integers);
     bool isInside = true;
     ValueFlowMembers members = forEachMemberOf(m_inputs, m_inputs.bodies().operandsOf(statement)[*index], [&](ValueFlowObjectID member) {
-        isInside &= m_inputs.sets().contains(m_valuesInsideType[variable.index()], member);
+        isInside &= m_inputs.sets().contains(m_valuesInsideType[variable.index()], member) || (storesIntegersInside && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer));
     });
     return isInside && members == ValueFlowMembers::Listed;
 }

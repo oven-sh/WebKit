@@ -451,6 +451,18 @@ static KnownValue evaluateAddOrSub(Opcode opcode, KnownValue left, KnownValue ri
     return KnownValue::number(isAddition ? left.asNumber() + right.asNumber() : left.asNumber() - right.asNumber());
 }
 
+// The constant, where the sum is an integer plus a constant and the integer is the given one.
+static std::optional<int64_t> distanceAddedTo(const Program& program, const Function& function, ValueID integer, ValueID sum)
+{
+    const Value& addition = function.at(sum);
+    if (addition.opcode != Opcode::Add || addition.operand(0) != integer || !program.typeOf(function, integer).isInt32())
+        return std::nullopt;
+    const Value& constant = function.at(addition.operand(1));
+    if (constant.opcode != Opcode::Integer || !hasInt32Magnitude(KnownValue::integer(constant.integer())))
+        return std::nullopt;
+    return constant.integer();
+}
+
 static KnownValue evaluateBitAnd(const Program& program, const Function& function, const Value& value, std::array<KnownValue, 2> operands)
 {
     if (operands[0].isNumber() && operands[1].isNumber())
@@ -465,8 +477,11 @@ static KnownValue evaluateBitAnd(const Program& program, const Function& functio
 static KnownValue evaluateArithmetic(const Program& program, const Function& function, const Value& value, std::array<KnownValue, 2> operands)
 {
     switch (value.opcode) {
-    case Opcode::Add:
     case Opcode::Sub:
+        if (std::optional<int64_t> distance = distanceAddedTo(program, function, value.operand(1), value.operand(0)))
+            return KnownValue::integer(*distance);
+        [[fallthrough]];
+    case Opcode::Add:
         return evaluateAddOrSub(value.opcode, operands[0], operands[1]);
     case Opcode::BitAnd:
         return evaluateBitAnd(program, function, value, operands);

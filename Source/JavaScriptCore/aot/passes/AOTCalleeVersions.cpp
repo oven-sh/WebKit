@@ -102,8 +102,10 @@ bool canHaveCalleeVersion(const Program& program, FunctionID id, uint32_t entryP
         return false;
     if (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Parameter)
         return false;
-    if (function.role == FunctionRole::CalleeVersion && isForAnyFunction(function.derivation.parameter) && entryParameterIndex(function.derivation.parameter) == entryParameter)
-        return false;
+    for (const Function* version = &function; version->role == FunctionRole::CalleeVersion; version = &program.at(version->derivation.source)) {
+        if (isForAnyFunction(version->derivation.parameter) && entryParameterIndex(version->derivation.parameter) == entryParameter)
+            return false;
+    }
     const Type& parameter = program.typeOf(function, function.at(entryBlock).parameters[entryParameter]);
     return !parameter.singleFunction() && !parameter.singleBuiltin();
 }

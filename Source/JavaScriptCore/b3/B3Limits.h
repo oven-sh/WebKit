@@ -133,8 +133,6 @@ static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() -
 inline constexpr int64_t minPageSize = 4096;
 
 inline constexpr unsigned minHoistedValuesPerLoopVersion = 2;
-inline constexpr unsigned topTestedVersionCostNumerator = 3;
-inline constexpr unsigned topTestedVersionCostDenominator = 4;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
 inline constexpr unsigned blocksPerConstantStretch = 1024;

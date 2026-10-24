@@ -226,6 +226,15 @@ static ValueID emitRangeLength(RewriteCursor& cursor, const Program& program, Va
     return cursor.emit(IRBuilder::make(Opcode::BitAnd, { difference, mask }));
 }
 
+// A position inside the range lies inside the string that the range was cut from, so the sum is a position of a string.
+static ValueID emitPositionInBase(RewriteCursor& cursor, const Program& program, ValueID start, ValueID position)
+{
+    ValueID sum = cursor.emit(IRBuilder::make(Opcode::Add, { start, position }));
+    if (!program.typeOf(cursor.builder().function(), sum).isInt32())
+        sum = cursor.emit(IRBuilder::make(Opcode::ToInt32, { sum }));
+    return sum;
+}
+
 static ValueID emitValueOrUndefined(AllocationSinking& sinking, ObjectInterpreter& interpreter, VirtualObjectID object, uint32_t field, TypeID type)
 {
     std::optional<uint32_t> carriedBits = tagBitsWhenCarried(sinking.familyOf(object), *interpreter.state().find(object), field);
@@ -286,6 +295,28 @@ Execution ObjectInterpreter::executeRead(ValueID id)
         if (!hasOneVirtualKind)
             return executeOnCell();
         return kinds.contains(VirtualObjectKind::ArgumentList) ? readArgumentList(id, object, *access) : readArguments(id, object, *access);
+    }
+    if (access->lookup == FieldLookup::DynamicElement && kinds.contains(VirtualObjectKind::StringRange)) {
+        // A range may be cut from a range that is never made either: the unit is read in the string that the innermost of them was cut from.
+        auto partOf = [&](VirtualObjectID range, VirtualFieldKind part) {
+            return *m_sinking.familyOf(range).findField(VirtualField::part(part));
+        };
+        Vector<VirtualObjectID, 2> ranges;
+        for (VirtualObjectID range = object; range && !stateOf(range)->isCell(); range = stateOf(range)->objectHeldIn(partOf(range, VirtualFieldKind::StringBase))) {
+            EnumSet<VirtualObjectKind> kindsOfRange = virtualKindsOf(m_sinking.familyOf(range), *stateOf(range));
+            if (!stateOf(range)->isVirtual() || !kindsOfRange.hasExactlyOneBitSet() || !kindsOfRange.contains(VirtualObjectKind::StringRange))
+                return executeOnCell();
+            ranges.append(range);
+        }
+        if (ranges.isEmpty())
+            return executeOnCell();
+        if (isRewriting()) {
+            ValueID position = access->dynamicIndex;
+            for (VirtualObjectID range : ranges)
+                position = emitPositionInBase(cursor(), program(), valueOfField(range, partOf(range, VirtualFieldKind::RangeStart)), position);
+            replaceRead(id, cursor().emit(IRBuilder::make(Opcode::GetStringCodeUnit, { valueOfField(ranges.last(), partOf(ranges.last(), VirtualFieldKind::StringBase)), position })));
+        }
+        return Execution::Interpreted;
     }
     if (access->lookup == FieldLookup::DynamicElement)
         return executeDynamicElementRead(id, object, access->dynamicIndex);
@@ -527,7 +558,7 @@ Execution ObjectInterpreter::executeStore(ValueID id)
     if (!stateOf(object)->isVirtual())
         return executeOnCell();
 
-    ValueID stored = opcode == Opcode::AppendHole ? ValueID() : function().at(id).valueOperand();
+    ValueID stored = storesWithoutValue.contains(opcode) ? ValueID() : function().at(id).valueOperand();
     if (opcode == Opcode::AppendElement || opcode == Opcode::AppendHole) {
         std::optional<uint32_t> length = commonArrayLengthOf(m_sinking.familyOf(object), *stateOf(object));
         if (!length || exceedsLimit(m_sinking, m_mode, LimitID::MaxVirtualArrayLength, static_cast<uint64_t>(*length) + 1, object))
@@ -554,6 +585,16 @@ Execution ObjectInterpreter::executeStore(ValueID id)
     std::optional<uint32_t> field = fieldFor(object, access->field);
     if (!field)
         return executeOnCell();
+    if (opcode == Opcode::PropDelete) {
+        if (m_state.isDestructured(object)) {
+            m_sinking.abandon(object);
+            return executeOnCell();
+        }
+        deleteField(object, *field);
+        if (isRewriting())
+            replaceRead(id, cursor().builder().appendBoolean(true));
+        return finishStore();
+    }
     if (!canStore(object, *access, *field, stored)) {
         if (opcode != Opcode::PropSet || !canStoreUnprovenValue(object, *access, *field))
             return executeOnCell();
@@ -667,6 +708,18 @@ void ObjectInterpreter::storeField(VirtualObjectID object, uint32_t field, Value
         VirtualShape next = shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), field);
         variant.shape = family.intern(WTF::move(next));
     }
+    canonicalizeVariants(state);
+}
+
+void ObjectInterpreter::deleteField(VirtualObjectID object, uint32_t namedField)
+{
+    ObjectState& state = *stateOf(object);
+    VirtualFamily& family = m_sinking.familyOf(object);
+    state.release(namedField);
+    if (std::optional<uint32_t> counterpart = family.findCounterpart(namedField))
+        state.release(*counterpart);
+    for (ObjectVariant& variant : state.variants)
+        variant.shape = family.intern(shapeAfterDelete(family, m_sinking.orders(), family.at(variant.shape), namedField));
     canonicalizeVariants(state);
 }
 

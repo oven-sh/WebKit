@@ -317,11 +317,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessCallable);
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
-    uint32_t namePlusOne = std::exchange(instance->runtime.exceptions.nameOfUncallableMethod, 0);
-    if (!value.isCallable()) {
-        StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
-        throwException(globalObject, scope, namePlusOne && nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, namePlusOne - 1)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
-    }
+    if (!value.isCallable())
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
     OPERATION_RETURN(scope);
 }
 

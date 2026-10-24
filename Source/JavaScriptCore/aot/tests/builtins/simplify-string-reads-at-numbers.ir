@@ -100,14 +100,3 @@ function f6 name="receiverMayBeUndefined" parameters=[{type=undefined|string}, {
 # CHECK-NOT: TypeTest
 # CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
 # CHECK-NOT: GetStringCodeUnit
-
-function f7 name="readOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: number):
-    v4 = Substring v0, v1, v2
-    v5 = CallBuiltin v4, v3 overload=StringPrototypeCharCodeAt/0
-    Return v5
-}
-# CHECK-LABEL: function f7 name="readOfARange"
-# CHECK-NOT: TypeTest
-# CHECK: v5: number = CallBuiltin v4, v3 overload=StringPrototypeCharCodeAt/0
-# CHECK-NOT: GetStringCodeUnit

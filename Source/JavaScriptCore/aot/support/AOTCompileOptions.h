@@ -168,7 +168,6 @@ struct CompileOptions {
     bool checksThatFunctionsGetPastEntry { false };
     bool checksThatUsedValuesAreListed { false };
     bool validatesReferenceGuards { false };
-    bool countsChangesBehindSimplify { false };
     ReportSet reports { };
     ExcludedCode excludedCode { };
     OutputOptions output { };

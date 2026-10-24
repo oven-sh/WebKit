@@ -144,7 +144,7 @@ function f23 name="goodObjectLayout" parameters=[{type=number}] results=[{type=u
 }
 function f24 name="badEnvironment" parameters=[{type=object}] results=[{type=undefined}] {
   b0(v0: object):
-    MarkEnvironmentEscaped v0
+    v1 = MaterializeEnvironment v0 layout=L0
     Return
 }
 function f25 name="badAbsentEnvironment" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=undefined}] {
@@ -156,12 +156,12 @@ function f25 name="badAbsentEnvironment" captures=[{type=env L0}] parameters=[{t
     v2 = Unspecified valueType=absent|env L0
     Jump -> next b3(v2)
   b3(v3):
-    MarkEnvironmentEscaped v3
+    v4 = MaterializeEnvironment v3 layout=L0
     Return
 }
 function f26 name="goodEnvironment" captures=[{type=env L0}] results=[{type=undefined}] {
   b0(v0: env L0):
-    MarkEnvironmentEscaped v0
+    v1 = MaterializeEnvironment v0 layout=L0
     Return
 }
 function f27 name="badEvalOperand" parameters=[{type=anything}, {type=enumerator}] results=[{type=undefined}] {

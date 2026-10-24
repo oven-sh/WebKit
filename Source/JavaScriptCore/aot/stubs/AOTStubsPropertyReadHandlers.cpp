@@ -441,10 +441,8 @@ static void emitReadBySlot(ReadSlotBody& body)
         emitFarValueRead(body);
         return;
     case Slot::Kind::Absent:
-#if CPU(X86_64)
         if (body.origin == SlotOrigin::ByVal)
             rememberAbsenceOfKey(jit, body.operands.keyCell, body.slot.header(), body.T10, body.T11);
-#endif
         returnUndefined(body);
         return;
     case Slot::Kind::Getter:
@@ -591,7 +589,6 @@ static void emitUncachedReadById(StubAssembler& jit)
     needsOperation.append(jit.branchIfNotCell(receiver));
     needsOperation.append(jit.branchIfNotObject(receiver));
     loadIdentifier(jit, identifierNumber, uid, needsOperation);
-#if CPU(X86_64)
     // No slot says what the read finds, as where a getter lies in a field of an object above the receiver. The objects themselves say it.
     JumpList objectsDoNotSay;
     answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, {
@@ -602,11 +599,10 @@ static void emitUncachedReadById(StubAssembler& jit)
         .structure = jit.allocateScratch(StubRegister::T11),
         .size = jit.allocateScratch(StubRegister::T13),
         .vector = jit.allocateScratch(StubRegister::T14),
-        .index = jit.scratchRegister(),
+        .index = indexRegisterOfObjectLookup(jit),
     }, ObjectLookupName::IsGivenByNumber, objectsDoNotSay);
     objectsDoNotSay.link(&jit);
     loadIdentifier(jit, identifierNumber, uid, needsOperation);
-#endif
     tryLeafLookup(jit, Entry::operationAOTGetGeneric, uid);
 
     needsOperation.link(&jit);

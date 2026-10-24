@@ -1,0 +1,91 @@
+# Whether a value is truthy never changes: a test that another test of the same value dominates is that test. Neither of two tests on different paths is the other.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PropagateBranchConditions
+# RUN(CLEAN): pass PropagateBranchConditions EliminateDeadCode
+# STATISTIC: PropagateBranchConditionsChanges = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindMergePoint" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2(v1)
+  b1():
+    v3 = Integer integer=1
+    Jump -> next b2(v3)
+  b2(v4):
+    v5 = ToBoolean v0
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="behindMergePoint"
+# CHECK: b2(v4
+# CHECK: Branch v2 -> taken b3(), notTaken b4()
+# CLEAN-LABEL: function f0 name="behindMergePoint"
+# CLEAN: = ToBoolean v0
+# CLEAN-NOT: = ToBoolean
+
+function f1 name="onTakenPath" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v0
+    Branch v3 -> taken b3(), notTaken b2()
+  b2():
+    Return v1
+  b3():
+    v4 = Integer integer=1
+    Return v4
+}
+# CHECK-LABEL: function f1 name="onTakenPath"
+# CLEAN-LABEL: function f1 name="onTakenPath"
+# CHECK: b1():
+# CHECK: [[known]]: true = Boolean boolean=true
+# CHECK: Branch [[known]] -> taken b3(), notTaken b2()
+
+function f2 name="secondBranchPassesProof" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b1()
+  b1():
+    v2 = ToBoolean v0
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    Return v3
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="secondBranchPassesProof"
+# CHECK: b1():
+# CHECK: Branch v1 -> taken b2(| 0), notTaken b3()
+
+function f3 name="onTwoPaths" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ToBoolean v0
+    Return v2
+  b2():
+    v3 = ToBoolean v0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="onTwoPaths"
+# CHECK: Return v2
+# CHECK: Return v3
+
+function f4 name="twoValues" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v1
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f4 name="twoValues"
+# CHECK: Return v3

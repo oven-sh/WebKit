@@ -42,15 +42,6 @@ static constexpr bool isRepresentationConversion(Opcode opcode)
     return familyOf(opcode) == OperationFamily::Representation;
 }
 
-bool isGeneratedWithoutOptimizing(const BuildContext& build, const Heat& heat, const Program& program, FunctionID id)
-{
-    if (build.recordedOptions().has(TestingSwitch::GenerateAllCodeDirectly))
-        return true;
-    if (!build.recordedOptions().has(TestingSwitch::GenerateColdCodeDirectly))
-        return false;
-    return heat.isOfVeryLargeProgram() && !isHot(heat.of(program, id)) && !heat.hasWarmCode(program, id);
-}
-
 Representation integerRepresentationOf(const Type& type)
 {
     RELEASE_ASSERT(type.hasOnlyPrimitives(Primitive::Integer));

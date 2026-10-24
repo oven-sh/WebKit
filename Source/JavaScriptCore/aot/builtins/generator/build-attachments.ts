@@ -54,7 +54,6 @@ const objectColumns = [
   "loads",
   "callsFunctions",
   "appendForm",
-  "hostAppendSymbol",
   "jsonTextForm",
   "literalPartsForm",
   "bodyBytesForm",
@@ -800,7 +799,6 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
   const { builder } = context;
   const nativeSymbols = writtenColumn(builder, builtin, "nativeSymbols").flatMap(({ value }) => value);
   const [appendForm] = writtenColumn(builder, builtin, "appendForm");
-  const [hostAppendSymbol] = writtenColumn(builder, builtin, "hostAppendSymbol");
   const [bodyBytesForm] = writtenColumn(builder, builtin, "bodyBytesForm");
   const [boxedCallStub] = writtenColumn(builder, builtin, "boxedCallStub");
   const [creationSymbol] = writtenColumn(builder, builtin, "creationSymbol");
@@ -811,7 +809,6 @@ function buildEntryAttachments(context: AttachmentContext, builtin: ModelBuiltin
     moduleLoads: buildModuleLoads(context, builtin),
     calledFunctions: buildCalledFunctions(context, builtin),
     appendForm: appendForm?.value ?? null,
-    hostAppendSymbol: hostAppendSymbol?.value ?? null,
     jsonTextForm: buildTextForm(context, builtin),
     literalPartsForm: buildLiteralPartsForm(context, builtin),
     bodyBytesForm:

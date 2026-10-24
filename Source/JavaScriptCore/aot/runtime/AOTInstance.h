@@ -222,6 +222,8 @@ struct RealmWords {
     MicrotaskQueue* microtaskQueue;
     // Of the ordinary object { read, written } that an encoder answers with. Null until the first is made.
     Structure* readAndWrittenCountsStructure;
+    // The Map in which the library's validator keeps what it has made of the texts of plans and rules. A library file has no variables. Null until the first is asked for.
+    JSCell* preparedPlans;
 };
 
 struct NumberWords {
@@ -341,7 +343,7 @@ struct Instance : InstanceHeader {
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.preparedPlans };
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);

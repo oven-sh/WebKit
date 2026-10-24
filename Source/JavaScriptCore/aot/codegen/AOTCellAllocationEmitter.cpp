@@ -345,6 +345,7 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 
 CellPointer CellAllocationEmitter::allocateInFrame(size_t size)
 {
+    generator().didPlaceCellInFrame();
     return CellPointer(m_out.lockedStackSlot(size));
 }
 

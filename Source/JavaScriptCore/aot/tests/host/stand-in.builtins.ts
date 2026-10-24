@@ -53,7 +53,6 @@ export default b.declarations(
   b.frontEndFunctions(
     "prelude/written-lists",
     "arrayFromLength",
-    "arrayOfIndexes",
     "arrayOfUndefined",
     "checkedArrayLength",
     "filledArray",

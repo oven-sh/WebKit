@@ -194,9 +194,10 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, So
 static void collectStoredLiterals(const Program& program, const FlowResults& flow, StringsNeedingWords& found)
 {
     for (const Layout& layout : program.layouts) {
-        bool isFilledByParse = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
+        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         for (const Field& field : layout.fields)
-            collectLiteralsOf(program, field.declared.type, isFilledByParse ? Source::Parser : field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
+            collectLiteralsOf(program, field.declared.type, isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {

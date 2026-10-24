@@ -30,7 +30,6 @@ struct ExternalFunctionBodies;
 namespace Typed {
 
 class ConstantCollections;
-class EnvironmentReuse;
 class FrameAllocation;
 class LiteralStringTable;
 class PassRunner;
@@ -48,6 +47,7 @@ struct PipelineOutput {
     void releaseCodeGenerationInputs(BuildContext&);
     void startCompilingRegExps(const Program&, BuildContext&);
     CompiledRegExps takeCompiledRegExps(BuildContext&);
+    void waitForRegExps();
 
     std::unique_ptr<Program> program;
     std::unique_ptr<DerivedFunctions> derivedFunctions;
@@ -56,7 +56,6 @@ struct PipelineOutput {
     std::unique_ptr<Heat> heat;
     std::unique_ptr<CallingConventions> callingConventions;
     std::unique_ptr<FrameAllocation> frameAllocation;
-    std::unique_ptr<EnvironmentReuse> environmentReuse;
     std::unique_ptr<LiteralStringTable> literalStrings;
     std::unique_ptr<ConstantCollections> constantCollections;
     std::unique_ptr<SlotPlan> slots;

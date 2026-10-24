@@ -553,11 +553,13 @@ bool GenericVersionBuilder::dropChecksNobodyReliesOn()
 bool GenericVersionBuilder::dropChecksThatTurnAwayWhatArrives()
 {
     Vector<ValueID, 8> dropped;
+    Vector<ValueID, 8> primitivesStillExpected;
     for (const CheckSite& site : m_sites) {
-        if (m_function.at(site.check).cause() == CheckCause::MayFail)
-            dropped.append(site.check);
+        const Value& check = m_function.at(site.check);
+        if (check.cause() == CheckCause::MayFail)
+            (m_context.types.at(check.castType()).hasObjects() ? dropped : primitivesStillExpected).append(site.check);
     }
-    if (dropped.isEmpty())
+    if (dropped.isEmpty() && primitivesStillExpected.isEmpty())
         return false;
     // What is read from such an object has its type from the type that does not hold.
     BitVector isTainted = computeTaintedValues(m_function, m_analyses.useLists(), dropped.span());
@@ -565,7 +567,11 @@ bool GenericVersionBuilder::dropChecksThatTurnAwayWhatArrives()
         if (isTainted.get(site.check.index()) && !dropped.contains(site.check))
             dropped.append(site.check);
     }
+    primitivesStillExpected.removeAllMatching([&](ValueID check) {
+        return dropped.contains(check);
+    });
     replaceChecksWithGuards(dropped.span(), ExpectedTypes::Dropped);
+    replaceChecksWithGuards(primitivesStillExpected.span(), ExpectedTypes::Kept);
     // A report that was put in front of a check has moved what stands behind it.
     m_sites.shrink(0);
     collectChecks();
@@ -580,7 +586,14 @@ bool GenericVersionBuilder::guardElementsThatOneOperatorTakes()
         const Value& check = m_function.at(site.check);
         Opcode source = m_function.at(sameObjectThroughCasts(m_function, check.valueOperand())).opcode;
         std::span<const Use> uses = m_analyses.useLists().usesOf(site.check);
-        if ((source != Opcode::ElemGet && source != Opcode::ResultAt) || uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+        if ((source != Opcode::ElemGet && source != Opcode::ResultAt) || uses.size() != 1)
+            continue;
+        // A switch over texts tells them apart itself.
+        if (uses[0].kind == Use::Kind::TerminatorOperand && m_function.at(uses[0].block).terminator.kind == TerminatorKind::SwitchString && !typeOf(check.valueOperand()).hasObjects()) {
+            guarded.append(site.check);
+            continue;
+        }
+        if (uses[0].kind != Use::Kind::Operand)
             continue;
         const Value& user = m_function.at(uses[0].user);
         // What is compared with another value is mostly read again behind the comparison, and that read is checked.
@@ -2022,6 +2035,64 @@ private:
 
 } // anonymous namespace
 
+static bool tellsObjectsApartByLayout(const Type& type)
+{
+    return type.layouts && !type.anyObject;
+}
+
+static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, const Function& function, const CFG& cfg, std::span<const ValueID> checks, Vector<Position>& positions)
+{
+    Vector<ValueID, 8> checksOfLayouts;
+    Vector<ValueID, 8> checksOfLayoutsThatMayFail;
+    for (ValueID id : checks) {
+        const Value& check = function.at(id);
+        if (!tellsObjectsApartByLayout(program.at(check.castType())))
+            continue;
+        checksOfLayouts.append(id);
+        if (check.cause() == CheckCause::MayFail)
+            checksOfLayoutsThatMayFail.append(id);
+    }
+    if (checksOfLayouts.isEmpty())
+        return;
+    BitVector mayBeTurnedAway = computeValuesTurnedAway(function, cfg, checksOfLayoutsThatMayFail.span());
+    BitVector isAnsweredForByCheckAlone = computeValuesTurnedAway(function, cfg, checksOfLayouts.span());
+    auto append = [&](FieldReference field) {
+        FieldReference declaration = declarationOf(program, field);
+        if (tellsObjectsApartByLayout(program.at(fieldAt(program, declaration).declared.type)))
+            positions.append({ Position::Kind::Field, declaration.layout.index(), declaration.field });
+    };
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& store = function.at(id);
+            if (store.opcode == Opcode::NewObject || store.opcode == Opcode::CloneAs) {
+                std::span<const ValueID> initialValues = store.variadicOperands();
+                if (program.at(store.layout()).isEnvironment() || store.fields().size() != initialValues.size())
+                    continue;
+                for (uint32_t index = 0; index < initialValues.size(); ++index) {
+                    if (mayBeTurnedAway.get(initialValues[index].index()))
+                        append({ store.layout(), store.fields()[index] });
+                }
+                continue;
+            }
+            if (store.opcode == Opcode::CopyDataProperties) {
+                if (!isAnsweredForByCheckAlone.get(store.sourceOperand().index()))
+                    continue;
+                for (LayoutID member : membersOf(program, program.typeOf(function, store.targetOperand()))) {
+                    for (uint32_t field = 0; field < program.at(member).fields.size(); ++field)
+                        append({ member, field });
+                }
+                continue;
+            }
+            if ((store.opcode != Opcode::PropDefine && store.opcode != Opcode::PropSet) || !mayBeTurnedAway.get(store.valueOperand().index()))
+                continue;
+            for (LayoutID member : membersOf(program, program.typeOf(function, store.objectOperand()))) {
+                if (std::optional<FieldReference> field = findField(program, member, store.key(), BaseChain::Proven))
+                    append(*field);
+            }
+        }
+    }
+}
+
 // After flow only the very value that a check has turned away counts.
 static void collectTaintedStores(const Program& program, FunctionID id, Function* bodyToTypeInPlace, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
@@ -2036,6 +2107,8 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
         return;
 
     FunctionAnalyses analyses(context, function);
+    if (isAfterFlow)
+        appendFieldsGivenObjectsThatChecksTurnAway(program, function, analyses.cfg(), checks.span(), positions);
     TypingContext typing { program, function, types };
     // Erasing a check changes neither which operands are stores nor what they require.
     Vector<TypedStore, 16> stores = findTypedStores(typing, analyses.cfg());

@@ -22,6 +22,7 @@ inline constexpr OpcodeSet opcodesOfKeyOrderTests { Opcode::HasKeyOrder, Opcode:
 inline constexpr OpcodeSet ownKeyExpansionOpcodes = opcodesOfWalks | opcodesOfKeyOrderTests | OpcodeSet { Opcode::ForInStep };
 
 enum class OwnKeyWalk : uint8_t {
+    Keys,
     Values,
     Entries,
     Assign,
@@ -39,6 +40,7 @@ constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
         return true;
     // It makes an object of undefined and null too, which the original operation does.
     case OwnKeyWalk::Copy:
+    case OwnKeyWalk::Keys:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
     case OwnKeyWalk::Stringify:
@@ -139,6 +141,7 @@ private:
     Vector<WalkedField, 8> fieldsWalkedBy(OwnKeyWalk, const OwnKeyWalkArm&) const;
     TestedObject emitArmTests(ValueID source, const OwnKeyWalkPlan&, const OwnKeyWalkArm&, BlockID nextArm);
 
+    ValueID emitKeys(std::span<const WalkedField>);
     ValueID emitValues(const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     ValueID emitEntries(const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);
     void emitAssign(const OwnKeyWalkSite&, const TestedObject&, const OwnKeyWalkArm&, std::span<const WalkedField>);

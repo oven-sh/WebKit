@@ -72,8 +72,8 @@ bool isLocationOfLoader(BuiltinID canonicalMember);
 bool isWayBetweenModuleObjects(BuiltinID canonicalMember);
 // What an entry answers whose type names the module object.
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext&, BuiltinID canonicalEntry, Vector<ValueFlowObjectID, 32>&);
-// The host brings the list behind `module.children` up to date through the function of the library that the row of the entry names, (list, child), and that finds `indexOf` and `push` on the list itself.
-void handListOfChildrenToHost(ValueFlowRuleContext&, BuiltinID canonicalEntry, ValueFlowObjectID list, ValueSetID children);
+// The host brings the list behind `module.children` up to date through a function of the library, (list, child), as the row of the entry says. What the program has stored in the list's place gets the children the same way, and nobody follows it there.
+void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext&, ValueSetID children);
 // A location of the loader, or process.mainModule: a way to the module objects of the program.
 bool isFoundByNameAlone(BuiltinID canonicalMember);
 

@@ -503,7 +503,6 @@ export interface ModelAttachments {
   moduleLoads: readonly ModelModuleLoad[];
   calledFunctions: readonly ModelCalledFunction[];
   appendForm: InlineBuiltinName | null;
-  hostAppendSymbol: string | null;
   jsonTextForm: { argument: ModelOperand; builtin: ModelBuiltin } | null;
   literalPartsForm: { argument: ModelOperand; names: readonly ModelName[]; builtin: ModelBuiltin } | null;
   bodyBytesForm: ModelBuiltin | null;

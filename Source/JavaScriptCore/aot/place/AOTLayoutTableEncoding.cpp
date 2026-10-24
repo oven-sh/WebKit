@@ -714,7 +714,10 @@ static void encodeParsedRecordFields(TableEncoder& encoder)
         if (placed.keysAreNeverEnumerated || !placed.impossibleMutations.isEmpty())
             continue;
         size_t sizeBefore = rows.size();
-        for (const Field& field : layout.fields) {
+        for (FieldIndex fieldIndex = 0; fieldIndex < layout.fields.size(); ++fieldIndex) {
+            const Field& field = layout.fields[fieldIndex];
+            if (!encoder.slots.slot(id, fieldIndex).indexInLayoutRecord)
+                continue;
             std::optional<uint32_t> name = field.key ? encoder.identifiers.numberOf(field.key) : std::nullopt;
             if (!name) {
                 rows.shrink(sizeBefore);

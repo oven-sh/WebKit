@@ -15,12 +15,20 @@
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
 enum class TailCallOutcome : uint8_t { Preserved, Demoted };
+
+// What a literal listed that makes an ordinary object from here on.
+struct ListedMember {
+    ValueID literal;
+    PropertyKeyID key;
+    ValueID value;
+};
 
 } // anonymous namespace
 
@@ -119,8 +127,15 @@ void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& update)
     }
 
     restoreCallsOfObjectCreate(body);
+}
+
+// Behind applyCheckUpdates(): a check that is proven to pass has become an assumption, which holds of the ordinary object too. A check that is left tests, and a test finds nothing of an ordinary object.
+static Vector<ListedMember> makeOrdinaryObjects(const FlowBodyApplication& body)
+{
+    Function& function = body.function;
+    Vector<ListedMember> listedMembers;
     if (!body.application.hasDictionaries)
-        return;
+        return listedMembers;
     DictionaryTypeRewriter rewriter(body.application);
     for (Value& value : function.editAllValues()) {
         TypeID passed = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.type) : TypeID();
@@ -141,18 +156,22 @@ void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& update)
     BitVector dictionaries;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         Value& value = function.edit(ValueID(index));
-        LayoutID layout = layoutOfEmptyLiteral(body.program, value);
+        LayoutID layout = layoutOfPlainLiteral(body.program, value);
         if (!layout || !body.application.layouts[layout.index()].objectsAreDictionaries)
             continue;
-        if (value.opcode == Opcode::NewObject)
+        if (value.opcode == Opcode::NewObject) {
             dictionaries.set(index);
+            std::span<const uint32_t> fields = value.fields();
+            for (size_t position = 0; position < fields.size(); ++position)
+                listedMembers.append({ ValueID(index), body.program.at(layout).fields[fields[position]].key, value.variadicOperands()[position] });
+        }
         Value dictionary = IRBuilder::make(Opcode::NewDictionary);
         dictionary.setOrigin(value.origin());
         dictionary.type = TypeTable::object;
         value = WTF::move(dictionary);
     }
     if (dictionaries.isEmpty())
-        return;
+        return listedMembers;
     // Nothing is left to finish.
     for (Value& finished : function.editAllValues()) {
         if (finished.opcode != Opcode::FinishObject || !dictionaries.get(finished.objectOperand().index()))
@@ -162,6 +181,24 @@ void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& update)
         same.setOrigin(finished.origin());
         same.type = TypeTable::object;
         finished = WTF::move(same);
+    }
+    return listedMembers;
+}
+
+static void defineListedMembers(const Function& function, IRBuilder& builder, std::span<const ListedMember> ascendingByLiteral)
+{
+    if (ascendingByLiteral.empty())
+        return;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const BlockValues& values = function.at(BlockID(blockIndex)).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            for (const ListedMember& member : std::ranges::equal_range(ascendingByLiteral, values[index], { }, &ListedMember::literal)) {
+                Value definition = IRBuilder::make(Opcode::PropDefine, { member.literal, member.value });
+                definition.setKey(member.key);
+                builder.setOrigin(function.at(member.literal).origin());
+                builder.insertBefore({ BlockID(blockIndex), index + 1 }, WTF::move(definition));
+            }
+        }
     }
 }
 
@@ -271,11 +308,13 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     applyStamps(body, update);
     FlowBodyCounts counts;
     counts.removedChecks = applyCheckUpdates(body, update);
+    Vector<ListedMember> listedMembers = makeOrdinaryObjects(body);
 
     AnalysisContext context { body.build, body.program, nullptr, nullptr, body.id };
     FunctionAnalyses analyses(context, body.function);
     IRBuilder builder(context, body.function, body.types, &analyses);
     applyTailCalls(body, builder, update, counts);
+    defineListedMembers(body.function, builder, listedMembers.span());
 
     FlowCastInsertion insertion { body, analyses, builder };
     insertProofCasts(insertion, update);

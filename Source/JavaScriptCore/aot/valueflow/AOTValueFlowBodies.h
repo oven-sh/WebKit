@@ -134,8 +134,6 @@ public:
 
     // Each answers none for a member of another kind.
     FunctionID closureFunction(ValueFlowObjectID) const;
-    // Of a function that only tests its arguments and of the typed body that it calls: the generic version, which runs in their place where a test or a check fails. None for any other function.
-    FunctionID genericVersionOf(FunctionID function) const { return function.index() < m_genericVersionOf.size() ? m_genericVersionOf[function.index()] : FunctionID(); }
     BuiltinID builtinOf(ValueFlowObjectID) const;
     ModuleID moduleOf(ValueFlowObjectID) const;
     // The first module of the program that names the module of the run time. None where no module does.
@@ -203,7 +201,6 @@ public:
     // constructedObjectOf() of every function: ordinary objects, which pass no test for a layout.
     ValueSetID constructedObjects() const { return m_constructedObjects; }
     // instanceOf() of the classes and constructor functions without a heritage. Such an instance has the layout of its class unless an operand passes the class as new.target.
-    ValueSetID instancesOfRootClasses() const { return m_instancesOfRootClasses; }
     // instanceOf() of every class.
     ValueSetID instancesOfClasses() const { return m_instancesOfClasses; }
     // The records that the type of a parameter of a checked function lists, and those that the types of their fields and of what their arrays hold lead to: data that typed code takes. Each requires a field.
@@ -218,7 +215,6 @@ public:
     // What is sure to be inside the type: the arm of a test that fails may drop this much. Of objectsThatPickTheirLayout() only the solved sets say what they pick: ValueFlowPositions::isSurelyInside().
     ValueSetID membersSurelyInside(ValueSetMaker&, const Program&, const Type&) const;
     ValueSetID membersSurelyInside(ValueSetMaker&, const Program&, TypeID) const;
-    ValueSetID membersInsideUnlessNewTargetDiffers(ValueSetMaker&, const Program&, TypeID) const;
     // The objects that the type lists one by one: what is allocated with its layouts, the closures of its functions, its built-in objects.
     ValueSetID familyObjectsOf(ValueSetMaker&, const Program&, const Type&) const;
     // Only the program makes an object that is inside the type, so a placeholder inside the type is one of familyObjectsOf().
@@ -277,7 +273,6 @@ private:
     ValueSetID m_objectsWithLayoutOfProgram;
     ValueSetID m_objectsThatPickTheirLayout;
     ValueSetID m_constructedObjects;
-    ValueSetID m_instancesOfRootClasses;
     ValueSetID m_instancesOfClasses;
     ValueSetID m_constructorsAnsweringOnlyWhatTheyConstruct;
     BitVector m_isLayoutOfTable;
@@ -306,7 +301,6 @@ private:
     ValueSetID m_knownObjects;
     ValueSetID m_builtinObjects;
     ValueSetID m_objectsOfRealm;
-    Vector<FunctionID> m_genericVersionOf;
     ValueSetID m_lockedObjects;
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_holdersOfLibraryExports;
@@ -522,8 +516,6 @@ struct ValueFlowBody {
         Vector<TypeID, 1> inside;
         Vector<TypeID, 1> outside;
         ValueFlowMaskKind kind { ValueFlowMaskKind::Checked };
-        // `outside` also drops instancesOfRootClasses(). The rule that reads the mask asks mayHaveOtherLayoutThanItsClass().
-        bool trustsInstancesOfRootClasses { false };
         // The objects that a module has of its own, each of which a comparison has turned away.
         Vector<std::pair<BuiltinID, ModuleID>, 0> outsideBuiltinsOfModules { };
 
@@ -589,8 +581,6 @@ struct ValueFlowBody {
     };
 
     FunctionID function;
-    // See ValueFlowUniverse::genericVersionOf().
-    FunctionID genericVersion;
     uint32_t numberOfEntryParameters { 0 };
     uint32_t numberOfResults { 0 };
     bool hasYieldedAndSent { false };
@@ -635,7 +625,7 @@ struct ValueFlowBody {
 };
 
 // Reads nothing but the program, so every body can be reduced on a thread of its own.
-ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, FunctionID genericVersion = { });
+ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
 // What the host does of its own accord: it enters the entry points and the functions it calls, with the unknown object as every operand. It has the number of no function.
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
 bool startsWithoutValueInSolve(const Program&, const Variable&);

@@ -1414,7 +1414,7 @@ public:
     }
 
     AbsenceFilter& filter() { return m_filters[AbsenceFilter::indexFor(PropertyStores::structureID)]; }
-    void letEveryStorePass() { filter() = { PropertyStores::structureID, 0, { }, 0, generation, { } }; }
+    void letEveryStorePass() { filter() = { PropertyStores::structureID, generation, { }, 0 }; }
     void setFlags(uint8_t flags) { m_stores.structure.at<uint8_t>(CompiledStructure::offsetOfFlags()) = flags; }
 
     uint64_t namesOfObjectPrototypes { 0 };
@@ -1633,9 +1633,6 @@ static void testFieldsCreatedByTheirRecords()
         chains.setFlags(0);
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.letEveryStorePass();
-        AOT_TEST_CHECK(isCreatedInEveryShape());
-        chains.filter().names[0] = UINT64_MAX;
-        chains.filter().generation = 1;
         AOT_TEST_CHECK(isCreatedInEveryShape());
         chains.filter().namesThatStopStores[0] = uint64_t { 1 } << name;
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);

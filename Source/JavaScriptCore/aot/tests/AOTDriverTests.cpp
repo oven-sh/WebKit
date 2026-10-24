@@ -17,7 +17,6 @@
 #include "AOTPassID.h"
 #include "AOTProgramFile.h"
 #include "AOTReaderFixture.h"
-#include "AOTRuntimeValidation.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestCommand.h"
@@ -925,16 +924,6 @@ static void testPrintWireTakesNoOtherFlag()
     expectExitCode(runPrintWire(program, { "no-such-word"_s }), exitCodeForInvalidCommandLine);
 }
 
-static void testValidationFailureNames()
-{
-    for (unsigned i = 0; i < numberOfValidationFailureKinds; ++i) {
-        ASCIILiteral name = nameOf(static_cast<ValidationFailureKind>(i));
-        AOT_TEST_CHECK(!name.isEmpty());
-        for (unsigned j = 0; j < i; ++j)
-            AOT_TEST_CHECK(name != nameOf(static_cast<ValidationFailureKind>(j)));
-    }
-}
-
 std::span<const NativeTest> driverTests()
 {
     static constexpr NativeTest tests[] = {
@@ -973,7 +962,6 @@ std::span<const NativeTest> driverTests()
         { "subcommands/print-wire-accepts-text"_s, testPrintWireAcceptsText },
         { "subcommands/print-wire-rejects"_s, testPrintWireRejects },
         { "subcommands/print-wire-takes-no-other-flag"_s, testPrintWireTakesNoOtherFlag },
-        { "validation-failure/names"_s, testValidationFailureNames },
     };
     return tests;
 }

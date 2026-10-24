@@ -121,6 +121,8 @@ struct ObjectLiteralPlan {
     static constexpr uint8_t acceptsString = 1 << 2;
     static constexpr uint8_t acceptsObject = 1 << 3;
     static constexpr uint8_t acceptsBoolean = 1 << 4;
+    static constexpr uint8_t acceptsNull = 1 << 5;
+    static constexpr uint8_t acceptsUndefined = 1 << 6;
 
     static constexpr ptrdiff_t offsetOfAllocator() { return OBJECT_OFFSETOF(ObjectLiteralPlan, allocator); }
     static constexpr ptrdiff_t offsetOfCellHeader() { return OBJECT_OFFSETOF(ObjectLiteralPlan, cellHeader); }
@@ -131,6 +133,8 @@ struct ObjectLiteralPlan {
     static constexpr ptrdiff_t offsetOfValueOffsets() { return OBJECT_OFFSETOF(ObjectLiteralPlan, valueOffsets); }
     static constexpr ptrdiff_t offsetOfAcceptedValues() { return OBJECT_OFFSETOF(ObjectLiteralPlan, acceptedValues); }
     static constexpr ptrdiff_t offsetOfAcceptedStructureIDs() { return OBJECT_OFFSETOF(ObjectLiteralPlan, acceptedStructureIDs); }
+    static constexpr ptrdiff_t offsetOfFirstAcceptedCellTypes() { return OBJECT_OFFSETOF(ObjectLiteralPlan, firstAcceptedCellTypes); }
+    static constexpr ptrdiff_t offsetOfLastAcceptedCellTypes() { return OBJECT_OFFSETOF(ObjectLiteralPlan, lastAcceptedCellTypes); }
     static constexpr ptrdiff_t offsetOfInitialWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, initialWords); }
     static constexpr ptrdiff_t offsetOfNumberOfInitialWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, numberOfInitialWords); }
 
@@ -157,6 +161,9 @@ struct ObjectLiteralPlan {
     const uint64_t* initialWords { nullptr };
     uint32_t numberOfInitialWords { 0 };
     uint8_t acceptedValues[maxNumberOfValues] { };
+    // The objects that a field accepts by the type of their cells. No object has type zero.
+    uint8_t firstAcceptedCellTypes[maxNumberOfValues] { };
+    uint8_t lastAcceptedCellTypes[maxNumberOfValues] { };
 };
 
 class ObjectLiteralPlans {

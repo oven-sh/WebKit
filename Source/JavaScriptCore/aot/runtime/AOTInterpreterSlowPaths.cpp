@@ -570,7 +570,7 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanThatTestsValues
         return nullptr;
     using Builder = ObjectBuilderPlan;
     static_assert(ObjectLiteralPlan::acceptsInt32 == Builder::AcceptsInt32 && ObjectLiteralPlan::acceptsDouble == Builder::AcceptsDouble && ObjectLiteralPlan::acceptsString == Builder::AcceptsString);
-    static_assert(ObjectLiteralPlan::acceptsObject == Builder::AcceptsObject && ObjectLiteralPlan::acceptsBoolean == Builder::AcceptsBoolean);
+    static_assert(ObjectLiteralPlan::acceptsObject == Builder::AcceptsObject && ObjectLiteralPlan::acceptsBoolean == Builder::AcceptsBoolean && ObjectLiteralPlan::acceptsNull == Builder::AcceptsNull);
     auto plan = makeUniqueWithoutFastMallocCheck<ObjectLiteralPlan>();
     fillPlanFromBuilder(instance, builder, *plan);
     plan->planForOrdinaryObject = &planForOrdinaryObject;
@@ -582,8 +582,20 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanThatTestsValues
     plan->acceptedStructureIDs = builder.m_acceptedStructureIDs.span().data();
     for (size_t index = 0; index < builder.m_fastFields.size(); ++index) {
         constexpr uint8_t cells = ObjectBuilderPlan::AcceptsString | ObjectBuilderPlan::AcceptsObject;
-        constexpr uint8_t testedInline = cells | ObjectBuilderPlan::AcceptsInt32 | ObjectBuilderPlan::AcceptsDouble | ObjectBuilderPlan::AcceptsBoolean;
-        plan->acceptedValues[index] = builder.m_fastFields[index].acceptedValues & (builder.m_fastFields[index].representation == SlotRepresentation::Cell ? cells : testedInline);
+        constexpr uint8_t testedInline = cells | ObjectBuilderPlan::AcceptsInt32 | ObjectBuilderPlan::AcceptsDouble | ObjectBuilderPlan::AcceptsBoolean | ObjectBuilderPlan::AcceptsNull;
+        bool holdsCellsAlone = builder.m_fastFields[index].representation == SlotRepresentation::Cell;
+        plan->acceptedValues[index] = builder.m_fastFields[index].acceptedValues & (holdsCellsAlone ? cells : testedInline);
+        RuntimeLayoutTable& layouts = instance.state->objects->layouts;
+        const FieldData& field = *builder.m_fields[index].field;
+        if (!holdsCellsAlone && layouts.slotAdmits(field, jsUndefined()))
+            plan->acceptedValues[index] |= ObjectLiteralPlan::acceptsUndefined;
+        for (const RuntimeCellTest& test : layouts.typeOf(field).cellTests()) {
+            if (test.kind != CellTestKind::CellTypeIs || test.cellTypes().first < ObjectType)
+                continue;
+            plan->firstAcceptedCellTypes[index] = test.cellTypes().first;
+            plan->lastAcceptedCellTypes[index] = test.cellTypes().last;
+            break;
+        }
     }
     return plan;
 }

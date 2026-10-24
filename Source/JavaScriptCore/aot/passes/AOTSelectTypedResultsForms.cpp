@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -148,6 +149,7 @@ void TypedResultExpander::expandParsedText(const TypedResultSite& site)
     builder().moveToEndOf(generic);
     builder().emitJump(again, { builder().appendBoolean(false) });
     builder().moveToEndOf(rejected);
+    emitThrowUnlessErrorIsLookedAt();
     builder().emitJump(again, { builder().appendBoolean(true) });
 
     ValueID isRefused = builder().addParameter(again, TypeTable::boolean);
@@ -314,6 +316,7 @@ ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, Value
     builder().emitJump(merge, { copy });
 
     builder().moveToEndOf(rejected);
+    emitThrowUnlessErrorIsLookedAt();
     builder().emitJump(general, { builder().appendBoolean(true) });
     builder().moveToEndOf(unknown);
     builder().emitJump(general, { builder().appendBoolean(false) });
@@ -330,10 +333,23 @@ ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, Value
     return validated;
 }
 
+// Compiled code has refused the value. A handler that never looks at what it catches is told no more than that: no error is made, the text is not parsed again, and nothing is found out about the value.
+void TypedResultExpander::emitThrowUnlessErrorIsLookedAt()
+{
+    IRBuilder::BranchBlocks blocks = builder().emitBranch(builder().append(Opcode::IsThrownValueIgnored, { }));
+    builder().moveToEndOf(blocks.taken);
+    Value error = IRBuilder::make(Opcode::ThrowNewError);
+    error.setErrorKind(ErrorKind::TypeError);
+    error.setMessage(inputs().strings.intern(StringView(emptyString())));
+    builder().append(WTF::move(error));
+    builder().emitUnreachable();
+    builder().moveToEndOf(blocks.notTaken);
+}
+
 ValueID TypedResultExpander::emitGeneralValidation(const TypedResultSite& site, ValueID value, ValueID isRefused)
 {
     StringID plan = validationPlanText(program(), inputs().strings, site.root.expectedResult(), site.root.part);
-    return appendHelperCall(Builtins::CompilerHelpersValidateByPlan, { value, appendString(plan), isRefused ? isRefused : builder().appendBoolean(false) });
+    return appendHelperCall(Builtins::CompilerHelpersValidateByPlan, { value, appendString(plan), isRefused ? isRefused : builder().appendBoolean(false), builder().append(Opcode::GetPreparedPlans, { }) });
 }
 
 } } } // namespace JSC::AOT::Typed

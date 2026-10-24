@@ -208,7 +208,7 @@ static bool mayFindSlotEmpty(const PropertyAccessContext& context, const Propert
 
 static bool isAnsweredByTestOfCell(const PropertyAccessContext& context, const PropertyAccessQuery& query, const FieldArmState& state)
 {
-    if (state.isAlwaysFilled || !state.isFilledAtBirth || query.isPrivate || state.hasDeferredMember || !state.form.isEmpty())
+    if (state.isAlwaysFilled || !state.isFilledAtBirth || state.hasDeferredMember || !state.form.isEmpty())
         return false;
     if ((state.holdsRawNumberOrBoolean && !state.holdsRawValuesWhileCellIsUnmarked) || (state.isRequired && state.holdsOnlyListedFunctions))
         return false;

@@ -24,6 +24,7 @@
 namespace JSC { namespace AOT {
 
 class CacheRegistry;
+class CompiledStructure;
 class ObjectBuilderPlan;
 struct Instance;
 
@@ -55,6 +56,20 @@ public:
     };
 
     JSONValueParser::LearnedNames& learnedNames();
+
+    // How an object with members that its type does not declare was finished: the next one that is born alike, with the same names in the same places, is finished the same way.
+    struct FinishedObject {
+        Structure* structureAtBirth { nullptr };
+        Structure* extraStructure { nullptr };
+        uint64_t order { 0 };
+        uint32_t orderWordAtBirth { 0 };
+        uint32_t orderAndCount { 0 };
+        CompiledStructure* structure { nullptr };
+    };
+    FinishedObject& finishedObjectFor(Structure* structureAtBirth, Structure* extraStructure)
+    {
+        return m_finishedObjects[((structureAtBirth->id().bits() ^ extraStructure->id().bits()) >> 4) % m_finishedObjects.size()];
+    }
 
     bool hasParsedRecords() const { return m_hasParsedRecords; }
     ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
@@ -110,6 +125,7 @@ private:
     RefPtr<StringImpl> m_wideText;
     size_t m_sourceCapacity { 0 };
     JSONKeyOrderLists m_keyOrderLists;
+    std::array<FinishedObject, 16> m_finishedObjects;
 };
 
 } } // namespace JSC::AOT

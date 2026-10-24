@@ -114,7 +114,7 @@ function f4 name="bitsOfAnIntegerOfAnyRange" parameters=[{type=int[0, 4294967296
 # CHECK-LABEL: function f4 name="bitsOfAnIntegerOfAnyRange"
 # CHECK-NOT: TypeTest
 
-function f5 name="aCounterThatIsReturnedIsWantedAsAValue" parameters=[{type=int[0, 4294967296]}, {type=boolean}] results=[{type=number}] {
+function f5 name="aCounterThatIsReturnedBehindTheLoopIsMadeAValueOnce" parameters=[{type=int[0, 4294967296]}, {type=boolean}] results=[{type=number}] {
   b0(v0: int[0, 4294967296], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
@@ -132,8 +132,8 @@ function f5 name="aCounterThatIsReturnedIsWantedAsAValue" parameters=[{type=int[
   b5():
     Return v3
 }
-# CHECK-LABEL: function f5 name="aCounterThatIsReturnedIsWantedAsAValue"
-# CHECK: TypeTest {{*}} testedType=i32
+# CHECK-LABEL: function f5 name="aCounterThatIsReturnedBehindTheLoopIsMadeAValueOnce"
+# CHECK-NOT: TypeTest
 
 function f6 name="belowAnInt32TheTestWillBeProven" parameters=[{type=i32}] results=[{type=i32}] {
   b0(v0: i32):
@@ -158,3 +158,22 @@ function f7 name="last" results=[{type=undefined}] {
     Return v0
 }
 # CHECK-LABEL: function f7 name="last"
+
+function f8 name="aCounterThatIsHandedOnInTheLoopIsWantedAsAValue" parameters=[{type=int[0, 4294967296]}, {type=anything}] results=[{type=number}] {
+  b0(v0: int[0, 4294967296], v1: anything):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int|whole ~ int[0, 2147483647]):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    v7 = Call v1, v6, v3
+    v8: int|whole ~ int[1, 2147483648] = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f8 name="aCounterThatIsHandedOnInTheLoopIsWantedAsAValue"
+# CHECK: TypeTest {{*}} testedType=i32

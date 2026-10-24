@@ -171,17 +171,18 @@ std::optional<uint32_t> ConcatenationFuser::findAbsorbableOperand(ProgramPoint o
     bool isConversion = isConversionOfPrimitive(inner) && mayBecomeKey(m_function.at(outerPoint.block).values[outerPoint.index]);
     if (!isConcatenation(inner) && !isConversion)
         return std::nullopt;
+    bool mayRunAtAnyLaterTime = isConversion || hasBoundedLength(inner);
 
     const UseLists& uses = m_context.analyses.useLists();
     if (uses.useCount(operand) != 1)
         return std::nullopt;
 
     ValueLocation location = uses.locationOf(operand);
-    if (location.block != outerPoint.block || location.index >= (isConversion ? outerPoint.index : limit))
+    if (location.block != outerPoint.block || location.index >= (mayRunAtAnyLaterTime ? outerPoint.index : limit))
         return std::nullopt;
 
     const Block& block = m_function.at(outerPoint.block);
-    for (uint32_t index = limit; !isConversion && --index > location.index;) {
+    for (uint32_t index = limit; !mayRunAtAnyLaterTime && --index > location.index;) {
         if (!absorbed.get(index) && hasObservableEffects(block.values[index]))
             return std::nullopt;
     }
@@ -209,7 +210,7 @@ void ConcatenationFuser::fuseOperands(ProgramPoint outerPoint, BitVector& absorb
             reversedParts.append(inner.operand(partIndex));
         absorbed.set(*found);
         didAbsorb = true;
-        if (inner.opcode != Opcode::ToString)
+        if (inner.opcode != Opcode::ToString && !hasBoundedLength(inner))
             limit = *found;
     }
     if (!didAbsorb)
@@ -570,14 +571,13 @@ Vector<MergedString, 4> ConcatenationFuser::findMergedStrings()
         const Block& block = m_function.at(string.block);
         if (block.role != BlockRole::Ordinary || isEnteredFromDeadBlock.quickGet(string.block.index()))
             return false;
-        // What a block makes is there behind its end: neither at its head, where its handler is handed its arguments, nor in the handler.
-        if (block.handler) {
-            const Dominators& dominators = m_context.analyses.dominators();
-            for (const Use& use : uses.usesOf(string.parameter)) {
-                if (use.block == string.block ? use.kind == Use::Kind::HandlerArgument : !dominators.terminatorDominates(string.block, use.block))
-                    return false;
-            }
-        }
+        auto isReadByOwnHandler = [&](const Use& use) {
+            if (use.block == string.block)
+                return use.kind == Use::Kind::HandlerArgument;
+            return !m_context.analyses.dominators().terminatorDominates(string.block, use.block);
+        };
+        if (block.handler && std::ranges::any_of(uses.usesOf(string.parameter), isReadByOwnHandler))
+            return false;
         for (Edge edge : cfg.incomingEdges(string.block)) {
             const Target& target = targetOf(m_function, edge);
             if (edge.isHandlerEdge() || string.parameterIndex >= target.arguments.size())

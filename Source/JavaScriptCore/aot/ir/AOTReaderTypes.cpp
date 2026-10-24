@@ -274,21 +274,28 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
     Vector<WireTypeConversion> met = collectInParallel<WireTypeConversion>(loops, numberOfLayouts, [&](unsigned type, Vector<WireTypeConversion>& found) {
         if (!isStructuralType(layouts[type]))
             return;
+        bool isDeclaredNowhere = layouts[type].name == Wire::none && layouts[type].module == Wire::none;
         Vector<uint32_t, 16> required;
-        const Vector<uint32_t>* fewest = nullptr;
+        Vector<uint32_t, 16> requiredFields;
         for (const Wire::Field& field : fieldsOf(checkedSections, layouts[type])) {
             if (!isNamedByProgram(field) || !has(field, FieldFlags::IsRequired) || has(field, FieldFlags::IsNeverWritten) || field.key >= layoutsWithName.size())
                 continue;
             required.append(field.key);
-            if (!fewest || layoutsWithName[field.key].size() < fewest->size())
-                fewest = &layoutsWithName[field.key];
+            if (!isDeclaredNowhere || isRequiredField(field))
+                requiredFields.append(field.key);
+        }
+        const Vector<uint32_t>* fewest = nullptr;
+        for (uint32_t name : requiredFields) {
+            if (!fewest || layoutsWithName[name].size() < fewest->size())
+                fewest = &layoutsWithName[name];
         }
         if (!fewest)
             return;
         AOT::sort(required);
+        AOT::sort(requiredFields);
         size_t sizeBefore = found.size();
         for (uint32_t layout : *fewest) {
-            if (layout != type && std::ranges::includes(names[layout], required) && !tellingFields.tellApart(layout, type))
+            if (layout != type && std::ranges::includes(names[layout], declaresEveryName(layouts[layout]) ? required : requiredFields) && !tellingFields.tellApart(layout, type))
                 found.append({ layout, type });
         }
         // Names that this many layouts have say little about an object, and every type that lists them all costs the compiler time and memory.

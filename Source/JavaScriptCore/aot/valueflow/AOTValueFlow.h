@@ -262,8 +262,6 @@ enum class ValueFlowStatementKind : uint8_t {
     ModuleEvaluation,
     // What goes between the body of an async function or a generator and the promise or the generator that its callers get: the statement lies in that body.
     Coroutine,
-    // In a function that only tests its arguments, and in the typed body that it calls.
-    EntryChecks,
     // In the host's body, one of each.
     HostRoots,
     UsedBuiltins,

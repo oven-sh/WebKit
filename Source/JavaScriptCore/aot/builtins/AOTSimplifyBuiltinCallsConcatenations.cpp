@@ -158,6 +158,22 @@ static std::optional<Concatenation> matchRawTemplate(FunctionPassContext& contex
     return concatenation;
 }
 
+static std::optional<Concatenation> matchConcat(FunctionPassContext& context, const ValueSite& site)
+{
+    const Function& function = context.function;
+    const Value* call = findWholeCallOf(context, site.value, Builtins::StringPrototypeConcat);
+    if (!call || !call->receiverOperand() || !context.program.typeOf(function, call->receiverOperand()).isAnyString())
+        return std::nullopt;
+
+    Concatenation concatenation { site, { ConcatenatedPart { call->receiverOperand(), { } } } };
+    for (ValueID argument : call->argumentsOperands()) {
+        if (!isConvertedWithoutCode(context.program.typeOf(function, argument)))
+            return std::nullopt;
+        concatenation.parts.append(ConcatenatedPart { argument, { } });
+    }
+    return concatenation;
+}
+
 static Value makeStringConstant(StringID text)
 {
     Value constant = IRBuilder::make(Opcode::String);
@@ -189,6 +205,8 @@ unsigned simplifyConcatenatingCalls(FunctionPassContext& context, const BuiltinC
         std::optional<Concatenation> concatenation = matchJoinOfLiteral(context, site);
         if (!concatenation)
             concatenation = matchRawTemplate(context, site);
+        if (!concatenation)
+            concatenation = matchConcat(context, site);
         if (concatenation && !context.exceeds(LimitID::MaxFusedConcatenationParts, concatenation->parts.size(), site.value))
             concatenations.append(WTF::move(*concatenation));
     }

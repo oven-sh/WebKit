@@ -1,8 +1,8 @@
 # A step is a step whichever side of the sum the constant is written on
 # FORM: Prepared
 # RUN: pass ConvertCountersToIntegers
-# STATISTIC: CountersConverted = 4
-# STATISTIC: ConvertCountersToIntegersChanges = 4
+# STATISTIC: CountersConverted = 5
+# STATISTIC: ConvertCountersToIntegersChanges = 5
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twoPlusCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
@@ -106,8 +106,9 @@ function f4 name="twoMinusCounter" parameters=[{type=int[0, 100]}] results=[{typ
   b3():
     Return
 }
+# It is no step. What is compared with an integer goes on along the staying edge all the same.
 # CHECK-LABEL: function f4 name="twoMinusCounter"
-# CHECK: b1(v3: int|whole):
-# CHECK: Branch v5 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: int|whole = Sub v2, v3
+# CHECK: b1(v3: int[-97, 99]):
+# CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[compared4]]: int[-97, 99]):
+# CHECK-NEXT: v6: int[-97, 99] = Sub v2, [[compared4]]

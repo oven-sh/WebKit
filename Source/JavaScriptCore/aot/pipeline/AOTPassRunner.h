@@ -229,14 +229,6 @@ private:
         std::atomic<uint64_t> idleRunsWithLogEntries { 0 };
     };
 
-    // What the passes of the schedule Simplify still find to do where the schedule begins.
-    struct ChangesBehindSimplify {
-        std::atomic<uint64_t> runs { 0 };
-        std::atomic<uint64_t> functions { 0 };
-        std::atomic<uint64_t> functionsWithLoop { 0 };
-        std::atomic<uint32_t> firstFunction { std::numeric_limits<uint32_t>::max() };
-    };
-
     static PassOutcome updateAnalyses(PassID, const ProgramEditor&, ProgramAnalyses&);
     void shrinkChangedFunctionsToFit(Program&, const ProgramEditor&) const;
 
@@ -255,8 +247,6 @@ private:
     void runSteps(std::span<const ScheduleStep>, FunctionPassContext&, ScheduleRun&, WhatFollows = WhatFollows::MoreSteps) const;
     void verifyAfterFunctionPass(const PassDescriptor&, FunctionPassContext&, ScheduleRun&) const;
     void verifySkippedFunctionPass(const PassDescriptor&, const FunctionPassContext&, ScheduleRun&) const;
-    void countChangesBehindSimplify(std::span<const ScheduleStep>, const FunctionPassContext&, const ScheduleRun&) const;
-    void reportChangesBehindSimplify();
     void dumpAfterFunctionPass(PassID, const FunctionPassContext&) const;
     void stopBehind(PassID, ScheduleRun&) const;
 
@@ -275,9 +265,6 @@ private:
     mutable std::array<FunctionPassTotals, numberOfPasses> m_functionPassTotals { };
     mutable std::array<CountsOfPasses, numberOfSharesOfCounts> m_countsOfPasses { };
     mutable std::array<FunctionPassTotals, numberOfSizeClasses> m_totalsBySize { };
-    mutable std::array<ChangesBehindSimplify, numberOfPasses> m_changesBehindSimplify { };
-    // For the names in the report. Null until a change is counted.
-    mutable std::atomic<const Program*> m_programWithChangesBehindSimplify { nullptr };
     mutable Lock m_dumpLock;
 };
 

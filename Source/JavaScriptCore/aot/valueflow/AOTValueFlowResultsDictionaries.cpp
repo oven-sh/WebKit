@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBlockCycles.h"
+#include "AOTCFG.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
@@ -78,13 +80,34 @@ static bool isLayoutOfLiteralUsedAsDictionary(const Layout& layout, const FlowLa
 // `const members = { get size() { .. } }   Object.create(members)`
 static bool isLayoutOfLiteralAboveCreatedObjects(const Layout& layout, const FlowLayoutUpdate& update)
 {
-    return update.objectsArePrototypesOfCreatedObjects && layout.kind == LayoutKind::Record && layout.flags.isEmpty() && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
+    return update.objectsArePrototypesOfCreatedObjects && layout.kind == LayoutKind::Record && layout.flags.isEmpty() && layout.staticFields.isEmpty()
         && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount;
 }
 
-static void listLayoutsNamedIn(const Program& program, const Function& function, const NamedLayoutFinder& finder)
+// A literal that lists its members is worth its slots. It gives them up only where it is made once, like the members of a module, and is written to stand above what Object.create makes: some call is handed that object alone.
+static void listLiteralsThatKeepTheirSlots(const FlowApplication& application, const Function& function, bool functionRunsAtMostOnce, const NamedLayoutFinder& finder)
+{
+    auto listsMembers = [&](const Value& value) {
+        return value.opcode == Opcode::NewObject && !value.fields().empty() && finder.named.layouts.quickGet(value.layout().index());
+    };
+    if (std::ranges::none_of(function.values, listsMembers))
+        return;
+    CFG cfg(function);
+    BlockCycles cycles(cfg);
+    for (BlockID block : cfg.reversePostOrder()) {
+        bool runsAtMostOnce = functionRunsAtMostOnce && !cycles.isInCycle(block);
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (listsMembers(value) && (!runsAtMostOnce || !application.layouts[value.layout().index()].isHandedToObjectCreateAlone))
+                finder(value.layout());
+        }
+    }
+}
+
+static void listLayoutsNamedIn(const Program& program, const FlowApplication& application, const Function& function, bool functionRunsAtMostOnce, const NamedLayoutFinder& finder)
 {
     forEachReference(static_cast<const FunctionRecord&>(function), finder);
+    listLiteralsThatKeepTheirSlots(application, function, functionRunsAtMostOnce, finder);
     // A test can find a layout, and nothing of an ordinary object: it stops looking for a layout that nothing has any more. One that would look for nothing at all keeps what it looks for.
     auto listLayoutsTestedAlone = [&](TypeID tested) {
         Type rest = program.at(tested);
@@ -96,7 +119,7 @@ static void listLayoutsNamedIn(const Program& program, const Function& function,
             finder(layouts);
     };
     for (const Value& value : function.values) {
-        if (!layoutOfEmptyLiteral(program, value))
+        if (!layoutOfPlainLiteral(program, value))
             forEachReference(value, finder);
         if (value.opcode == Opcode::Check)
             listLayoutsTestedAlone(value.castType());
@@ -220,7 +243,7 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
 
     NamedLayouts named(program, candidates, inputs.loops());
     Vector<uint32_t> found = collectInParallel<uint32_t>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<uint32_t>& foundInFunction) {
-        listLayoutsNamedIn(program, program.functions[index], { named, foundInFunction });
+        listLayoutsNamedIn(program, application, program.functions[index], tables.functions.functions[index].executions == ExecutionCount::AtMostOnce, { named, foundInFunction });
     });
     auto searchEach = [&](unsigned count, const auto& search) {
         found.appendVector(collectInParallel<uint32_t>(inputs.loops(), count, [&](unsigned index, Vector<uint32_t>& foundInRecord) {

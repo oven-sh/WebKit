@@ -348,12 +348,11 @@ void StoresByLayout::findReceiversBehindChecks()
                 });
             }
         }
-        bool isTypedBody = m_inputs.universe().genericVersionOf(FunctionID(index)) && function.role != FunctionRole::EntryChecks;
-        if (hasCheck && hasTypedReceiver && !isTypedBody) {
+        if (hasCheck && hasTypedReceiver) {
             const BitVector* known = m_inputs.bodies().valuesBehindChecks(FunctionID(index));
             m_valuesBehindChecks[index] = known ? *known : findValuesBehindChecks(program, function, CFG(function));
         }
-        m_hasChecksNotLookedAt[index] = hasCheck && !hasTypedReceiver && !isTypedBody;
+        m_hasChecksNotLookedAt[index] = hasCheck && !hasTypedReceiver;
     });
 }
 

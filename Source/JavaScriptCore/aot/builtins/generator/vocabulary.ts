@@ -586,7 +586,6 @@ export interface EntryColumns {
   loads?: readonly ModuleLoadSpec[];
   callsFunctions?: readonly CalledFunctionSpec[];
   appendForm?: InlineBuiltinName;
-  hostAppendSymbol?: string;
   jsonTextForm?: { argument: OperandName | number; nativeSymbol?: string; path?: BuiltinPath };
   /** The function that does the same where the argument is an object literal that nobody else sees and that has no member but `names`. */
   literalPartsForm?: { argument: number; names: readonly string[]; path: BuiltinPath };

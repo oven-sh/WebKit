@@ -451,6 +451,8 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
     });
     if (isListed ? access.whenPresent != PresentField::IsOwnData : access.whenAbsent != AbsentField::FindsNothing)
         return true;
+    if (store.opcode == Opcode::PropDelete)
+        return false;
     TypeID storedType = m_function.at(store.valueOperand()).type;
     TypeID fieldType = typeOfField(m_context, description, access.field);
     if (storedType == fieldType || m_program.at(storedType).isSubsetOf(m_program.at(fieldType), m_program))
@@ -623,7 +625,7 @@ void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use
             if (neverFolds(object, user, use.block))
                 materialize(object, use);
             else
-                addEvent(EventKind::Store, object, use, user.opcode == Opcode::AppendHole ? noObject : objectNamedBy(user.valueOperand()).value_or(noObject));
+                addEvent(EventKind::Store, object, use, storesWithoutValue.contains(user.opcode) ? noObject : objectNamedBy(user.valueOperand()).value_or(noObject));
             return;
         }
         std::optional<uint32_t> holder = objectNamedBy(user.operand(0));
@@ -633,7 +635,7 @@ void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use
                 m_objects[find(*source)].holdsUnmodeledObjects = true;
             } else
                 materialize(object, use);
-        } else if (user.opcode != Opcode::AppendHole && user.valueOperand() == name)
+        } else if (!storesWithoutValue.contains(user.opcode) && user.valueOperand() == name)
             addEvent(EventKind::Hold, object, use, *holder);
         return;
     }

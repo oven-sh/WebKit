@@ -51,11 +51,11 @@ void runValueFlowResultsTestCommand(TestCommandContext& context)
         context.out.println("outside-type "_s, line);
 }
 
-// valueflow-apply [split]: the program with the tables applied, validated and verified. split: see prepareAsInFrontOfFlow().
+// valueflow-apply: the program with the tables applied, validated and verified.
 void runValueFlowApplyTestCommand(TestCommandContext& context)
 {
     for (const String& word : context.arguments) {
-        if (word != "split"_s && word != "unguarded"_s)
+        if (word != "unguarded"_s)
             return printBadArgument(context.out, word);
     }
     prepareForFlow(context);

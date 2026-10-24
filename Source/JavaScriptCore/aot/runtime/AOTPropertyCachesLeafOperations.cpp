@@ -21,10 +21,12 @@
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "ArrayStorage.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
+#include "SparseArrayValueMap.h"
 
 namespace JSC { namespace AOT {
 
@@ -309,9 +311,25 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
     return read;
 }
 
+// A frozen array that has a name of its own, as the strings of a tagged template have, keeps its elements in a map.
+static JSValue readSparseElement(JSObject* object, uint32_t index)
+{
+    if (!hasAnyArrayStorage(object->indexingType()) || (object->type() != ArrayType && object->type() != FinalObjectType))
+        return { };
+    SparseArrayValueMap* map = object->butterfly()->arrayStorage()->m_sparseMap.get();
+    if (!map)
+        return { };
+    auto entry = map->find(index);
+    if (entry == map->notFound() || entry->attributes() & PropertyAttribute::Accessor)
+        return { };
+    return entry->get();
+}
+
 static StructuralRead readElement(JSObject* object, uint32_t index)
 {
     JSValue value = object->tryGetIndexQuickly(index);
+    if (!value)
+        value = readSparseElement(object, index);
     if (!value)
         return { };
     return { value, LeafPresence::Own };
@@ -352,6 +370,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, (
 {
     LeafOperationScope leaf(*instance->vm);
     return JSValue::encode(readByKey(instance, base, key).value);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSparseElement, EncodedJSValue, (Instance* instance, JSCell* base, EncodedJSValue index))
+{
+    LeafOperationScope leaf(*instance->vm);
+    return JSValue::encode(readSparseElement(asObject(base), JSValue::decode(index).asUInt32()));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key))

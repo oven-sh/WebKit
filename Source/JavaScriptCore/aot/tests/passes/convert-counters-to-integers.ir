@@ -1,7 +1,7 @@
 # A number counter with integer entries, constant steps and an integer bound becomes an integer
 # FORM: Prepared
 # RUN: pass ConvertCountersToIntegers
-# STATISTIC: CountersConverted = 15
+# STATISTIC: CountersConverted = 16
 # LOSS: MaxCounterStep x1 f10 v2
 
 module m0 path="main.js" displayPath="main.js"
@@ -329,8 +329,9 @@ function f15 name="productOnBackEdge" parameters=[{type=i32}] results=[{type=und
     Return
 }
 # CHECK-LABEL: function f15 name="productOnBackEdge"
-# CHECK: b1(v2: int|whole):
-# CHECK: Branch v4 -> taken b2(), notTaken b3()
+# CHECK: b1(v2: int[1, 4294967292]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[compared15]]: int[1, 2147483646]):
 
 function f16 name="outerCounterAsBound" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
   b0(v0: int[0, 100]):

@@ -165,7 +165,7 @@ public:
     // The layouts of the objects that arrive. None unless the set is complete: no placeholder is left in it, and every object has one of the layouts.
     std::optional<LayoutSet> receiversAt(const Type& family, ValueSetID);
     // The functions and the built-in functions that a call of the set enters. The set is not complete where something else that can be called may arrive. None where almost everything arrives.
-    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID, bool isConstruction);
+    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID, const ValueFlowOperand* calleeOfConstruction);
 
     // Whether every member passes a test for the type whatever happens. An allocation that picks its layout does where all that it picks lies inside.
     bool isSurelyInside(ValueSetID, const Type&);
