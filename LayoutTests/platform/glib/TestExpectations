@@ -949,6 +949,9 @@ imported/w3c/web-platform-tests/svg/painting/reftests/non-scaling-stroke-with-no
 imported/w3c/web-platform-tests/css/css-highlight-api/painting/custom-highlight-painting-display-types.html [ Pass ]
 imported/w3c/web-platform-tests/svg/painting/reftests/non-scaling-stroke-non-uniform-scale.html [ Pass ]
 
+# Passing since 324380@main.
+imported/w3c/web-platform-tests/css/css-content/quotes-first-line.html [ Pass ]
+
 imported/w3c/web-platform-tests/fs/ [ Pass ]
 storage/filesystemaccess/ [ Pass ]
 imported/w3c/web-platform-tests/storage/ [ Pass ]
@@ -1868,6 +1871,7 @@ webkit.org/b/213699 http/wpt/mediarecorder/set-srcObject-MediaStream-Blob.html [
 webkit.org/b/306457 [ Release ] http/wpt/mediarecorder/MediaRecorder-audio-bitrate-webm.html [ Failure Pass ]
 webkit.org/b/213699 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavailable.html [ Failure ]
 webkit.org/b/213699 http/wpt/mediarecorder/MediaRecorder-first-frame.html [ Failure Pass ]
+webkit.org/b/328313 http/wpt/mediarecorder/MediaRecorder-video-before-audio.html [ Failure ]
 
 webkit.org/b/323054 http/wpt/mediarecorder/MediaRecorder-single-frame-timeslice.html [ Skip ]
 webkit.org/b/213699 fast/mediacapturefromelement/CanvasCaptureMediaStream-capture-out-of-DOM-element.html [ Skip ]
@@ -1949,7 +1953,6 @@ imported/w3c/web-platform-tests/video-rvfc/request-video-frame-callback-during-x
 
 webkit.org/b/233836 http/tests/media/media-blocked-by-willsendrequest.html [ Pass Timeout ]
 
-webkit.org/b/131546 media/track/track-in-band-mode.html [ Failure ]
 webkit.org/b/131546 media/track/track-in-band-cues-added-once.html [ Pass Timeout ]
 
 # Even with playbin3 enabled there is still a failure here, h264parse is unable
@@ -3833,6 +3836,7 @@ webkit.org/b/79203 fast/mediastream/MediaStream-video-element-video-tracks-disab
 webkit.org/b/84692 fast/events/attempt-scroll-with-no-scrollbars.html [ Failure ]
 
 [ Debug ] fast/events/document-destruction-during-event-firing-crash.html [ Slow ]
+[ Debug ] accessibility/accessible-name-recursion-no-crash.html [ Slow ]
 
 # Started failing after it was added in r116473.
 webkit.org/b/85969 http/tests/loading/post-in-iframe-with-back-navigation.html [ Failure ]
@@ -3996,7 +4000,6 @@ webkit.org/b/187271 fast/text/emoji-with-joiner.html [ Failure ]
 webkit.org/b/191497 http/tests/inspector/network/getSerializedCertificate.html [ Skip ]
 webkit.org/b/192407 http/tests/inspector/network/resource-security-connection.html [ Skip ]
 webkit.org/b/193323 http/wpt/cache-storage/cache-quota.any.html [ Failure ]
-webkit.org/b/193518 imported/w3c/web-platform-tests/fetch/range/general.window.html [ Failure ]
 webkit.org/b/193631 fast/text/font-variations-feature-detection.html [ ImageOnlyFailure ]
 webkit.org/b/194606 accessibility/set-value-not-work-for-disabled-sliders.html [ Skip ] # Timeout.
 webkit.org/b/196201 fast/text/ja-sans-serif.html [ ImageOnlyFailure ]
@@ -4368,10 +4371,9 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_center_position_lt_50.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_center.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_end.html [ Pass ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_left_right_with_and_without_snap_to_lines.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/align_start.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/basic.html [ Pass ]
-imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u002E_LF_u05D0.html [ Pass ]
-imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u002E_u2029_u05D0.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u0041_first.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u06E9_no_strong_dir.html [ Skip ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/disable_controls_reposition.html [ Pass ]
@@ -4379,6 +4381,7 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/dom_override_cue_text.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/evil/size_90.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/navigate_cue_position.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/repaint.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/background_box.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/bold_object/bold_background_properties.html [ Pass ]
 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/selectors/cue_function/bold_object/bold_background_shorthand.html [ Pass ]
@@ -4507,7 +4510,7 @@ webkit.org/b/213783 webanimations/accelerated-animation-with-easing.html [ Pass 
 
 # Seek on live streams not implemented.
 
-webkit.org/b/285921 media/media-source/media-source-seek-past-end.html [ Failure Crash Pass ]
+webkit.org/b/285921 media/media-source/media-source-seek-past-end.html [ Failure Pass ]
 
 
 # CSS image-orientation is not yet enabled.
@@ -4992,8 +4995,6 @@ webkit.org/b/314776 media/media-source/media-source-append-pt-collision-tail.htm
 webkit.org/b/314809 fast/repaint/table-row-move-after-content-change.html [ Pass ImageOnlyFailure ]
 
 
-webkit.org/b/315756 fast/css/container-query-orientation-modal-dialog-crash.html [ Crash Pass ]
-
 webkit.org/b/316158 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
 
 webkit.org/b/316427 webkit.org/b/315994 animations/restart-after-scroll.html [ Pass Failure Crash ]
@@ -5131,9 +5132,6 @@ webkit.org/b/312273 http/tests/media/video-play-waiting.html [ Pass Failure ]
 webkit.org/b/320054 [ Debug ] imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/track/track-element/track-cues-add-new-track.html [ Failure Pass ]
 webkit.org/b/321280 [ Debug ] imported/w3c/web-platform-tests/html/semantics/embedded-content/the-audio-element/audio-loading-lazy-in-viewport.html [ Failure Pass ]
 webkit.org/b/322623 accessibility/list-marker-content-renderers-text.html [ Failure ]
-webkit.org/b/322624 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-001.html [ Crash Timeout Pass ]
-webkit.org/b/322624 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-004.html [ Crash Timeout Pass ]
-webkit.org/b/322624 imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ Crash Timeout Pass ]
 webkit.org/b/322641 [ Debug ] imported/w3c/web-platform-tests/web-animations/timing-model/animations/start-time-compat.html [ Pass Failure ]
 webkit.org/b/322642 [ Debug ] imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-unconnected-outputs.https.window.html [ Pass Failure ]
 webkit.org/b/322646 [ Debug ] media/track/track-readiness-state.html [ Pass Failure ]
@@ -5250,9 +5248,23 @@ media/modern-media-controls/spatial-video-support [ Skip ]
 # Gardening 2026-10-20
 webkit.org/b/309894 [ Release ] http/tests/inspector/target/pause-on-inline-debugger-statement.html [ Pass Timeout Crash ]
 webkit.org/b/320214 [ Debug ] inspector/debugger/async-stack-trace-truncate.html [ Failure Timeout ]
-webkit.org/b/328192 [ Debug ] fast/canvas/draw-element-image/2d-drawElementImage-rotated-text.html [ ImageOnlyFailure Pass ]
+webkit.org/b/328192 fast/canvas/draw-element-image/2d-drawElementImage-rotated-text.html [ ImageOnlyFailure Pass ]
 webkit.org/b/328194 inspector/timeline/timeline-event-EventDispatch.html [ Failure Pass Timeout ]
 webkit.org/b/328194 inspector/timeline/timeline-event-TimerRemove.html [ Failure Pass Timeout ]
+
+# Gardening 2026-10-22
+webkit.org/b/328432 [ Debug ] imported/w3c/web-platform-tests/mixed-content/tentative/autoupgrades/mixed-content-cors.https.sub.html [ Failure Pass ]
+
+webkit.org/b/328003 imported/w3c/web-platform-tests/svg/painting/marker-with-mask-cycle-crash.html [ Crash Timeout ]
+webkit.org/b/328474 media/track/track-paint-on-captions.html [ Pass Timeout ]
+webkit.org/b/328474 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/audio_has_no_subtitles.html [ ImageOnlyFailure Pass ]
+webkit.org/b/328474 media/track/in-band/track-in-band-srt-mkv-cues-added-once.html [ Failure Pass ]
+webkit.org/b/328474 http/tests/media/media-seeking-no-ranges-server.html [ Failure Pass ]
+webkit.org/b/328474 imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/evil/non-standard-pseudo-elements.html [ Pass Timeout ]
+webkit.org/b/328311 [ Debug ] media/media-source/media-source-dropped-iframe.html [ Crash Pass ]
+
+# Gardening 2026-10-23
+webkit.org/b/312871 media/media-source/media-source-seek-to-zero-then-play.html [ Pass Timeout ]
 
 # End: Common failures between GTK and WPE.
 

@@ -156,6 +156,7 @@ set(TestWTF_SOURCES
     Tests/WTF/SparseBitVector.cpp
     Tests/WTF/StackTraceTest.cpp
     Tests/WTF/StdLibExtrasTests.cpp
+    Tests/WTF/Stopwatch.cpp
     Tests/WTF/StringBuilder.cpp
     Tests/WTF/StringCommon.cpp
     Tests/WTF/StringConcatenate.cpp
@@ -288,6 +289,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/Decimal.cpp
         Tests/WebCore/DigitalCredentialsRequestDataBuilder.cpp
         Tests/WebCore/DisplayListRecorderTests.cpp
+        Tests/WebCore/DisplayRefreshMonitorManager.cpp
         Tests/WebCore/DocumentOrder.cpp
         Tests/WebCore/FidoHidMessageTest.cpp
         Tests/WebCore/FileMonitor.cpp

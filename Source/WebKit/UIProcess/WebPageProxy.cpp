@@ -6499,6 +6499,7 @@ void WebPageProxy::receivedNavigationActionPolicyDecision(WebProcessProxy& proce
             loadParameters.lockHistory = navigation->lockHistory();
             loadParameters.lockBackForwardList = navigation->lockBackForwardList();
             loadParameters.navigationHistoryBehavior = navigation->navigationHistoryBehavior();
+            loadParameters.replaceIfNotCompletelyLoaded = navigationAction->data().replaceIfNotCompletelyLoaded;
             loadParameters.hadUserGesture = navigationAction->data().userGestureTokenIdentifier.has_value();
             loadParameters.navigationID = navigation->navigationID();
             loadParameters.ownerPermissionsPolicy = navigation->ownerPermissionsPolicy();
@@ -6661,7 +6662,7 @@ bool WebPageProxy::topLevelIsSecureContext(const URL& url, bool isMainFrame) con
 void WebPageProxy::recordAgentClusterKeying(const API::Navigation& navigation)
 {
     auto& assignment = navigation.agentClusterAssignment();
-    if (!assignment || !assignment->identifier || assignment->documentIsolationPolicy != DocumentIsolationPolicy::None)
+    if (!assignment || !assignment->identifier || assignment->documentIsolationPolicy != DocumentIsolationPolicyValue::None)
         return;
     protect(browsingContextGroup())->resolveAgentClusterKeying(navigation.agentClusterOrigin(), assignment->isOriginKeyed);
 }
@@ -7554,6 +7555,26 @@ void WebPageProxy::accessibilitySettingsDidChange()
     });
 }
 
+ContentInversion WebPageProxy::contentInversion() const
+{
+    return internals().contentInversion;
+}
+
+void WebPageProxy::setContentInversion(ContentInversion contentInversion)
+{
+    if (internals().contentInversion == contentInversion)
+        return;
+
+    internals().contentInversion = contentInversion;
+
+    if (!hasRunningProcess())
+        return;
+
+    forEachWebContentProcess([contentInversion](auto& process, auto pageID) {
+        process.send(Messages::WebPage::SetContentInversion(contentInversion), pageID);
+    });
+}
+
 void WebPageProxy::setUseFixedLayout(bool fixed)
 {
     // This check is fine as the value is initialized in the web
@@ -8423,6 +8444,16 @@ void WebPageProxy::getContentsAsAttributedString(CompletionHandler<void(const We
         completionHandler(string);
     });
 }
+
+void WebPageProxy::getSelectionAsAttributedStringForTesting(CompletionHandler<void(const WebCore::AttributedString&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler({ });
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::GetSelectionAsAttributedStringForTesting(), WTF::move(completionHandler));
+}
 #endif
 
 void WebPageProxy::getAllFrames(CompletionHandler<void(std::optional<FrameTreeNodeData>&&)>&& completionHandler)
@@ -8720,6 +8751,11 @@ void WebPageProxy::setDevicePostureType(WebCore::DevicePostureType type)
 
 void WebPageProxy::preferencesDidChange()
 {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // AX custom color mode is toggled through a preference.
+    effectivePageAppearanceMightHaveChanged();
+#endif
+
     if (!hasRunningProcess())
         return;
 
@@ -8759,6 +8795,24 @@ void WebPageProxy::didCreateSubframe(FrameIdentifier parentID, FrameIdentifier n
 
 void WebPageProxy::didDestroyFrame(IPC::Connection& connection, FrameIdentifier frameID)
 {
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    // The UI process may already have dropped the frame while other processes still have it, so its removal is still broadcast.
+    if (frame && frame->page()) {
+        MESSAGE_CHECK_BASE(frame->page() == this, connection);
+
+        Ref process = WebProcessProxy::fromConnection(connection);
+        RefPtr parentFrame = frame->parentFrame();
+        RefPtr parentProvisionalFrame = parentFrame ? parentFrame->provisionalFrame() : nullptr;
+        bool fromFrameProcess = process.ptr() == &frame->process();
+        // The parent's process, or its provisional process during a cross-site navigation, reports the removal of its children.
+        bool fromParentProcess = parentFrame && process.ptr() == &parentFrame->process();
+        bool fromParentProvisionalProcess = parentProvisionalFrame && process.ptr() == &parentProvisionalFrame->process();
+        // The UI process detaches the children of a main frame that commits in another process.
+        bool isDetachedSubframe = !frame->isMainFrame() && !parentFrame;
+        if (!fromFrameProcess && !fromParentProcess && !fromParentProvisionalProcess && !isDetachedSubframe)
+            return;
+    }
+
 #if ENABLE(WEB_AUTHN)
     protect(protect(websiteDataStore())->authenticatorManager())->cancelRequest(webPageIDInMainFrameProcess(), frameID);
 #endif
@@ -8773,7 +8827,7 @@ void WebPageProxy::didDestroyFrame(IPC::Connection& connection, FrameIdentifier 
 
     revokeOutstandingForcedUserActivationsForFrame(frameID);
 
-    if (RefPtr frame = WebFrameProxy::webFrame(frameID))
+    if (frame)
         frame->disconnect();
 
     bool didRemove = m_framesWithSubresourceLoadingForPageLoadTiming.remove(frameID);
@@ -8961,6 +9015,19 @@ void WebPageProxy::updateScrollingMode(IPC::Connection& connection, WebCore::Fra
 
 void WebPageProxy::setFramePrinting(IPC::Connection& connection, WebCore::FrameIdentifier frameID, bool printing, const WebCore::FloatSize& pageSize, const WebCore::FloatSize& originalPageSize, float maximumShrinkRatio, WebCore::AdjustViewSize shouldAdjustViewSize)
 {
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    if (!frame || !frame->page())
+        return;
+    MESSAGE_CHECK_BASE(frame->page() == this, connection);
+
+    Ref process = WebProcessProxy::fromConnection(connection);
+    RefPtr parentFrame = frame->parentFrame();
+    bool fromFrameProcess = process.ptr() == &frame->process();
+    // The parent's process also reports the printing state of its remote children.
+    bool fromParentProcess = parentFrame && process.ptr() == &parentFrame->process();
+    if (!fromFrameProcess && !fromParentProcess)
+        return;
+
     forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (webProcess.hasConnection(connection))
             return;
@@ -11555,7 +11622,7 @@ void WebPageProxy::decidePolicyForResponseShared(Ref<WebProcessProxy>&& process,
         // Never commit a document without a Document-Isolation-Policy in a process for documents with one.
         if (policyAction == PolicyAction::Use && process->isDocumentIsolationPolicyProcess()) {
             auto& response = navigationResponse->response();
-            if (response.url().protocolIsInHTTPFamilyOrBlob() && !needsDocumentIsolationPolicyProcess(response.url(), parseDocumentIsolationPolicy(response.httpHeaderField(HTTPHeaderName::DocumentIsolationPolicy)), frame->isMainFrame())) {
+            if (response.url().protocolIsInHTTPFamilyOrBlob() && !needsDocumentIsolationPolicyProcess(response.url(), parseDocumentIsolationPolicy(response).value, frame->isMainFrame())) {
                 WEBPAGEPROXY_RELEASE_LOG_ERROR(ProcessSwapping, "decidePolicyForResponseShared: Ignoring a response without a Document-Isolation-Policy in a process for documents with one");
                 policyAction = PolicyAction::Ignore;
             }
@@ -11896,9 +11963,9 @@ static bool canMoveSiteToEnhancedSecurityProcess(BrowsingContextGroup& browsingC
     return usesExistingFrameProcess(mainFrame) || usesExistingFrameProcess(provisionalPage ? provisionalPage->mainFrame() : nullptr);
 }
 
-bool WebPageProxy::needsDocumentIsolationPolicyProcess(const URL& url, WebCore::DocumentIsolationPolicy headerPolicy, bool isMainFrame) const
+bool WebPageProxy::needsDocumentIsolationPolicyProcess(const URL& url, WebCore::DocumentIsolationPolicyValue headerPolicy, bool isMainFrame) const
 {
-    return documentIsolationPolicyForNavigationResponse(url, headerPolicy, topLevelIsSecureContext(url, isMainFrame) ? IsSecureContext::Yes : IsSecureContext::No, protect(preferences())) != WebCore::DocumentIsolationPolicy::None;
+    return documentIsolationPolicyForNavigationResponse(url, headerPolicy, topLevelIsSecureContext(url, isMainFrame) ? IsSecureContext::Yes : IsSecureContext::No, protect(preferences())) != WebCore::DocumentIsolationPolicyValue::None;
 }
 
 void WebPageProxy::triggerProcessSwapForDocumentIsolationPolicy(WebCore::NavigationIdentifier navigationID, const NavigationResponseForProcessSwap& response, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&& completionHandler)
@@ -15861,6 +15928,7 @@ WebPageCreationParameters WebPageProxy::creationParameters(WebProcessProxy& proc
     parameters.isProcessSwap = isProcessSwap;
     parameters.useDarkAppearance = useDarkAppearance();
     parameters.useElevatedUserInterfaceLevel = useElevatedUserInterfaceLevel();
+    parameters.contentInversion = internals().contentInversion;
 #if PLATFORM(MAC)
     parameters.colorSpace = pageClient ? std::optional { pageClient->colorSpace() } : std::nullopt;
     parameters.useFormSemanticContext = useFormSemanticContext();
@@ -16723,10 +16791,7 @@ void WebPageProxy::validateCaptureStateUpdate(IPC::Connection& connection, WebCo
             responseHandler->handle(true);
         });
 
-        Ref userMediaOrigin = API::SecurityOrigin::create(request->userMediaDocumentSecurityOrigin());
-        Ref topLevelOrigin = API::SecurityOrigin::create(request->topLevelDocumentSecurityOrigin());
-        // FIXME: Remove SUPPRESS_UNCOUNTED_ARG once rdar://144557500 is resolved.
-        uiClient().decidePolicyForUserMediaPermissionRequest(*this, *webFrame, userMediaOrigin, topLevelOrigin, request.get());
+        protect(userMediaPermissionRequestManager())->askDelegateToDecide(request);
     };
 
 
@@ -17165,6 +17230,48 @@ Color WebPageProxy::pageExtendedBackgroundColor() const
     return internals().pageExtendedBackgroundColor;
 }
 
+WebPageProxy::EffectivePageAppearance WebPageProxy::effectivePageAppearance() const
+{
+    return internals().effectivePageAppearance;
+}
+
+WebPageProxy::EffectivePageAppearance WebPageProxy::computeEffectivePageAppearance() const
+{
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // AX custom color mode knows when the page is displayed dark, including pages that paint no background color.
+    if (axCustomColorModePageIsEffectivelyDark())
+        return EffectivePageAppearance::Dark;
+#endif
+
+    auto& backgroundColor = internals().pageExtendedBackgroundColor;
+    if (!backgroundColor.isValid() || !backgroundColor.isOpaque())
+        return EffectivePageAppearance::Unknown;
+
+    // Dark when white text would have a higher WCAG 2 contrast ratio against the background than black text
+    // (https://www.w3.org/TR/WCAG20/#contrast-ratiodef). This is the same split CSS contrast-color() currently
+    // makes, used here only to classify the background as light or dark, not to judge text legibility.
+    auto luminance = backgroundColor.luminance();
+    auto contrastWithWhite = (1.0 + 0.05) / (luminance + 0.05);
+    auto contrastWithBlack = (luminance + 0.05) / (0.0 + 0.05);
+    return contrastWithWhite > contrastWithBlack ? EffectivePageAppearance::Dark : EffectivePageAppearance::Light;
+}
+
+void WebPageProxy::effectivePageAppearanceMightHaveChanged()
+{
+    auto newAppearance = computeEffectivePageAppearance();
+    if (internals().effectivePageAppearance == newAppearance)
+        return;
+
+    RefPtr pageClient = this->pageClient();
+    if (pageClient)
+        pageClient->effectivePageAppearanceWillChange();
+
+    internals().effectivePageAppearance = newAppearance;
+
+    if (pageClient)
+        pageClient->effectivePageAppearanceDidChange();
+}
+
 void WebPageProxy::pageExtendedBackgroundColorDidChange(const Color& newPageExtendedBackgroundColor)
 {
     if (internals().pageExtendedBackgroundColor == newPageExtendedBackgroundColor)
@@ -17187,6 +17294,8 @@ void WebPageProxy::pageExtendedBackgroundColorDidChange(const Color& newPageExte
         if (changesUnderPageBackgroundColor)
             pageClient->underPageBackgroundColorDidChange();
     }
+
+    effectivePageAppearanceMightHaveChanged();
 }
 
 Color WebPageProxy::sampledPageTopColor() const
@@ -18229,6 +18338,11 @@ bool WebPageProxy::hasMediaStreaming() const
     return internals().mediaState.contains(MediaProducerMediaState::HasStreamingActivity);
 }
 
+bool WebPageProxy::hasProtectedMedia() const
+{
+    return internals().mediaState.contains(MediaProducerMediaState::HasProtectedMedia);
+}
+
 bool WebPageProxy::isCapturingAudio() const
 {
     return internals().mediaState.containsAny(MediaProducer::IsCapturingAudioMask);
@@ -18327,6 +18441,9 @@ void WebPageProxy::updatePlayingMediaDidChange(CanDelayNotification canDelayNoti
     playingMediaMask.add(WebCore::MediaProducer::MediaCaptureMask);
     if ((oldState & playingMediaMask) != (internals().mediaState & playingMediaMask))
         m_uiClient->isPlayingMediaDidChange(*this);
+
+    if (oldState.contains(MediaProducerMediaState::HasProtectedMedia) != internals().mediaState.contains(MediaProducerMediaState::HasProtectedMedia))
+        m_uiClient->hasProtectedMediaDidChange(*this);
 
     if ((oldState.containsAny(MediaProducerMediaState::HasAudioOrVideo)) != (internals().mediaState.containsAny(MediaProducerMediaState::HasAudioOrVideo)))
         videoControlsManagerDidChange();
@@ -21562,8 +21679,16 @@ void WebPageProxy::didAdjustVisibilityWithSelectors(Vector<String>&& selectors)
 
 void WebPageProxy::frameNameChanged(IPC::Connection& connection, WebCore::FrameIdentifier frameID, const String& frameName)
 {
-    if (RefPtr frame = WebFrameProxy::webFrame(frameID))
-        frame->setSpecifiedName(frameName);
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    if (!frame || !frame->page())
+        return;
+    MESSAGE_CHECK_BASE(frame->page() == this, connection);
+
+    // FIXME: Accept the name from a subframe's previous process unless the new process has set its own, so the name carries over without overwriting it.
+    if (&frame->process() != WebProcessProxy::fromConnection(connection).ptr())
+        return;
+
+    frame->setSpecifiedName(frameName);
 
     forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (!webProcess.hasConnection() || &webProcess.connection() == &connection)

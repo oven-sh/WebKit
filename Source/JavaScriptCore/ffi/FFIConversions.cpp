@@ -450,7 +450,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
     case Type::Bool:
         return jsBoolean(!!slot);
     case Type::Int64:
-        return JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(slot));
+        return JSBigInt::createFrom(globalObject, static_cast<int64_t>(slot));
     case Type::Uint64:
     case Type::BufferLength:
         return JSBigInt::createFrom(globalObject, static_cast<uint64_t>(slot));
@@ -458,7 +458,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         int64_t value = static_cast<int64_t>(slot);
         if (value >= -maxInt52 && value <= maxInt52)
             return jsNumber(static_cast<double>(value));
-        return JSBigInt::makeHeapBigIntOrBigInt32(globalObject, value);
+        return JSBigInt::createFrom(globalObject, value);
     }
     case Type::Uint64Fast: {
         uint64_t value = static_cast<uint64_t>(slot);
