@@ -52,7 +52,6 @@ struct RecordedSite {
 
 struct SiteRecords {
     Vector<RecordedSite> positions;
-    Vector<SpreadSite> itemSites;
     Vector<uint32_t> inlineCallSites;
     uint32_t numberOfSitesWithoutCode { 0 };
 

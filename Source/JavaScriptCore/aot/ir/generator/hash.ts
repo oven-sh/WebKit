@@ -53,6 +53,8 @@ function columnValueText(value: ColumnValue): string {
       return value.value.toString();
     case "Text":
       return `"${value.value}"`;
+    case "Type":
+      return value.type?.name ?? "none";
     case "Member":
       return value.member.name;
     case "Members":

@@ -15,6 +15,7 @@
 #include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
+#include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
@@ -507,7 +508,15 @@ template<typename Character>
 static void compareStringPiece(jsstring_iterator* iterator, const void* characters, uint32_t length, uint32_t offset)
 {
     auto& comparison = *static_cast<StringComparison*>(iterator->data);
-    if (comparison.remainingPieces && comparison.name.substring(offset, length) == StringView(std::span { static_cast<const Character*>(characters), length })) {
+    auto isEqualToName = [&] {
+        std::span piece { static_cast<const Character*>(characters), length };
+        if constexpr (std::is_same_v<Character, Latin1Character>) {
+            if (comparison.name.is8Bit() && offset <= comparison.name.length() && length <= comparison.name.length() - offset)
+                return equalSpans(comparison.name.span8().subspan(offset, length), piece);
+        }
+        return comparison.name.substring(offset, length) == StringView(piece);
+    };
+    if (comparison.remainingPieces && isEqualToName()) {
         comparison.remainingPieces--;
         return;
     }

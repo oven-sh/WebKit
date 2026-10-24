@@ -84,6 +84,9 @@ JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program>, BuildContext&);
 JS_EXPORT_PRIVATE size_t imageAlignment();
 
+// For a program that holds expected results and nothing else: the plan of each, in their order, each behind its length in four bytes, the low one first. Empty where the bytes are no program.
+JS_EXPORT_PRIVATE Vector<uint8_t> writeValidationPlans(std::span<const uint8_t> program, const Wire::CompileOptions&);
+
 // For whoever reports that the process stops, or is told to: a signal handler may call them. They write text of whole lines and return its length, nothing where no build is at work.
 // Where the calling thread's part of a build stands, and what gets a build around it.
 JS_EXPORT_PRIVATE size_t describeWhereThisThreadStopped(std::span<char>);

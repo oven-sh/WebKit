@@ -11,6 +11,7 @@
 #include "AOTChainDependents.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramTables.h"
 #include "AOTPropertyCaches.h"

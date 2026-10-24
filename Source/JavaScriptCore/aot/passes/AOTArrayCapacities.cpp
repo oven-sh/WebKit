@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTArrayCapacities.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 

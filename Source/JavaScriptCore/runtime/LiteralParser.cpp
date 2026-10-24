@@ -2364,7 +2364,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                     };
                     JSValue primitive = parsePrimitiveValue(vm);
                     if (!primitive) [[unlikely]]
-                        return { };
+                        RELEASE_AND_RETURN(scope, { });
 
                     if (m_mode != StrictJSON && ident == vm.propertyNames->underscoreProto) [[unlikely]] {
                         ASSERT(!sourceRanges);
@@ -2522,7 +2522,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             }
             lastValue = parsePrimitiveValue(vm);
             if (!lastValue) [[unlikely]]
-                return { };
+                RELEASE_AND_RETURN(scope, { });
             if constexpr (reviverMode == JSONReviverMode::Enabled) {
                 if (sourceRanges)
                     lastValueRange.value = sourceRanges->record(lastValue);
@@ -2538,7 +2538,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             case TokString: {
                 lastValue = parsePrimitiveValue(vm);
                 if (!lastValue) [[unlikely]]
-                    return { };
+                    RELEASE_AND_RETURN(scope, { });
                 break;
             }
 

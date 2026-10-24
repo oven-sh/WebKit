@@ -543,31 +543,6 @@ static void testObfuscatedSitesNamesStoredOnce()
     AOT_TEST_CHECK(offsets.size() == 4);
 }
 
-static void testObfuscatedSitesSpreadItem()
-{
-    CodeSketch sketch(1);
-    startFramedBody(sketch, 1);
-    SiteDescription& description = sketch.code().sites;
-    OptionalIndex inlinedCall = sketch.addSite(0, 20, 2);
-    description.inlineFrames.append(InlineFrame { 0, 0, 0, false, false });
-    description.inlineFrames.append(InlineFrame { 0, *inlinedCall, sketch.calleeIndex(2), false, false });
-    description.numberOfSitesWithoutCode = 1;
-    OptionalIndex spreadCall = sketch.addSite(1, 30, 3);
-    sketch.callStub(writeBarrier(), spreadCall);
-    OptionalIndex item = sketch.addSite(0, 31, 4);
-    description.spreadSites.append(SpreadSite { *spreadCall, 0, *item });
-    sketch.end();
-
-    TestBuild build(3);
-    ObfuscatedSites sites = collectSites(build, bodies(sketch.take()));
-    AOT_TEST_CHECK(sites.records.size() == 4);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[0]) == "f1"_s);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[*inlinedCall]) == "f1"_s);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[*spreadCall]) == "f2"_s);
-    AOT_TEST_CHECK(nameIn(sites, sites.records[*item]) == "f2"_s);
-    AOT_TEST_CHECK(sites.records[*item].location.position == 1000 + *item);
-}
-
 static void testObfuscatedSitesNames()
 {
     TestBuild build(makeString(namedProgramText, runtimeFunctionsText(4)), { });
@@ -599,7 +574,6 @@ std::span<const NativeTest> symbolTests()
         { "image/obfuscated-sites/one-record-per-site"_s, testObfuscatedSitesOneRecordPerSite },
         { "image/obfuscated-sites/inlined-frame"_s, testObfuscatedSitesInlinedFrame },
         { "image/obfuscated-sites/names-stored-once"_s, testObfuscatedSitesNamesStoredOnce },
-        { "image/obfuscated-sites/spread-item"_s, testObfuscatedSitesSpreadItem },
         { "image/obfuscated-sites/names"_s, testObfuscatedSitesNames },
     };
     return tests;

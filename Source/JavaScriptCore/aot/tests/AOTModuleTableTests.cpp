@@ -286,84 +286,6 @@ static void testRequestOfRequire()
     AOT_TEST_CHECK(!ModuleTable::isImport(required) && required.target() == ModuleRequestData::maxTarget && !required.isDeferred && !required.isDynamicStarExport);
 }
 
-namespace {
-
-using StepKind = ModuleRequestWalk::StepKind;
-
-struct ExpectedStep {
-    StepKind kind;
-    ModuleID module;
-    ModuleID target;
-};
-
-} // anonymous namespace
-
-static bool isStep(const ModuleRequestWalk::Step& step, const ExpectedStep& expected)
-{
-    if (step.kind != expected.kind)
-        return false;
-    switch (step.kind) {
-    case StepKind::Request:
-        return step.module == expected.module && step.request && step.request->targetModule() == expected.target;
-    case StepKind::Leave:
-        return step.module == expected.module && !step.request;
-    case StepKind::Done:
-        return !step.request;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void checkWalkOverDiamondAndCycle(LoadedProgram&)
-{
-    ModuleTable table = tableOfImage();
-    ModuleRequestWalk walk(table, mainModule);
-    AOT_TEST_CHECK(walk.hasVisited(mainModule) && walk.isOnPath(mainModule) && !walk.hasVisited(leftModule) && !walk.isOnPath(leftModule));
-
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, mainModule, leftModule }));
-    walk.enter(leftModule);
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, leftModule, sharedModule }));
-    walk.enter(sharedModule);
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, sharedModule, mapModule }));
-    walk.enter(mapModule);
-    for (ModuleID module : { mainModule, leftModule, sharedModule, mapModule })
-        AOT_TEST_CHECK(walk.hasVisited(module) && walk.isOnPath(module));
-    AOT_TEST_CHECK(!walk.hasVisited(rightModule) && !walk.isOnPath(rightModule));
-
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, mapModule, sharedModule }));
-    AOT_TEST_CHECK(walk.hasVisited(sharedModule) && walk.isOnPath(sharedModule));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, mapModule, { } }));
-    AOT_TEST_CHECK(walk.hasVisited(mapModule) && !walk.isOnPath(mapModule) && walk.isOnPath(sharedModule));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, sharedModule, { } }));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, leftModule, { } }));
-
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, mainModule, rightModule }));
-    walk.enter(rightModule);
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, rightModule, sharedModule }));
-    AOT_TEST_CHECK(walk.hasVisited(sharedModule) && !walk.isOnPath(sharedModule));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, rightModule, { } }));
-    AOT_TEST_CHECK(walk.isOnPath(mainModule));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, mainModule, { } }));
-    AOT_TEST_CHECK(!walk.isOnPath(mainModule) && walk.hasVisited(mainModule));
-
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Done, { }, { } }) && isStep(walk.next(), { StepKind::Done, { }, { } }));
-    AOT_TEST_CHECK(!walk.hasVisited(entryModule) && !walk.hasVisited(accentModule));
-}
-
-static void checkWalkEntersNothingByItself(LoadedProgram&)
-{
-    ModuleTable table = tableOfImage();
-    ModuleRequestWalk walk(table, entryModule);
-    for (ModuleID target : { mainModule, accentModule, tildeModule, faceModule, shortModule }) {
-        AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Request, entryModule, target }));
-        AOT_TEST_CHECK(!walk.hasVisited(target) && !walk.isOnPath(target));
-    }
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Leave, entryModule, { } }));
-    AOT_TEST_CHECK(isStep(walk.next(), { StepKind::Done, { }, { } }));
-
-    ModuleRequestWalk walkOfLeaf(table, accentModule);
-    AOT_TEST_CHECK(isStep(walkOfLeaf.next(), { StepKind::Leave, accentModule, { } }) && isStep(walkOfLeaf.next(), { StepKind::Done, { }, { } }));
-}
-
 template<LoadedProgramTest body>
 static constexpr void (*withModules)() = runNativeTestWithLoadedProgram<moduleTableTests, programText, body>;
 
@@ -379,8 +301,6 @@ std::span<const NativeTest> moduleTableTests()
         { "module-table/export-with-surrogate-pair"_s, withModules<checkFindExportWithSurrogatePair> },
         { "module-table/require-of-the-loader-is-no-request"_s, withModules<checkRequireOfLoaderIsNoRequest> },
         { "module-table/request-of-a-require"_s, testRequestOfRequire },
-        { "module-table/walk-over-diamond-and-cycle"_s, withModules<checkWalkOverDiamondAndCycle> },
-        { "module-table/walk-enters-nothing-by-itself"_s, withModules<checkWalkEntersNothingByItself> },
     };
     return tests;
 }

@@ -84,36 +84,6 @@ private:
     std::span<const ModuleData> m_modules;
 };
 
-class ModuleRequestWalk {
-    WTF_MAKE_NONCOPYABLE(ModuleRequestWalk);
-public:
-    enum class StepKind : uint8_t { Request, Leave, Done };
-
-    struct Step {
-        StepKind kind;
-        ModuleID module;
-        const ModuleRequestData* request;
-    };
-
-    ModuleRequestWalk(const ModuleTable&, ModuleID root);
-
-    Step next();
-    void enter(ModuleID);
-    bool hasVisited(ModuleID module) const { return m_visited.get(module.index()); }
-    bool isOnPath(ModuleID module) const { return m_onPath.get(module.index()); }
-
-private:
-    struct Frame {
-        ModuleID module;
-        unsigned nextRequest;
-    };
-
-    const ModuleTable& m_table;
-    BitVector m_visited;
-    BitVector m_onPath;
-    Vector<Frame, 16> m_path;
-};
-
 inline size_t ModuleTable::checkedIndex(ModuleID module) const
 {
     RELEASE_ASSERT(module.index() < size());

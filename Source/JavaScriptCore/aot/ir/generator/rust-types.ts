@@ -83,7 +83,8 @@ export function rustColumnTypeOf(kind: ColumnKind): string {
     case "Text":
       return "&'static str";
     case "Name":
-      throw new Error("a Name column exists in C++ only");
+    case "Type":
+      throw new Error(`a ${kind.tag} column exists in C++ only`);
     case "Enum":
     case "Flags":
       return rustTypeName(kind.type.name);

@@ -17,6 +17,7 @@
 #include "AOTSelectionRules.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "AOTWireOptionMembers.h"
 #include "B3Policy.h"
 #include "CPUFeatureSet.h"
 #include "MarkedBlockCage.h"
@@ -39,10 +40,7 @@ using WireOptions = Wire::CompileOptions;
 using PassSet = decltype(RecordedSwitches::disabledPasses);
 
 static constexpr unsigned bitsPerWordOfSwitches = 64;
-static constexpr uint64_t fnvOffsetBasis = 0xcbf29ce484222325ull;
-static constexpr uint64_t fnvPrime = 0x100000001b3ull;
 
-static_assert(sizeof(WireOptions) == 264);
 static_assert(sizeof(LimitID) == 4);
 static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), decltype(CompileOptions::sizeClassProgression)>);
 static_assert(std::is_same_v<decltype(Wire::BisectionSwitches::disabledPasses), PassSet>);
@@ -164,16 +162,6 @@ bool RecordedOptions::isEnabled(B3::PolicySwitch policySwitch, Typed::FunctionID
     return !(isBitSet(switches.disabledBackEndSwitches, static_cast<unsigned>(policySwitch)) && isInSwitchRange(id));
 }
 
-uint64_t RecordedOptions::hash() const
-{
-    uint64_t result = fnvOffsetBasis;
-    for (uint8_t byte : std::bit_cast<std::array<uint8_t, sizeof(RecordedOptions)>>(*this)) {
-        result ^= byte;
-        result *= fnvPrime;
-    }
-    return result;
-}
-
 bool RecordedOptions::isCompatibleWithProcess() const
 {
     if (architecture != static_cast<uint8_t>(hostArchitecture()) || form() != imageFormOfThisRuntime())
@@ -186,7 +174,7 @@ bool RecordedOptions::isCompatibleWithProcess() const
     return useWideReferences() || MarkedBlockCage::isEnabled();
 }
 
-LoggingOptions LoggingOptions::fromJSCOptions()
+static LoggingOptions readLoggingOptions()
 {
     LoggingOptions logging;
     logging.logsPhaseTimes = Options::logAOTPhaseTimes();
@@ -206,26 +194,76 @@ LoggingOptions LoggingOptions::fromJSCOptions()
     return logging;
 }
 
-static uint64_t findOptionalSelectionRules()
+namespace {
+
+struct OptionWord {
+    ASCIILiteral key;
+    ASCIILiteral valueSyntax;
+    ASCIILiteral noun;
+    std::optional<String> (*apply)(Wire::CompileOptions&, const OptionWord&, StringView value);
+    void (*listValues)(PrintStream&);
+};
+
+struct SplitText {
+    StringView head;
+    std::optional<StringView> tail;
+};
+
+enum class SwitchTable : uint8_t { FlowResults, Passes, SelectionRules, BackEndSwitches };
+
+struct Switch {
+    SwitchTable table;
+    ASCIILiteral prefix;
+    ASCIILiteral name;
+    unsigned bit;
+    bool isRequired;
+};
+
+} // anonymous namespace
+
+template<typename Functor>
+static void forEachSwitch(const Functor& functor)
 {
-    uint64_t rules = 0;
-    for (const Typed::SelectionRule& rule : Typed::selectionRules()) {
-        if (rule.id != SelectionRuleID::None && rule.kind == Typed::SelectionRuleKind::Optional)
-            rules |= 1ull << static_cast<unsigned>(rule.id);
+    for (Wire::FlowResultKind kind : allMembersOf<Wire::FlowResultKind>)
+        functor(Switch { SwitchTable::FlowResults, "flow:"_s, nameOf(kind), static_cast<unsigned>(kind), false });
+    for (PassID pass : allMembersOf<PassID>) {
+        if (pass != PassID::None)
+            functor(Switch { SwitchTable::Passes, "pass:"_s, nameOf(pass), static_cast<unsigned>(pass), !isOptionalPass(pass) });
     }
-    return rules;
+    for (const Typed::SelectionRule& rule : Typed::selectionRules())
+        functor(Switch { SwitchTable::SelectionRules, "rule:"_s, nameOf(rule.id), static_cast<unsigned>(rule.id), rule.kind == Typed::SelectionRuleKind::Required });
+    for (unsigned bit = 0; bit < B3::numberOfSwitches; ++bit)
+        functor(Switch { SwitchTable::BackEndSwitches, "b3:"_s, nameOf(static_cast<B3::PolicySwitch>(bit)), bit, false });
 }
 
-static PassSet findOptionalPasses()
+static void disableSwitch(Wire::CompileOptions& options, const Switch& disabled)
 {
-    PassSet passes { };
-    for (PassID pass : allMembersOf<PassID>) {
-        if (!isOptionalPass(pass))
-            continue;
-        unsigned bit = static_cast<unsigned>(pass);
-        passes[bit / bitsPerWordOfSwitches] |= 1ull << (bit % bitsPerWordOfSwitches);
+    uint64_t mask = 1ull << (disabled.bit % bitsPerWordOfSwitches);
+    switch (disabled.table) {
+    case SwitchTable::FlowResults:
+        options.bisection.disabledFlowResults |= mask;
+        return;
+    case SwitchTable::Passes:
+        options.bisection.disabledPasses[disabled.bit / bitsPerWordOfSwitches] |= mask;
+        return;
+    case SwitchTable::SelectionRules:
+        options.bisection.disabledSelectionRules |= mask;
+        return;
+    case SwitchTable::BackEndSwitches:
+        options.bisection.disabledBackEndSwitches |= mask;
+        return;
     }
-    return passes;
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static Wire::BisectionSwitches findOptionalSwitches()
+{
+    Wire::CompileOptions options;
+    forEachSwitch([&](const Switch& candidate) {
+        if (!candidate.isRequired)
+            disableSwitch(options, candidate);
+    });
+    return options.bisection;
 }
 
 namespace {
@@ -241,9 +279,20 @@ public:
     CompileOptions read()
     {
         if (m_wire.size != sizeof(WireOptions)) {
-            reportInvalid(offsetOf(m_wire.size));
+            reportInvalid(m_wire.size);
             return { };
         }
+        Wire::forEachEnumeratedMember(m_wire, [&]<typename E>(E& member) {
+            uint64_t end = numberOfEnumerators<E>;
+            if constexpr (isFlagWord<E>) {
+                static_assert(numberOfEnumerators<E> <= 32);
+                end = 1ull << numberOfEnumerators<E>;
+            }
+            if (static_cast<uint32_t>(member) < end)
+                return;
+            reportInvalid(member);
+            member = { };
+        });
 
         CompileOptions options;
         RecordedOptions& recorded = options.recorded;
@@ -256,65 +305,39 @@ public:
         readThreadCount(options);
         readSizeClassProgression(options);
 
-        recorded.mismatchPolicy = static_cast<uint8_t>(checkedEnum(m_wire.mismatchPolicy));
-        recorded.heatOverride = static_cast<uint8_t>(checkedEnum(m_wire.heatOverride));
-        recorded.sabotage = static_cast<uint8_t>(checkedEnum(m_wire.sabotage));
-        Instrumentation instrumentation = checkedFlags(m_wire.instrumentation);
-        recorded.countsBranches = hasFlag(instrumentation, Instrumentation::CountBranches);
-        recorded.countsArrivals = hasFlag(instrumentation, Instrumentation::CountArrivals);
+        recorded.mismatchPolicy = static_cast<uint8_t>(m_wire.mismatchPolicy);
+        recorded.heatOverride = static_cast<uint8_t>(m_wire.heatOverride);
+        recorded.sabotage = static_cast<uint8_t>(m_wire.sabotage);
+        recorded.countsBranches = hasFlag(m_wire.instrumentation, Instrumentation::CountBranches);
+        recorded.countsArrivals = hasFlag(m_wire.instrumentation, Instrumentation::CountArrivals);
         recorded.layoutSeed = m_wire.layoutSeed;
-        recorded.admittedCode = static_cast<uint8_t>(checkedFlags(m_wire.admittedCode));
+        recorded.admittedCode = static_cast<uint8_t>(m_wire.admittedCode);
 
-        options.action = checkedEnum(m_wire.action);
-        options.reports = checkedFlags(m_wire.reports);
-        options.excludedCode = checkedFlags(m_wire.excludedCode);
+        options.action = m_wire.action;
+        options.reports = m_wire.reports;
+        options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
-        options.output = checkedFlags(m_wire.output);
+        options.output = m_wire.output;
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
-        options.logging = LoggingOptions::fromJSCOptions();
+        options.logging = readLoggingOptions();
         return options;
     }
 
 private:
-    void reportInvalid(size_t offset)
-    {
-        m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offset) });
-    }
-
     template<typename Member>
-    size_t offsetOf(const Member& member) const
+    void reportInvalid(const Member& member)
     {
         size_t offset = std::bit_cast<uintptr_t>(&member) - std::bit_cast<uintptr_t>(&m_wire);
         RELEASE_ASSERT(offset < sizeof(WireOptions));
-        return offset;
-    }
-
-    template<typename Enum>
-    Enum checkedEnum(const Enum& member)
-    {
-        static_assert(!isFlagWord<Enum>);
-        if (static_cast<uint32_t>(member) < numberOfEnumerators<Enum>)
-            return member;
-        reportInvalid(offsetOf(member));
-        return { };
-    }
-
-    template<typename Flags>
-    Flags checkedFlags(const Flags& member)
-    {
-        static_assert(isFlagWord<Flags> && numberOfEnumerators<Flags> <= 32);
-        if (!(static_cast<uint64_t>(member) >> numberOfEnumerators<Flags>))
-            return member;
-        reportInvalid(offsetOf(member));
-        return { };
+        m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offset) });
     }
 
     uint64_t checkedSwitches(const uint64_t& member, uint64_t optionalSwitches)
     {
         if (!(member & ~optionalSwitches))
             return member;
-        reportInvalid(offsetOf(member));
+        reportInvalid(member);
         return 0;
     }
 
@@ -322,39 +345,39 @@ private:
     {
         const Wire::TargetOptions& target = m_wire.target;
 
-        Architecture architecture = checkedEnum(target.architecture);
+        Architecture architecture = target.architecture;
         if (architecture != hostArchitecture())
-            reportInvalid(offsetOf(target.architecture));
+            reportInvalid(target.architecture);
 
         uint64_t features = target.features;
         if (!hasOnlyKnownFeatures(features)) {
-            reportInvalid(offsetOf(target.features));
+            reportInvalid(target.features);
             features = 0;
         }
 
         options.recorded.architecture = static_cast<uint8_t>(architecture);
         options.recorded.targetFeatures = features;
-        options.recorded.referenceWidth = static_cast<uint8_t>(checkedEnum(target.referenceWidth));
-        options.recorded.imageForm = static_cast<uint8_t>(checkedEnum(target.imageForm));
+        options.recorded.referenceWidth = static_cast<uint8_t>(target.referenceWidth);
+        options.recorded.imageForm = static_cast<uint8_t>(target.imageForm);
         if (target.reserved)
-            reportInvalid(offsetOf(target.reserved));
+            reportInvalid(target.reserved);
         options.limits = LimitValues(architecture);
     }
 
     void readSwitches(RecordedSwitches& switches)
     {
         const Wire::BisectionSwitches& bisection = m_wire.bisection;
+        Wire::BisectionSwitches optionalSwitches = findOptionalSwitches();
 
-        switches.disabledFlowResults = checkedSwitches(bisection.disabledFlowResults, lowBits(numberOfEnumerators<FlowResultKind>));
-        switches.disabledSelectionRules = checkedSwitches(bisection.disabledSelectionRules, findOptionalSelectionRules());
-        switches.disabledBackEndSwitches = checkedSwitches(bisection.disabledBackEndSwitches, lowBits(B3::numberOfSwitches));
+        switches.disabledFlowResults = checkedSwitches(bisection.disabledFlowResults, optionalSwitches.disabledFlowResults);
+        switches.disabledSelectionRules = checkedSwitches(bisection.disabledSelectionRules, optionalSwitches.disabledSelectionRules);
+        switches.disabledBackEndSwitches = checkedSwitches(bisection.disabledBackEndSwitches, optionalSwitches.disabledBackEndSwitches);
 
-        PassSet optionalPasses = findOptionalPasses();
         bool hasInvalidPass = false;
-        for (size_t i = 0; i < optionalPasses.size(); ++i)
-            hasInvalidPass |= !!(bisection.disabledPasses[i] & ~optionalPasses[i]);
+        for (size_t i = 0; i < bisection.disabledPasses.size(); ++i)
+            hasInvalidPass |= !!(bisection.disabledPasses[i] & ~optionalSwitches.disabledPasses[i]);
         if (hasInvalidPass)
-            reportInvalid(offsetOf(bisection.disabledPasses));
+            reportInvalid(bisection.disabledPasses);
         else
             switches.disabledPasses = bisection.disabledPasses;
 
@@ -364,15 +387,15 @@ private:
 
     void readLoweredLimit(CompileOptions& options)
     {
-        LimitID limit = checkedEnum(m_wire.loweredLimit);
+        LimitID limit = m_wire.loweredLimit;
         uint64_t value = m_wire.loweredLimitValue;
         if (limit == LimitID::None) {
             if (value)
-                reportInvalid(offsetOf(m_wire.loweredLimit));
+                reportInvalid(m_wire.loweredLimit);
             return;
         }
         if (!canBeLowered(limit) || value > options.limits[limit]) {
-            reportInvalid(offsetOf(m_wire.loweredLimit));
+            reportInvalid(m_wire.loweredLimit);
             return;
         }
         options.limits.lower(limit, value);
@@ -384,13 +407,13 @@ private:
     {
         const Wire::DroppedGuardWords& droppedGuard = m_wire.bisection.droppedGuard;
 
-        TestingSwitch testing = checkedFlags(m_wire.testing);
+        TestingSwitch testing = m_wire.testing;
         if (hasFlag(testing, TestingSwitch::DropGuard)) {
             if (droppedGuard.opcode < numberOfEnumerators<Typed::Opcode>) {
                 recorded.droppedGuardOpcode = static_cast<uint16_t>(droppedGuard.opcode);
                 recorded.droppedGuardOrdinal = droppedGuard.ordinal;
             } else {
-                reportInvalid(offsetOf(droppedGuard.opcode));
+                reportInvalid(droppedGuard.opcode);
                 testing = withoutFlag(testing, TestingSwitch::DropGuard);
             }
         }
@@ -400,7 +423,7 @@ private:
                 recorded.predictionFailurePeriod = static_cast<uint16_t>(failure.period);
                 recorded.predictionFailureSeed = static_cast<uint16_t>(failure.seed);
             } else {
-                reportInvalid(offsetOf(failure.period));
+                reportInvalid(failure.period);
                 testing = withoutFlag(testing, TestingSwitch::FailPredictions);
             }
         }
@@ -409,7 +432,7 @@ private:
 
     void readChecks(CompileOptions& options)
     {
-        CheckSet checks = checkedFlags(m_wire.checks);
+        CheckSet checks = m_wire.checks;
         options.verifiesAfterEveryPass = hasFlag(checks, CheckSet::VerifyEachPass);
         options.verifiesAfterEveryStage = options.verifiesAfterEveryPass || hasFlag(checks, CheckSet::VerifyEachStage);
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
@@ -427,7 +450,7 @@ private:
     void readThreadCount(CompileOptions& options)
     {
         if (!m_wire.threadCount) {
-            reportInvalid(offsetOf(m_wire.threadCount));
+            reportInvalid(m_wire.threadCount);
             return;
         }
         uint64_t maxWorkers = std::max<uint64_t>(options.limits[LimitID::MaxWorkers], 1);
@@ -438,13 +461,13 @@ private:
     {
         double progression = m_wire.sizeClassProgression;
         if (!std::isfinite(progression) || progression <= 1) {
-            reportInvalid(offsetOf(m_wire.sizeClassProgression));
+            reportInvalid(m_wire.sizeClassProgression);
             return;
         }
         options.sizeClassProgression = progression;
     }
 
-    const WireOptions& m_wire;
+    WireOptions m_wire;
     Diagnostics& m_diagnostics;
 };
 
@@ -455,63 +478,9 @@ CompileOptions CompileOptions::fromWire(const Wire::CompileOptions& wire, Diagno
     return WireOptionsReader(wire, diagnostics).read();
 }
 
-namespace {
-
-struct OptionWord {
-    ASCIILiteral key;
-    ASCIILiteral valueSyntax;
-    ASCIILiteral noun;
-    std::optional<String> (*apply)(Wire::CompileOptions&, const OptionWord&, StringView value);
-    void (*listValues)(PrintStream&);
-};
-
-struct SplitText {
-    StringView head;
-    std::optional<StringView> tail;
-};
-
-template<typename E>
-struct NamedValue {
-    ASCIILiteral name;
-    E value;
-};
-
-enum class SwitchTable : uint8_t { FlowResults, Passes, SelectionRules, BackEndSwitches };
-
-struct Switch {
-    SwitchTable table;
-    ASCIILiteral name;
-    unsigned bit;
-    bool isRequired;
-};
-
-} // anonymous namespace
-
 static_assert(!canBeLowered(LimitID::None));
 
-static constexpr SwitchTable switchTables[] = {
-    SwitchTable::FlowResults,
-    SwitchTable::Passes,
-    SwitchTable::SelectionRules,
-    SwitchTable::BackEndSwitches,
-};
-
 static constexpr ASCIILiteral allFlowResultsName = "flow-results"_s;
-
-static constexpr NamedValue<Wire::ReferenceWidth> referenceWidths[] = {
-    { "narrow"_s, Wire::ReferenceWidth::Narrow },
-    { "wide"_s, Wire::ReferenceWidth::Wide },
-};
-
-static constexpr NamedValue<Wire::ImageForm> imageForms[] = {
-    { "absolute"_s, Wire::ImageForm::Absolute },
-    { "position-independent"_s, Wire::ImageForm::PositionIndependent },
-};
-
-static constexpr NamedValue<Wire::MismatchPolicy> mismatchPolicies[] = {
-    { "silent"_s, Wire::MismatchPolicy::Silent },
-    { "log"_s, Wire::MismatchPolicy::Report },
-};
 
 static String unknownNameSentence(ASCIILiteral noun, StringView name)
 {
@@ -565,18 +534,6 @@ static std::optional<E> findMember(StringView written)
     return std::nullopt;
 }
 
-template<typename T>
-static T& optionAt(Wire::CompileOptions& options, T Wire::CompileOptions::* member)
-{
-    return options.*member;
-}
-
-template<typename T>
-static T& optionAt(Wire::CompileOptions& options, T Wire::TargetOptions::* member)
-{
-    return options.target.*member;
-}
-
 template<typename F>
 static void addFlag(F& set, F flag)
 {
@@ -595,169 +552,37 @@ static std::optional<String> forEachListedName(ASCIILiteral key, StringView valu
     return std::nullopt;
 }
 
-template<auto member, auto flag>
-static std::optional<String> applyFlag(Wire::CompileOptions& options, const OptionWord&, StringView)
-{
-    addFlag(options.*member, flag);
-    return std::nullopt;
-}
-
-template<auto member>
-static std::optional<String> applyListedFlags(Wire::CompileOptions& options, const OptionWord& word, StringView value)
-{
-    return forEachListedName(word.key, value, [&](StringView name) -> std::optional<String> {
-        auto flag = findMember<std::remove_reference_t<decltype(options.*member)>>(name);
-        if (!flag)
-            return unknownNameSentence(word.noun, name);
-        addFlag(options.*member, *flag);
-        return std::nullopt;
-    });
-}
-
-template<auto member>
-static std::optional<String> applyMember(Wire::CompileOptions& options, const OptionWord& word, StringView value)
-{
-    auto found = findMember<std::remove_reference_t<decltype(options.*member)>>(value);
-    if (!found)
-        return unknownNameSentence(word.noun, value);
-    options.*member = *found;
-    return std::nullopt;
-}
-
-template<auto& values, auto member>
-static std::optional<String> applyNamedValue(Wire::CompileOptions& options, const OptionWord& word, StringView value)
-{
-    for (auto& candidate : values) {
-        if (matchesName(value, candidate.name)) {
-            optionAt(options, member) = candidate.value;
-            return std::nullopt;
-        }
-    }
-    return unknownNameSentence(word.noun, value);
-}
-
-template<auto member>
-static std::optional<String> applyNumber(Wire::CompileOptions& options, const OptionWord&, StringView value)
-{
-    auto number = parseNumber<uint32_t>(value);
-    if (!number)
-        return notANumberSentence(value);
-    options.*member = *number;
-    return std::nullopt;
-}
-
 template<typename... Parts>
 static void listValue(PrintStream& out, const Parts&... parts)
 {
     out.println("  "_s, parts...);
 }
 
-template<typename E>
-static void listMembers(PrintStream& out)
-{
-    for (E member : allMembersOf<E>)
-        listValue(out, nameOf(member));
-}
-
-template<auto& values>
-static void listNamedValues(PrintStream& out)
-{
-    for (auto& value : values)
-        listValue(out, value.name);
-}
-
-static ASCIILiteral prefixOf(SwitchTable table)
-{
-    switch (table) {
-    case SwitchTable::FlowResults:
-        return "flow:"_s;
-    case SwitchTable::Passes:
-        return "pass:"_s;
-    case SwitchTable::SelectionRules:
-        return "rule:"_s;
-    case SwitchTable::BackEndSwitches:
-        return "b3:"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-template<typename Functor>
-static void forEachSwitch(SwitchTable table, const Functor& functor)
-{
-    switch (table) {
-    case SwitchTable::FlowResults:
-        for (Wire::FlowResultKind kind : allMembersOf<Wire::FlowResultKind>)
-            functor(Switch { table, nameOf(kind), static_cast<unsigned>(kind), false });
-        return;
-    case SwitchTable::Passes:
-        for (PassID pass : allMembersOf<PassID>) {
-            if (pass == PassID::None)
-                continue;
-            functor(Switch { table, nameOf(pass), static_cast<unsigned>(pass), !isOptionalPass(pass) });
-        }
-        return;
-    case SwitchTable::SelectionRules:
-        for (const Typed::SelectionRule& rule : Typed::selectionRules())
-            functor(Switch { table, nameOf(rule.id), static_cast<unsigned>(rule.id), rule.kind == Typed::SelectionRuleKind::Required });
-        return;
-    case SwitchTable::BackEndSwitches:
-        for (unsigned bit = 0; bit < B3::numberOfSwitches; ++bit)
-            functor(Switch { table, nameOf(static_cast<B3::PolicySwitch>(bit)), bit, false });
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static Vector<Switch, 4> findSwitches(StringView written)
 {
+    bool namesTable = false;
+    forEachSwitch([&](const Switch& candidate) {
+        namesTable |= written.startsWith(candidate.prefix);
+    });
+
     Vector<Switch, 4> matches;
-    auto appendMatches = [&](SwitchTable table, StringView name) {
-        forEachSwitch(table, [&](const Switch& candidate) {
-            if (matchesName(name, candidate.name))
-                matches.append(candidate);
-        });
-    };
-
-    for (SwitchTable table : switchTables) {
-        ASCIILiteral prefix = prefixOf(table);
-        if (written.startsWith(prefix)) {
-            appendMatches(table, written.substring(prefix.length()));
-            return matches;
-        }
-    }
-    for (SwitchTable table : switchTables)
-        appendMatches(table, written);
+    forEachSwitch([&](const Switch& candidate) {
+        if (namesTable && !written.startsWith(candidate.prefix))
+            return;
+        if (matchesName(written.substring(namesTable ? candidate.prefix.length() : 0), candidate.name))
+            matches.append(candidate);
+    });
     return matches;
-}
-
-static void disableSwitch(Wire::CompileOptions& options, const Switch& disabled)
-{
-    uint64_t mask = 1ull << (disabled.bit % bitsPerWordOfSwitches);
-    switch (disabled.table) {
-    case SwitchTable::FlowResults:
-        options.bisection.disabledFlowResults |= mask;
-        return;
-    case SwitchTable::Passes:
-        options.bisection.disabledPasses[disabled.bit / bitsPerWordOfSwitches] |= mask;
-        return;
-    case SwitchTable::SelectionRules:
-        options.bisection.disabledSelectionRules |= mask;
-        return;
-    case SwitchTable::BackEndSwitches:
-        options.bisection.disabledBackEndSwitches |= mask;
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static std::optional<String> disableSwitchNamed(Wire::CompileOptions& options, StringView written)
 {
     if (matchesName(written, allFlowResultsName)) {
-        forEachSwitch(SwitchTable::FlowResults, [&](const Switch& flowResult) {
-            disableSwitch(options, flowResult);
-        });
         // Nothing may use what the analysis finds, so it does not run either.
-        disableSwitch(options, { SwitchTable::Passes, nameOf(PassID::AnalyzeFlow), static_cast<unsigned>(PassID::AnalyzeFlow), false });
+        forEachSwitch([&](const Switch& candidate) {
+            if (candidate.table == SwitchTable::FlowResults || (candidate.table == SwitchTable::Passes && candidate.bit == static_cast<unsigned>(PassID::AnalyzeFlow)))
+                disableSwitch(options, candidate);
+        });
         return std::nullopt;
     }
 
@@ -765,17 +590,10 @@ static std::optional<String> disableSwitchNamed(Wire::CompileOptions& options, S
     if (matches.isEmpty())
         return unknownNameSentence("switch"_s, written);
     if (matches.size() > 1)
-        return makeString(written, " is both "_s, prefixOf(matches[0].table), matches[0].name, " and "_s, prefixOf(matches[1].table), matches[1].name);
+        return makeString(written, " is both "_s, matches[0].prefix, matches[0].name, " and "_s, matches[1].prefix, matches[1].name);
     if (matches[0].isRequired)
         return makeString(written, " is required and cannot be disabled"_s);
     disableSwitch(options, matches[0]);
-    return std::nullopt;
-}
-
-template<Wire::CompileAction action>
-static std::optional<String> applyAction(Wire::CompileOptions& options, const OptionWord&, StringView)
-{
-    options.action = action;
     return std::nullopt;
 }
 
@@ -789,12 +607,10 @@ static std::optional<String> applyDisable(Wire::CompileOptions& options, const O
 static void listSwitches(PrintStream& out)
 {
     listValue(out, allFlowResultsName);
-    for (SwitchTable table : switchTables) {
-        forEachSwitch(table, [&](const Switch& listed) {
-            if (!listed.isRequired)
-                listValue(out, prefixOf(table), listed.name);
-        });
-    }
+    forEachSwitch([&](const Switch& listed) {
+        if (!listed.isRequired)
+            listValue(out, listed.prefix, listed.name);
+    });
 }
 
 static std::optional<String> applyOnlyPasses(Wire::CompileOptions& options, const OptionWord& word, StringView value)
@@ -811,18 +627,18 @@ static std::optional<String> applyOnlyPasses(Wire::CompileOptions& options, cons
     if (sentence)
         return sentence;
 
-    forEachSwitch(SwitchTable::Passes, [&](const Switch& pass) {
-        if (!pass.isRequired && !enabledPasses.get(pass.bit))
-            disableSwitch(options, pass);
+    forEachSwitch([&](const Switch& candidate) {
+        if (candidate.table == SwitchTable::Passes && !candidate.isRequired && !enabledPasses.get(candidate.bit))
+            disableSwitch(options, candidate);
     });
     return std::nullopt;
 }
 
 static void listOptionalPasses(PrintStream& out)
 {
-    forEachSwitch(SwitchTable::Passes, [&](const Switch& pass) {
-        if (!pass.isRequired)
-            listValue(out, pass.name);
+    forEachSwitch([&](const Switch& candidate) {
+        if (candidate.table == SwitchTable::Passes && !candidate.isRequired)
+            listValue(out, candidate.name);
     });
 }
 
@@ -940,42 +756,7 @@ static std::optional<String> applyDropGuard(Wire::CompileOptions& options, const
     return std::nullopt;
 }
 
-static std::optional<String> applyThreads(Wire::CompileOptions& options, const OptionWord& word, StringView value)
-{
-    if (auto sentence = applyNumber<&Wire::CompileOptions::threadCount>(options, word, value))
-        return sentence;
-    if (!options.threadCount)
-        return "the number of threads is at least 1"_s;
-    return std::nullopt;
-}
-
-static constexpr OptionWord optionWords[] = {
-    { "validate"_s, { }, { }, applyFlag<&WireOptions::checks, Wire::CheckSet::Validate>, nullptr },
-    { "check"_s, "<name>,.."_s, "check"_s, applyListedFlags<&WireOptions::checks>, listMembers<Wire::CheckSet> },
-    { "verify-only"_s, { }, { }, applyAction<Wire::CompileAction::VerifyOnly>, nullptr },
-    { "check-only"_s, { }, { }, applyAction<Wire::CompileAction::CheckOnly>, nullptr },
-    { "disable"_s, "<switch>,.."_s, { }, applyDisable, listSwitches },
-    { "only-passes"_s, "<PassID>,.."_s, "pass"_s, applyOnlyPasses, listOptionalPasses },
-    { "disable-in"_s, "<first>[:<count>]"_s, { }, applyDisableIn, nullptr },
-    { "limit"_s, "<LimitID>:<n>"_s, "limit"_s, applyLimit, listLimits },
-    { "heat"_s, "<HeatOverride>"_s, "heat override"_s, applyMember<&WireOptions::heatOverride>, listMembers<Wire::HeatOverride> },
-    { "testing"_s, "<name>,.."_s, "testing switch"_s, applyTesting, listTestingSwitches },
-    { "sabotage"_s, "<Sabotage>"_s, "sabotage"_s, applyMember<&WireOptions::sabotage>, listMembers<Wire::Sabotage> },
-    { "count-branches"_s, { }, { }, applyFlag<&WireOptions::instrumentation, Wire::Instrumentation::CountBranches>, nullptr },
-    { "count-arrivals"_s, { }, { }, applyFlag<&WireOptions::instrumentation, Wire::Instrumentation::CountArrivals>, nullptr },
-    { "drop-guard"_s, "<Opcode>:<n>"_s, "opcode"_s, applyDropGuard, nullptr },
-    { "references"_s, "narrow|wide"_s, "reference width"_s, applyNamedValue<referenceWidths, &Wire::TargetOptions::referenceWidth>, listNamedValues<referenceWidths> },
-    { "image-form"_s, "absolute|position-independent"_s, "image form"_s, applyNamedValue<imageForms, &Wire::TargetOptions::imageForm>, listNamedValues<imageForms> },
-    { "type-errors"_s, "silent|log"_s, "type error policy"_s, applyNamedValue<mismatchPolicies, &WireOptions::mismatchPolicy>, listNamedValues<mismatchPolicies> },
-    { "layout-seed"_s, "<n>"_s, { }, applyNumber<&WireOptions::layoutSeed>, nullptr },
-    { "threads"_s, "<n>"_s, { }, applyThreads, nullptr },
-    { "report"_s, "<name>,.."_s, "report"_s, applyListedFlags<&WireOptions::reports>, listMembers<Wire::ReportSet> },
-    { "admit"_s, "<name>,.."_s, "admitted code"_s, applyListedFlags<&WireOptions::admittedCode>, listMembers<Wire::AdmittedCode> },
-    { "exclude"_s, "<name>,.."_s, "excluded code"_s, applyListedFlags<&WireOptions::excludedCode>, listMembers<Wire::ExcludedCode> },
-    { "obfuscate"_s, { }, { }, applyFlag<&WireOptions::output, Wire::OutputOptions::Obfuscate>, nullptr },
-    { "erase-types"_s, { }, { }, nullptr, nullptr },
-    { "out"_s, "<file>"_s, { }, nullptr, nullptr },
-};
+#include "AOTSchemaOptionWords.inc"
 
 static const OptionWord* findOptionWord(StringView key)
 {

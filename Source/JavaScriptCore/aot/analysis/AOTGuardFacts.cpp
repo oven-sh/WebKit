@@ -254,7 +254,7 @@ static bool fillsEveryFieldOfBirth(const Program& program, const Function& funct
 {
     if (allocation.opcode != Opcode::NewObject)
         return false;
-    bool mayListPlaceholders = program.at(allocation.layout()).kind != LayoutKind::Record;
+    bool mayListPlaceholders = program.at(allocation.layout()).kind != LayoutKind::Record && !allocation.listsOnlyStoredValues();
     std::span<const uint32_t> listed = allocation.fields();
     std::span<const ValueID> values = allocation.variadicOperands();
     bool hasFieldOfBirth = false;

@@ -26,13 +26,6 @@ struct OptionalIndex {
     friend constexpr bool operator==(OptionalIndex, OptionalIndex) = default;
 };
 
-// Every member is a site number of the function.
-struct SpreadSite {
-    uint32_t callSite;
-    uint32_t item;
-    uint32_t site;
-};
-
 struct PrologueCheck {
     uint32_t function { 0 };
     uint32_t callOffset { 0 };

@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTOperandSnapshot.h"
+#include "AOTNativeCallValidation.h"
 
 #if ENABLE(AOT)
 
@@ -12,8 +12,6 @@
 #include "AOTCompactTable.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
-#include "AOTSort.h"
-#include "AOTVector.h"
 #include "DateInstance.h"
 #include "GetterSetter.h"
 #include "JSArrayBuffer.h"
@@ -91,12 +89,11 @@ AbstractHeaps heapsOfClassOf(JSObject* object)
 template<typename T>
 static void forEachAtEnds(std::span<const T> values, size_t maxAtEachEnd, const Invocable<void(T)> auto& functor)
 {
-    size_t sizeOfStart = std::min(values.size(), maxAtEachEnd);
-    size_t sizeOfEnd = std::min(values.size() - sizeOfStart, maxAtEachEnd);
-    for (T value : values.first(sizeOfStart))
-        functor(value);
-    for (T value : values.last(sizeOfEnd))
-        functor(value);
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index == maxAtEachEnd && values.size() > 2 * maxAtEachEnd)
+            index = values.size() - maxAtEachEnd;
+        functor(values[index]);
+    }
 }
 
 static uint64_t hashSnapshotBytes(std::span<const uint8_t> bytes)
@@ -115,19 +112,13 @@ static void appendWords(Vector<uint64_t>& captured, std::span<const uint64_t> wo
     });
 }
 
-static bool hasButterfly(JSType type)
-{
-    return type < objectTypesWithoutButterfly.first || type > objectTypesWithoutButterfly.last;
-}
-
-static void captureNamedProperties(JSObject* holder, OperandSnapshot& state)
+static void capturePropertiesAndElements(JSObject* holder, OperandSnapshot& state)
 {
     Structure* structure = holder->structure();
-    if (structure->maxOffset() != invalidOffset && static_cast<unsigned>(structure->maxOffset()) > maxCheckedProperties) {
-        state.hasTooManyProperties = true;
-        return;
-    }
+    state.hasTooManyProperties = structure->maxOffset() != invalidOffset && static_cast<unsigned>(structure->maxOffset()) > maxCheckedProperties;
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+        if (state.hasTooManyProperties)
+            return false;
         // A getter of native code may keep what it has made on the object, under the name or under another.
         state.createsPropertiesLazily |= !!(entry.attributes() & (PropertyAttribute::CustomValue | PropertyAttribute::CustomAccessor));
         JSValue value = holder->getDirect(entry.offset());
@@ -138,34 +129,19 @@ static void captureNamedProperties(JSObject* holder, OperandSnapshot& state)
         state.properties.append({ entry.key(), entry.attributes(), captured });
         return true;
     });
-}
 
-static void captureElements(JSObject* holder, OperandSnapshot& state)
-{
     state.indexingMode = holder->indexingMode();
     Butterfly* butterfly = holder->butterfly();
     if (!butterfly || !hasIndexedProperties(holder->indexingType()))
         return;
 
-    switch (holder->indexingType() & IndexingShapeMask) {
-    case Int32Shape:
-    case DoubleShape:
-    case ContiguousShape:
-        state.length = butterfly->publicLength();
-        appendWords(state.elements, std::span<const uint64_t>(butterfly->indexingPayload<uint64_t>(), state.length));
-        return;
-    case ArrayStorageShape:
-    case SlowPutArrayStorageShape: {
+    state.length = butterfly->publicLength();
+    if (hasAnyArrayStorage(holder->indexingType())) {
         ArrayStorage* storage = butterfly->arrayStorage();
-        state.length = storage->length();
         state.elements.append(storage->m_numValuesInVector);
         appendWords(state.elements, std::span(reinterpret_cast<const uint64_t*>(storage->m_vector), storage->vectorLength()));
-        return;
-    }
-    default:
-        state.length = butterfly->publicLength();
-        return;
-    }
+    } else if (!hasUndecided(holder->indexingType()))
+        appendWords(state.elements, std::span<const uint64_t>(butterfly->indexingPayload<uint64_t>(), state.length));
 }
 
 static void captureFields(const Object& object, OperandSnapshot& state)
@@ -278,25 +254,18 @@ OperandSnapshot capture(JSObject* object)
     if (Object* compiled = compiledObjectOrNull(object)) {
         state.isExtensible = !compiled->isNotExtensible();
         captureFields(*compiled, state);
-        if (JSObject* extra = compiled->extraProperties()) {
-            captureNamedProperties(extra, state);
-            captureElements(extra, state);
-        }
+        if (JSObject* extra = compiled->extraProperties())
+            capturePropertiesAndElements(extra, state);
     } else {
         // The Structure of a class that overrides isExtensible() says no for every cell.
         state.isExtensible = state.type == SlimClosureType || structure->isStructureExtensible();
         // An array overrides the lookup for its length alone.
         state.createsPropertiesLazily |= !isJSArray(object) && (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable());
-        if (hasButterfly(state.type)) {
-            captureNamedProperties(object, state);
-            captureElements(object, state);
-        }
+        if (!objectTypesWithoutButterfly.contains(state.type))
+            capturePropertiesAndElements(object, state);
         captureInternalState(object, state);
         state.isClassPrototypeWithoutMembers = object->classInfo() == ClassPrototype::info();
     }
-    AOT::sort(state.properties, { }, [](const CapturedProperty& property) {
-        return property.key.get();
-    });
     return state;
 }
 
@@ -308,46 +277,43 @@ bool canCapture(JSValue operand)
     return type != ProxyObjectType && type != GlobalProxyType && type != GlobalObjectType;
 }
 
-static String describeKey(UniquedStringImpl* key)
+static OperandDifference differenceAt(OperandChange change, UniquedStringImpl* key, EncodedJSValue arrived = 0)
 {
-    if (key->isSymbol())
-        return makeString("[Symbol("_s, StringView(key), ")]"_s);
-    return String(key);
+    return { change, key->isSymbol() ? makeString("[Symbol("_s, StringView(key), ")]"_s) : String(key), key, arrived };
 }
 
 static void compareNamedProperties(const OperandSnapshot& before, const OperandSnapshot& after, Vector<OperandDifference>& differences)
 {
     if (before.hasTooManyProperties || after.hasTooManyProperties)
         return;
-    auto old = before.properties.begin();
-    auto current = after.properties.begin();
-    while (old != before.properties.end() || current != after.properties.end()) {
-        bool isRemoved = current == after.properties.end() || (old != before.properties.end() && old->key.get() < current->key.get());
-        if (isRemoved) {
-            differences.append({ OperandChange::PropertyRemoved, describeKey(old->key.get()), old->key });
-            ++old;
-            continue;
-        }
-        bool isAdded = old == before.properties.end() || current->key.get() < old->key.get();
-        if (isAdded) {
-            if (!before.createsPropertiesLazily && !after.createsPropertiesLazily)
-                differences.append({ OperandChange::PropertyAdded, describeKey(current->key.get()), current->key, current->value });
-            ++current;
-            continue;
-        }
-        // A value that native code makes at the first read and puts in the place of its getter is the same data property to a script.
-        bool wasCreatedByFirstRead = old->attributes == (current->attributes | PropertyAttribute::CustomValue);
-        if (wasCreatedByFirstRead && old->attributes != current->attributes) {
-            ++old;
-            ++current;
-            continue;
-        }
-        if (old->attributes != current->attributes)
-            differences.append({ OperandChange::AttributesChanged, describeKey(old->key.get()), old->key, old->value != current->value ? current->value : 0 });
-        else if (old->value != current->value)
-            differences.append({ OperandChange::PropertyStored, describeKey(old->key.get()), old->key, current->value });
-        ++old;
-        ++current;
+    auto find = [](const OperandSnapshot& state, const CapturedProperty& property) {
+        size_t index = state.properties.findIf([&](const CapturedProperty& other) {
+            return other.key == property.key;
+        });
+        return index == notFound ? nullptr : &state.properties[index];
+    };
+    for (const CapturedProperty& old : before.properties) {
+        UniquedStringImpl* key = old.key.get();
+        const CapturedProperty* current = find(after, old);
+        if (!current) {
+            // A property that moves from the extra properties of a compiled object to a field is stored, not removed.
+            bool isStoredInField = differences.containsIf([&](const OperandDifference& field) {
+                return field.change == OperandChange::PropertyStored && field.key == key;
+            });
+            if (!isStoredInField)
+                differences.append(differenceAt(OperandChange::PropertyRemoved, key));
+        } else if (old.attributes != current->attributes) {
+            // A value that native code makes at the first read and puts in the place of its getter is the same data property to a script.
+            if (old.attributes != (current->attributes | PropertyAttribute::CustomValue))
+                differences.append(differenceAt(OperandChange::AttributesChanged, key, old.value != current->value ? current->value : 0));
+        } else if (old.value != current->value)
+            differences.append(differenceAt(OperandChange::PropertyStored, key, current->value));
+    }
+    if (before.createsPropertiesLazily || after.createsPropertiesLazily)
+        return;
+    for (const CapturedProperty& current : after.properties) {
+        if (!find(before, current))
+            differences.append(differenceAt(OperandChange::PropertyAdded, current.key.get(), current.value));
     }
 }
 
@@ -368,7 +334,7 @@ static void compareFields(VM& vm, const Object& object, const OperandSnapshot& b
             continue;
         // A field that has left its slot and lies nowhere else is deleted.
         bool isGone = !object.isInSlot(fields[index]) && !(object.hasExtraProperties() && livesInExtraProperties(vm, object, fields[index]));
-        differences.append({ isGone ? OperandChange::PropertyRemoved : OperandChange::PropertyStored, describeKey(propertyNameOf(vm, object, fields[index])), propertyNameOf(vm, object, fields[index]) });
+        differences.append(differenceAt(isGone ? OperandChange::PropertyRemoved : OperandChange::PropertyStored, propertyNameOf(vm, object, fields[index])));
     }
 }
 
@@ -403,18 +369,7 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
 
     if (Object* compiled = compiledObjectOrNull(object))
         compareFields(vm, *compiled, before, after, differences);
-    size_t numberOfFieldDifferences = differences.size();
     compareNamedProperties(before, after, differences);
-    // A property that moves from the extra properties of a compiled object to a field is stored, not removed.
-    auto isStoredInField = [&](const OperandDifference& difference) {
-        return std::ranges::any_of(differences.span().first(numberOfFieldDifferences), [&](const OperandDifference& field) {
-            return field.change == OperandChange::PropertyStored && field.key == difference.key;
-        });
-    };
-    for (size_t index = differences.size(); index-- > numberOfFieldDifferences;) {
-        if (differences[index].change == OperandChange::PropertyRemoved && isStoredInField(differences[index]))
-            differences.removeAt(index);
-    }
     if (compiledObjectOrNull(object))
         compareKeyOrder(before, after, differences);
 

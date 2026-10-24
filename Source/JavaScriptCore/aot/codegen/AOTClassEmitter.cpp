@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
-#include "AOTBuiltinIDs.h"
-#include "AOTBuiltinTable.h"
 #include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTInstance.h"
@@ -150,16 +148,7 @@ void ClassEmitter::generateSuperConstruct(const ValueContext& value)
 {
     Boxed parent = in<Boxed>(value->parentOperand());
     Boxed newTarget = in<Boxed>(value->newTargetOperand());
-    define(value, noteObjectMadeByBuiltinBase(value, emitter<CallEmitter>().constructValue(value, ConstructSyntax::SuperCall, parent, newTarget, value->argumentsOperands())));
-}
-
-Boxed ClassEmitter::noteObjectMadeByBuiltinBase(const ValueContext& value, Boxed object)
-{
-    LayoutID layout = value->layout();
-    BuiltinClassID base = layout ? builtinBaseClassOf(m_program, layout) : BuiltinClassID();
-    if (BuiltinID parent = base ? m_builtins.at(base).constructor : BuiltinID())
-        callVoidOperation(value, RuntimeOperation::DidConstructBuiltinBase, { unboxCell(object), in<Boxed>(value->parentOperand()), in<Boxed>(value->newTargetOperand()), word32(layout.index()), word32(parent.index()) });
-    return object;
+    define(value, emitter<CallEmitter>().constructValue(value, ConstructSyntax::SuperCall, parent, newTarget, value->argumentsOperands()));
 }
 
 void ClassEmitter::generateSuperConstructList(const ValueContext& value)
@@ -167,7 +156,7 @@ void ClassEmitter::generateSuperConstructList(const ValueContext& value)
     Boxed parent = in<Boxed>(value->parentOperand());
     Boxed newTarget = in<Boxed>(value->newTargetOperand());
     CellPointer list = in<CellPointer>(value->listOperand());
-    define(value, noteObjectMadeByBuiltinBase(value, callOperation<Boxed>(value, RuntimeOperation::SuperConstructList, { parent, newTarget, list }, { .constructs = true })));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::SuperConstructList, { parent, newTarget, list }, { .constructs = true }));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -15,6 +15,7 @@
 #include "AOTObjectWords.h"
 #include "AOTProgramTables.h"
 #include "AOTRuntimeType.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "FreeList.h"
@@ -219,6 +220,11 @@ struct ObjectModel {
     ClassTable classes;
     std::unique_ptr<ObjectModelCaches> caches;
 };
+
+inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
+{
+    return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
+}
 
 } } // namespace JSC::AOT
 

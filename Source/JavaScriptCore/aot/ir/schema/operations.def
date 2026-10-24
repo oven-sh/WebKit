@@ -36,7 +36,7 @@ operation EmptyArgumentList (valueType: Type) -> declared(valueType) ; none ; Pr
 
 family Binding AsRead..Placed
 engine operation Parameter () -> declared ; none ; boundTo = Function ; flow = Copies
-operation GetModuleVariable (variable: Variable) -> declared(variable) ; reads(ModuleVariables[variable]) ; flow = Copies
+operation GetModuleVariable (variable: Variable) [| engine mayPrecedeItsStore] -> declared(variable) ; reads(ModuleVariables[variable]) ; flow = Copies
 engine operation GetEncodedModuleVariable (variable: Variable) -> declared(variable) ; reads(ModuleVariables[variable]) ; Selected..Placed ; replaces = GetModuleVariable, TypeTest
 operation PutModuleVariable (variable: Variable, value: Declared/retains) -> none ; writes(ModuleVariables[variable]) ; flow = Copies
 operation GetEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field) -> declared(field) ; reads(EnvironmentFields[layout, field]) ; interpreted = Read ; flow = Copies
@@ -44,7 +44,7 @@ operation PutEnvironmentField (environment: Layout/inspects, layout: Layout, fie
 operation ScopeHasBinding (scope: Object/inspects, key: PropertyKey) -> natural(boolean) ; unknownCode ; runtime = ScopeHasBinding ; flow = TableProves
 
 family Allocation AsRead..Placed
-operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass, engine outerLayout?: Layout) [| engine takesCellOfInnerObject cellCannotBeMarked] -> allocation(layout) ; Allocates ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates
+operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass, engine outerLayout?: Layout) [| engine takesCellOfInnerObject cellCannotBeMarked listsOnlyStoredValues] -> allocation(layout) ; Allocates ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates
 operation NewDictionary () -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates
 operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies
 operation NewArray (contents: Type, holes: List<UInt32>, engine capacity?: Integer/inspects, elements...: Any/retains(result), engine allocationSite?: AllocationSite, engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage, engine outerLayout?: Layout, engine from Placed staticsOffset?: StaticsOffset) -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates

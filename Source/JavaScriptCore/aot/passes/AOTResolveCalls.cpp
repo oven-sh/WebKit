@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTResolveCalls.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 
@@ -14,7 +14,6 @@
 #include "AOTCreateBoundFunctions.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
-#include "AOTExpandIteration.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
@@ -1183,6 +1182,8 @@ struct CallResolver {
     // False only where plan() finds nothing and has nothing to report. It asks what the planners of the operation ask first, of the operation and of the types of its operands alone.
     bool mayHavePlan(const Value& value) const
     {
+        if (awaitsValidation(program, value))
+            return false;
         if (value.opcode == Opcode::CallBuiltin) {
             const BuiltinOverload& overload = program.builtins().at(value.overload());
             if (value.builtinCallForm() == BuiltinCallForm::AnyReceiver)
@@ -1341,6 +1342,8 @@ struct CallResolver {
             return planned == callSiteOpcodes;
         }());
         RELEASE_ASSERT(callSiteOpcodes.contains(site.opcode));
+        if (awaitsValidation(program, function.at(site.position.value)))
+            return declined;
         if (resolvesOnlyThroughTable)
             return planTableCall(site);
 
@@ -3147,7 +3150,7 @@ void reportCallTests(TestSiteReporter& reporter)
         ValueSite site { reporter.point().block, reporter.point().index, reporter.use() };
         switch (value.opcode) {
         case Opcode::Call:
-            if (!reportMemberCallTests(reporter, site))
+            if (!awaitsValidation(reporter.program(), value) && !reportMemberCallTests(reporter, site))
                 reportCalleeTest(reporter);
             break;
         case Opcode::Construct:

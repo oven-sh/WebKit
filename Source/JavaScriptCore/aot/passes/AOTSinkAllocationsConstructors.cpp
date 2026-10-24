@@ -12,7 +12,7 @@
 #include "AOTEffectSummaries.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
-#include "AOTResolveCalls.h"
+#include "AOTProgramPasses.h"
 #include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"

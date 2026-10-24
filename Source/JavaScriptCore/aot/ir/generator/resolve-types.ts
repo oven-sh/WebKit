@@ -70,7 +70,7 @@ interface SizeComputation {
 const recordMarks = ["wireOnly", "customEngine", "customText", "extendedEngine"] as const;
 const variantForms = ["wire", "engine"] as const;
 const externalForms = ["id", "enum"] as const;
-const scalarColumnKinds = ["Bool", "UInt32", "UInt64", "Text", "Name"] as const;
+const scalarColumnKinds = ["Bool", "UInt32", "UInt64", "Text", "Name", "Type"] as const;
 const maximumColumnIntegers = { UInt32: 0xffffffffn, UInt64: 0xffffffffffffffffn } as const;
 const placeholderKind: Kind = { tag: "Scalar", scalar: "UInt32" };
 
@@ -251,6 +251,7 @@ export function declareTypes(scope: Scope, declarations: readonly DeclarationInF
         declareVariant(scope, declaration, file);
         break;
       case "include":
+      case "word":
       case "heap":
       case "effects":
       case "uses":
@@ -279,6 +280,8 @@ function zeroValueOf(kind: ColumnKind): ColumnValue {
     case "Text":
     case "Name":
       return { tag: "Text", value: "" };
+    case "Type":
+      return { tag: "Type", type: null };
     case "Enum":
       return kind.type.members.length === 0
         ? { tag: "Members", members: [] }
@@ -355,6 +358,12 @@ function findColumnValue(scope: Scope, kind: ColumnKind, value: ValueSyntax): Co
       return value.form === "Text" ? { tag: "Text", value: value.value } : null;
     case "Name":
       return value.form === "Names" && value.names.length === 1 ? { tag: "Text", value: value.names[0].text } : null;
+    case "Type": {
+      if (value.form !== "Names" || value.names.length !== 1) return null;
+      if (value.names[0].text === "none") return { tag: "Type", type: null };
+      const type = scope.enums.get(value.names[0].text);
+      return type === undefined ? null : { tag: "Type", type };
+    }
     case "Enum": {
       if (value.form !== "Names" || value.names.length !== 1) return null;
       const member = resolveMember(scope, kind.type, value.names[0]);
@@ -406,6 +415,7 @@ export function resolveEnums(scope: Scope, declarations: readonly DeclarationInF
     type.columns = syntax.columns.map(column => ({
       name: column.name.text,
       kind: resolveColumnKind(scope, syntax.name, column.kind),
+      isEngine: column.isEngine,
       isInRust: false,
     }));
   }
@@ -448,7 +458,8 @@ function applyExtension(scope: Scope, syntax: ExtendSyntax): void {
     targetMembers.set(name, counterpart);
     return counterpart;
   });
-  source.columns.push({ name: syntax.column.text, kind: { tag: "Enum", type: target }, isInRust: false });
+  const kind: ColumnKind = { tag: "Enum", type: target };
+  source.columns.push({ name: syntax.column.text, kind, isEngine: false, isInRust: false });
   source.members.forEach((member: Mutable<Member>, position) => {
     member.values = [...member.values, { tag: "Member", member: counterparts[position] }];
   });
@@ -760,6 +771,7 @@ function reachesEngineFields(type: SchemaType, visited: Set<string>): boolean {
 function isColumnInRust(kind: ColumnKind): boolean {
   switch (kind.tag) {
     case "Name":
+    case "Type":
       return false;
     case "Bool":
     case "UInt32":
@@ -790,7 +802,8 @@ export function computeWords(scope: Scope): void {
   for (const variant of scope.variants.values()) computeVariantSizes(computation, variant);
   for (const list of scope.lists.values()) finishList(computation, list);
   for (const type of scope.enums.values()) {
-    for (const column of type.columns) (column as Mutable<EnumColumn>).isInRust = isColumnInRust(column.kind);
+    for (const column of type.columns)
+      (column as Mutable<EnumColumn>).isInRust = !column.isEngine && isColumnInRust(column.kind);
   }
 }
 

@@ -909,11 +909,16 @@ std::optional<uint32_t> CompactTable::findOtherKey(JSGlobalObject*, JSValue norm
     });
 }
 
-std::optional<uint32_t> CompactTable::find(std::span<const Latin1Character> characters) const
+ALWAYS_INLINE std::optional<uint32_t> CompactTable::findInline(std::span<const Latin1Character> characters) const
 {
     if (isInImage())
         return findCharactersInImage(*Image::current(), tableInImage(), characters);
     return findCharacters(characters);
+}
+
+std::optional<uint32_t> CompactTable::find(std::span<const Latin1Character> characters) const
+{
+    return findInline(characters);
 }
 
 CompactTable* CompactTable::createInImage(VM& vm, State& state, const TableInImage& entries)
@@ -1403,7 +1408,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapGetByKeyParts, EncodedJSValue, (Instance
     ShortKeyCharacters key;
     if (tryWriteShortKey(unsafeMakeSpan(parts, count), key)) [[likely]] {
         CompactTable* table = CompactTable::tableOf(uncheckedDowncast<JSMap>(map));
-        std::optional<uint32_t> entry = table ? table->find(key.span()) : std::nullopt;
+        std::optional<uint32_t> entry = table ? table->findInline(key.span()) : std::nullopt;
         if (!entry)
             return { JSValue::encode(jsUndefined()), nullptr };
         if (table->isHeapTable()) [[likely]]
@@ -1417,7 +1422,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTHasByKeyParts, size_t, (Instance* instance,
     ShortKeyCharacters key;
     if (tryWriteShortKey(unsafeMakeSpan(parts, count), key)) [[likely]] {
         CompactTable* table = CompactTable::tableOf(asObject(collection));
-        return { table && table->find(key.span()), nullptr };
+        return { table && table->findInline(key.span()), nullptr };
     }
     [[clang::musttail]] return findByKeyPartsGeneric<Entry::operationAOTHasByKeyParts, size_t>(instance, collection, count, parts);
 }

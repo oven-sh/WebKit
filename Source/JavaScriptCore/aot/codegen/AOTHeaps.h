@@ -46,7 +46,6 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_fixedFields, 0) \
     v(AOTClosure_entry, offsetOfClosureEntry) \
     v(AOTCompiledStructure_flags, CompiledStructure::offsetOfFlags()) \
-    v(Structure_variant, Structure::variantOffset()) \
     v(AOTObject_shapeWord, offsetOfShapeWord) \
     v(ArrayBuffer_shared, ArrayBuffer::offsetOfShared()) \
     v(JSArrayBuffer_impl, JSArrayBuffer::offsetOfImpl()) \
@@ -61,7 +60,6 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTInstance_siteCaches, 0, RuntimeState) \
     v(AOTInstance_globalBindings, 0, RuntimeState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
-    v(BrandedStructure_compiledClassWord, BrandedStructure::offsetOfCompiledClassWord(), RuntimeState) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(weakTableStorage, 0, CollectionStorage) \

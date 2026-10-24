@@ -335,6 +335,12 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSValue primitiv
         NumberToStringBuffer buffer;
         return append(globalObject, byteCast<Latin1Character>(numberToStringAndSize(primitive.asDouble(), buffer)));
     }
+    if (primitive.isUndefined())
+        return append(globalObject, "undefined"_s.span8());
+    if (primitive.isNull())
+        return append(globalObject, "null"_s.span8());
+    if (primitive.isBoolean())
+        return append(globalObject, primitive.isTrue() ? "true"_s.span8() : "false"_s.span8());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = primitive.toString(globalObject);

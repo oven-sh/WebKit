@@ -220,6 +220,7 @@ public:
 
     std::optional<uint32_t> find(JSGlobalObject*, JSValue key) const;
     std::optional<uint32_t> find(std::span<const Latin1Character>) const;
+    std::optional<uint32_t> findInline(std::span<const Latin1Character>) const;
 
     template<typename CharacterType>
     static ALWAYS_INLINE bool hasCharacters(const StringImpl& impl, std::span<const CharacterType> characters)
@@ -251,7 +252,17 @@ public:
     {
         if (impl.is8Bit() == (sizeof(CharacterType) == 1))
             return hasCharacters(impl, characters);
-        return StringView { impl } == StringView { characters };
+        using OtherCharacterType = std::conditional_t<sizeof(CharacterType) == 1, char16_t, Latin1Character>;
+        size_t length = characters.size();
+        if (impl.length() != length)
+            return false;
+        const OtherCharacterType* a = impl.span<OtherCharacterType>().data();
+        const CharacterType* b = characters.data();
+        for (size_t i = 0; i < length; ++i) {
+            if (a[i] != b[i])
+                return false;
+        }
+        return true;
     }
 
     enum class QuickLookup : uint8_t { Unknown, Found, Absent };

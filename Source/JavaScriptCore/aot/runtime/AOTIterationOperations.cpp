@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
-#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"

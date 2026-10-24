@@ -8,14 +8,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTLayout.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTest.h"
 #include "AOTVector.h"
-#include "BrandedStructure.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 
@@ -49,111 +47,9 @@ bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
     });
 }
 
-// To the types a layout and a built-in class have no object in common, and an object of a class below Map belongs to both. Until the types know it no test tells such an object: what is typed by such a class goes on as an object nobody knows.
-bool ShapeTestEmitter::isMadeByBuiltinBase(LayoutID) const
+Condition ShapeTestEmitter::hasNoExtraProperties(CellPointer cell)
 {
-    return false;
-}
-
-bool ShapeTestEmitter::mayBeMadeByBuiltinBase(const Type& type) const
-{
-    return type.layouts && std::ranges::any_of(m_program.at(type.layouts).members, [&](LayoutID member) {
-        return isMadeByBuiltinBase(member);
-    });
-}
-
-Condition ShapeTestEmitter::hasState(CellPointer cell, const Type& known, uint32_t stateBelowBuiltinBase, NOESCAPE const Invocable<Condition()> auto& ofCompiledObject)
-{
-    if (!mayBeMadeByBuiltinBase(known))
-        return ofCompiledObject();
-    if (!known.hasOnlyLayouts(m_program))
-        return boolean(false);
-    bool mayBeCompiledObject = std::ranges::any_of(m_program.at(known.layouts).members, [&](LayoutID member) {
-        return m_placement.slots().storageOf(member) == LayoutStorage::CompiledObject;
-    });
-    if (!mayBeCompiledObject)
-        return hasStateBelowBuiltinBase(cell, stateBelowBuiltinBase);
-    return either<Condition>(hasBits(shapeWordOf(cell), compiledObjectShapeBit), ofCompiledObject, [&] {
-        return hasStateBelowBuiltinBase(cell, stateBelowBuiltinBase);
-    });
-}
-
-Condition ShapeTestEmitter::hasNoExtraProperties(CellPointer cell, const Type& known)
-{
-    return hasState(cell, known, BrandedStructure::hasOnlyNamesOfCompiledClass, [&] {
-        return hasNoBits(orderWordOf(cell), orderWordHasExtraProperties);
-    });
-}
-
-Condition ShapeTestEmitter::hasLayoutPrototype(CellPointer cell, const Type& known)
-{
-    return hasState(cell, known, BrandedStructure::hasPrototypeOfCompiledClass, [&] {
-        return hasNoBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine);
-    });
-}
-
-Condition ShapeTestEmitter::isBranded(Pointer structure)
-{
-    return equal(Word32(m_out.load8ZeroExt32(structure.value(), m_heaps.Structure_variant)), word32(static_cast<uint32_t>(Structure::StructureVariant::Branded)));
-}
-
-Condition ShapeTestEmitter::isMadeByBuiltinBaseFor(CellPointer cell, LayoutSetID tested)
-{
-    Condition result;
-    Vector<BuiltinClassID, 2> bases;
-    for (LayoutID member : m_program.at(tested).members) {
-        if (!isMadeByBuiltinBase(member))
-            continue;
-        BuiltinClassID base = builtinBaseClassOf(m_program, member);
-        if (m_builtins.at(base).instanceTest == BuiltinInstanceTest::JSTypeEquals && !bases.contains(base))
-            bases.append(base);
-    }
-    for (BuiltinClassID base : bases) {
-        result = logicalOr(result, either<Condition>(hasCellType(cell, m_builtins.at(base).type), [&] {
-            Pointer structure = loadStructure(cell);
-            return either<Condition>(isBranded(structure), [&] {
-                Word32 madeFor = shiftRightUnsigned(loadField<Word32>(structure, m_heaps.BrandedStructure_compiledClassWord), word32(BrandedStructure::compiledClassStateBits));
-                Condition isMember;
-                for (LayoutID member : m_program.at(tested).members) {
-                    if (isMadeByBuiltinBase(member) && builtinBaseClassOf(m_program, member) == base)
-                        isMember = logicalOr(isMember, equal(madeFor, word32(member.index() + 1)));
-                }
-                return isMember;
-            }, [&] {
-                return boolean(false);
-            });
-        }, [&] {
-            return boolean(false);
-        }));
-    }
-    return result ? result : boolean(false);
-}
-
-Condition ShapeTestEmitter::hasStateBelowBuiltinBase(CellPointer cell, uint32_t state)
-{
-    Pointer structure = loadStructure(cell);
-    return either<Condition>(isBranded(structure), [&] {
-        Word32 word = loadField<Word32>(structure, m_heaps.BrandedStructure_compiledClassWord);
-        Word32 lookedAt = either<Word32>(hasBits(word, BrandedStructure::wasLookedAt), [&] {
-            return word;
-        }, [&] {
-            return low32(callWithoutSite<Integer>(RuntimeOperation::LookAtStructureBelowBuiltinBase, { cell }));
-        });
-        return equal(bitAnd(lookedAt, word32(state)), word32(state));
-    }, [&] {
-        return boolean(false);
-    });
-}
-
-Condition ShapeTestEmitter::hasLayoutIn(CellPointer cell, LayoutSetID tested, const Type& known)
-{
-    if (mayBeMadeByBuiltinBase(Type::forLayoutSet(tested)) && !hasOnlyCompiledObjects(known)) {
-        Condition isMade = isMadeByBuiltinBaseFor(cell, tested);
-        if (m_placement.shapes().testOf(tested).form == ShapeTestForm::NeverPasses)
-            return isMade;
-        return logicalOr(isMade, hasShapeIn(cell, tested, known));
-    }
-    return hasShapeIn(cell, tested, known);
+    return hasNoBits(orderWordOf(cell), orderWordHasExtraProperties);
 }
 
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)

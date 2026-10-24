@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTDeferInitializers.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 

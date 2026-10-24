@@ -122,10 +122,19 @@ export function parseValues(cursor: Cursor, closer: string): ValueSyntax[] {
   return parseSeparated(cursor, closer, parseValue);
 }
 
-function parseColumnDeclaration(cursor: Cursor): ColumnDeclarationSyntax {
-  const name = takeName(cursor);
-  cursor.expect(":");
-  return { name, kind: takeWord(cursor) };
+function parseColumnDeclarations(cursor: Cursor): ColumnDeclarationSyntax[] {
+  const columns: ColumnDeclarationSyntax[] = [];
+  let isEngine = false;
+  do {
+    if (!isEngine && cursor.accept("|")) {
+      cursor.expect("engine");
+      isEngine = true;
+    } else if (columns.length > 0) cursor.expect(",");
+    const name = takeName(cursor);
+    cursor.expect(":");
+    columns.push({ name, kind: takeWord(cursor), isEngine });
+  } while (!cursor.at(")"));
+  return columns;
 }
 
 function parseMember(cursor: Cursor, isEngine: boolean): MemberSyntax {
@@ -147,7 +156,7 @@ export function parseEnum(cursor: Cursor, declares: "enum" | "flags"): EnumSynta
   if (cursor.at("(")) {
     if (declares === "flags") throw new SchemaError(cursor.location, "a flag word has no columns");
     cursor.next();
-    columns = parseSeparated(cursor, ")", parseColumnDeclaration);
+    columns = parseColumnDeclarations(cursor);
     cursor.expect(")");
   }
   cursor.expect("{");

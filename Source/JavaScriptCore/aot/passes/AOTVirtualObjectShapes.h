@@ -131,6 +131,7 @@ ListOfNumbers classifyListOfNumbers(const Program&, const VirtualObjectDescripti
 Type typeOfNumbersIn(ArrayStorage);
 
 KnownBoolean evaluateTest(const ShapeContext&, const VirtualShape&, const Value& test, uint32_t operandIndex);
+bool hasEveryFieldOfBirthStored(const ShapeContext&, const VirtualShape&);
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);
 std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, const Terminator& switchOnShape);

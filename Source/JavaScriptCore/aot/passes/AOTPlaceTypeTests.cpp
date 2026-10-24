@@ -1863,7 +1863,7 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
     bool everyArmHoldsData = std::ranges::all_of(partition.arms, [](const MemberArm& arm) {
         return arm.answer.kind == MemberKind::Field || (arm.answer.kind == MemberKind::Accessor && arm.answer.getter);
     });
-    bool isRefusedByArms = !everyArmHoldsData || !partition.findArm(MemberKind::Accessor) || !partition.findArm(MemberKind::Field);
+    bool isRefusedByArms = !everyArmHoldsData || !partition.findArm(MemberKind::Accessor);
     // A limit that is passed is noted for the read.
     if (context.exceeds(LimitID::MaxDispatchCases, partition.arms.size(), reporter.use())) {
         RELEASE_ASSERT(!isKnownToBeRefused);

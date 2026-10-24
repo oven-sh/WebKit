@@ -27,6 +27,7 @@
 #include "OwedOutOfMemoryError.h"
 #include "Reg.h"
 #include "RegisterSet.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMEntryRecord.h"
 #include <wtf/MathExtras.h>
@@ -314,10 +315,14 @@ void throwOutOfMemoryErrorAtReturnOf(Instance& instance, CallFrame* frameThatRet
     VM& vm = *instance.vm;
     {
         DeferGCForAWhile deferGC(vm);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        bool hasThrown = throwOutOfMemoryErrorIfOwed(vm, instance.globalObject, scope);
-        RELEASE_ASSERT(hasThrown);
-        scope.release();
+        auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            bool hasThrown = throwOutOfMemoryErrorIfOwed(vm, instance.globalObject, scope);
+            RELEASE_ASSERT(hasThrown);
+            scope.release();
+        }
+        EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
     }
     instance.runtime.exceptions.stackPointerOfHandler = removeCodePtrTag(frameThatReturns->rawReturnPC());
     frameThatReturns->setReturnPC(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage);

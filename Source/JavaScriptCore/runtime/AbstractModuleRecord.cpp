@@ -1043,7 +1043,8 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
 #if ENABLE(AOT)
             if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
-                Resolution resolution = compiled->resolveExport(globalObject, Identifier::fromUid(vm, query.exportName.get()));
+                Vector<AbstractModuleRecord*, 8> starTargets;
+                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets);
                 RETURN_IF_EXCEPTION(scope, Resolution::error());
                 switch (resolution.type) {
                 case Resolution::Type::Error:
@@ -1054,6 +1055,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 case Resolution::Type::Resolved:
                     if (!mergeToCurrentTop(resolution))
                         return Resolution::ambiguous();
+                    foundStarLinks |= !starTargets.isEmpty();
+                    while (!starTargets.isEmpty())
+                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::Query });
                     continue;
                 }
             }
@@ -1202,14 +1206,10 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+    if (inherits<AOT::ModuleRecord>()) {
         if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
             return *cachedResolution;
-        Resolution resolution = compiled->resolveExport(globalObject, exportName);
-        RETURN_IF_EXCEPTION(scope, Resolution::error());
-        if (resolution.type == Resolution::Type::Resolved)
-            cacheResolution(exportName.impl(), resolution);
-        return resolution;
+        RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
     }
 #endif
 
@@ -1303,7 +1303,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 #if ENABLE(AOT)
         if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
             Vector<Identifier> names;
-            compiled->collectExportedNames(globalObject, names);
+            compiled->collectExportedNames(globalObject, names, pendingModules);
             RETURN_IF_EXCEPTION(scope, nullptr);
             for (const Identifier& name : names) {
                 SUPPRESS_UNCOUNTED_LOCAL auto* exportName = name.impl();

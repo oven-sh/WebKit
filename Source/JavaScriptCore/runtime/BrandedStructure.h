@@ -60,16 +60,6 @@ public:
         return false;
     }
 
-    // For an object that the constructor of a built-in class made for a compiled class: the class, above what the run time found when it looked at this Structure.
-    static constexpr uint32_t compiledClassStateBits = 3;
-    static constexpr uint32_t compiledClassStateMask = (1u << compiledClassStateBits) - 1;
-    static constexpr uint32_t wasLookedAt = 1;
-    static constexpr uint32_t hasPrototypeOfCompiledClass = 2;
-    static constexpr uint32_t hasOnlyNamesOfCompiledClass = 4;
-    uint32_t compiledClassWord() const { return m_compiledClassWord; }
-    void setCompiledClassWord(uint32_t word) { m_compiledClassWord = word; }
-    static constexpr ptrdiff_t offsetOfCompiledClassWord() { return OBJECT_OFFSETOF(BrandedStructure, m_compiledClassWord); }
-
     template<typename Visitor>
     static void visitAdditionalChildren(JSCell* cell, Visitor& visitor)
     {
@@ -85,7 +75,6 @@ private:
 
     CompactRefPtr<UniquedStringImpl> m_brand;
     WriteBarrierStructureID m_parentBrand;
-    uint32_t m_compiledClassWord { 0 };
 
     friend class Structure;
 };

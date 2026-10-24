@@ -13,7 +13,6 @@
 #include "AOTInstance.h"
 #include "AOTVector.h"
 #include "B3Procedure.h"
-#include "BrandedStructure.h"
 #include "JSGlobalObject.h"
 #include <algorithm>
 #include <bit>

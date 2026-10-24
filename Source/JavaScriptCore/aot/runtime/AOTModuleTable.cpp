@@ -194,38 +194,6 @@ bool ModuleTable::hasFileWithExtension(StringView extension) const
     });
 }
 
-ModuleRequestWalk::ModuleRequestWalk(const ModuleTable& table, ModuleID root)
-    : m_table(table)
-    , m_visited(table.size())
-    , m_onPath(table.size())
-{
-    enter(root);
-}
-
-void ModuleRequestWalk::enter(ModuleID module)
-{
-    ASSERT(!hasVisited(module));
-    m_visited.set(module.index());
-    m_onPath.set(module.index());
-    m_path.append({ module, 0 });
-}
-
-ModuleRequestWalk::Step ModuleRequestWalk::next()
-{
-    if (m_path.isEmpty())
-        return { StepKind::Done, { }, nullptr };
-
-    Frame& frame = m_path.last();
-    std::span<const ModuleRequestData> requests = m_table.requests(frame.module);
-    if (frame.nextRequest == requests.size()) {
-        ModuleID module = frame.module;
-        m_onPath.clear(module.index());
-        m_path.removeLast();
-        return { StepKind::Leave, module, nullptr };
-    }
-    return { StepKind::Request, frame.module, &requests[frame.nextRequest++] };
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

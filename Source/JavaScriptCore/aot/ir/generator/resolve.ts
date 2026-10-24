@@ -14,6 +14,7 @@ import type {
   NamedEffects,
   NaturalTable,
   OpaqueKind,
+  OptionWord,
   ProgramList,
   RuntimeOperation,
   Schema,
@@ -36,6 +37,7 @@ import {
   resolveInlineBuiltins,
   resolveRuntimeOperations,
 } from "./resolve-entries.ts";
+import { resolveOptionWords } from "./resolve-options.ts";
 import { resolveNaturalTables } from "./resolve-results.ts";
 import {
   applyExtensions,
@@ -112,6 +114,7 @@ export class Scope {
   readonly runtimeOperations = new Map<string, RuntimeOperation>();
   readonly entries = new Map<string, MutableEntry>();
   readonly inlineBuiltins = new Map<string, InlineBuiltin>();
+  readonly optionWords = new Map<string, OptionWord>();
 
   constructor(files: readonly ParsedFile[]) {
     this.files = [...files];
@@ -134,6 +137,7 @@ export class Scope {
 function locationOf(declaration: Declaration): Location {
   switch (declaration.declares) {
     case "include":
+    case "word":
       return declaration.location;
     case "opaque":
     case "runtime":
@@ -356,6 +360,7 @@ function buildSchema(scope: Scope, declarations: readonly DeclarationInFile[]): 
     terminators: entries.filter(entry => entry.isTerminator),
     runtimeOperations: [...scope.runtimeOperations.values()],
     inlineBuiltins: [...scope.inlineBuiltins.values()],
+    optionWords: [...scope.optionWords.values()],
   };
 }
 
@@ -382,6 +387,7 @@ export function resolveSchema(files: readonly ParsedFile[]): Schema {
   markPayloadTypes(scope);
   computeWords(scope);
   assignPayloadWords(scope);
+  resolveOptionWords(scope, declarations);
   scope.errors.throwIfAny(scope.files);
   return buildSchema(scope, declarations);
 }

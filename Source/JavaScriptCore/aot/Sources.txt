@@ -274,6 +274,7 @@ aot/passes/AOTEntryChecks.cpp
 aot/passes/AOTEnvironments.cpp
 aot/passes/AOTExpandIteration.cpp
 aot/passes/AOTExpandOwnKeys.cpp
+aot/passes/AOTExpectFieldsByNames.cpp
 aot/passes/AOTFinishBirths.cpp
 aot/passes/AOTFrameAllocation.cpp
 aot/passes/AOTFrameAllocationPlanner.cpp
@@ -315,9 +316,7 @@ aot/pipeline/AOTDerivedFunctions.cpp
 aot/pipeline/AOTFunctionLoop.cpp
 aot/pipeline/AOTOpenSites.cpp
 aot/pipeline/AOTPassRunner.cpp
-aot/pipeline/AOTPassTriggers.cpp
 aot/pipeline/AOTPipeline.cpp
-aot/pipeline/AOTPipelineStages.cpp
 aot/pipeline/AOTProgramAnalyses.cpp
 aot/place/AOTFunctionKinds.cpp
 aot/place/AOTGuardBits.cpp

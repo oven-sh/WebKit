@@ -83,7 +83,7 @@ export interface Constant {
 }
 
 export type ColumnKind =
-  | { readonly tag: "Bool" | "UInt32" | "UInt64" | "Text" | "Name" }
+  | { readonly tag: "Bool" | "UInt32" | "UInt64" | "Text" | "Name" | "Type" }
   | { readonly tag: "Enum"; readonly type: SchemaEnum }
   | { readonly tag: "Flags"; readonly type: SchemaEnum };
 
@@ -91,12 +91,14 @@ export type ColumnValue =
   | { readonly tag: "Bool"; readonly value: boolean }
   | { readonly tag: "Integer"; readonly value: bigint }
   | { readonly tag: "Text"; readonly value: string }
+  | { readonly tag: "Type"; readonly type: SchemaEnum | null }
   | { readonly tag: "Member"; readonly member: Member }
   | { readonly tag: "Members"; readonly members: readonly Member[] };
 
 export interface EnumColumn {
   readonly name: string;
   readonly kind: ColumnKind;
+  readonly isEngine: boolean;
   readonly isInRust: boolean;
 }
 
@@ -464,6 +466,32 @@ export interface InlineBuiltin {
   readonly location: Location;
 }
 
+/** The fields from the record of the options down to the member. */
+export type OptionMember = readonly Field[];
+
+export type OptionWordAction =
+  | { readonly tag: "Sets"; readonly target: OptionMember; readonly type: SchemaEnum; readonly member: Member }
+  | { readonly tag: "Names"; readonly target: OptionMember; readonly type: SchemaEnum }
+  | {
+      readonly tag: "NamesAlternative";
+      readonly target: OptionMember;
+      readonly type: SchemaEnum;
+      readonly alternatives: readonly { readonly text: string; readonly member: Member }[];
+    }
+  | { readonly tag: "Number"; readonly target: OptionMember; readonly sentenceForZero: string | null }
+  | { readonly tag: "Custom"; readonly apply: string; readonly list: string | null }
+  | { readonly tag: "FrontEnd" };
+
+export interface OptionWord {
+  readonly key: string;
+  readonly valueSyntax: string | null;
+  readonly noun: string | null;
+  readonly action: OptionWordAction;
+  readonly location: Location;
+}
+
+export const optionsRecordName = "CompileOptions";
+
 export interface Schema {
   readonly files: readonly SchemaFile[];
   readonly constants: readonly Constant[];
@@ -485,6 +513,7 @@ export interface Schema {
   readonly terminators: readonly Entry[];
   readonly runtimeOperations: readonly RuntimeOperation[];
   readonly inlineBuiltins: readonly InlineBuiltin[];
+  readonly optionWords: readonly OptionWord[];
 }
 
 export function isLegalIn(entry: Entry, form: Form): boolean {

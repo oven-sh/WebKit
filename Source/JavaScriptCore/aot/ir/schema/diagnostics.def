@@ -136,7 +136,6 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     EffectsOfPreparedTooNarrow(Select, "an operation was selected into a form with effects it does not declare")
     EffectsExceedSummary(GenerateCode, "the generated code has effects beyond the summary of {function}")
     StoreOutsideDeclaredEffects(GenerateCode, "{function}: the code of {value} stores to a heap the operation does not write")
-    StoreIntoObjectWithoutSlots(GenerateCode, "{function}: the code of {value} stores to a word or a slot of an operand that the constructor of a built-in class may have made")
     RequiredTailCallNotConverted(Optimize, "a tail call in a cycle was demoted in {function} at {value}")
     FramePointerReturned(Optimize, "{function}: {value} may point into the frame and is returned")
     FramePointerThrown(Optimize, "{function}: {value} may point into the frame and is thrown")

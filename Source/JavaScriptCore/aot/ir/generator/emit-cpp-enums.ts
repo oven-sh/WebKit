@@ -19,6 +19,7 @@ import type {
   ColumnKind,
   ColumnValue,
   Entry,
+  EnumColumn,
   HeapMark,
   Member,
   OpaqueKind,
@@ -27,7 +28,7 @@ import type {
   SchemaEnum,
 } from "./model.ts";
 import { generatedEnumNames, heapMarks } from "./model.ts";
-import { cppColumnFunctionName, programListMemberName } from "./names.ts";
+import { cppColumnFunctionName, programListMemberName, upperFirst } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
 
 const sharedWithBuiltinTable = [
@@ -41,7 +42,7 @@ const sharedWithBuiltinTable = [
   "WellKnownSymbol",
 ] as const;
 
-const columnTypes: Readonly<Record<Exclude<ColumnKind["tag"], "Enum" | "Flags">, string>> = {
+const columnTypes: Readonly<Record<Exclude<ColumnKind["tag"], "Enum" | "Flags" | "Type">, string>> = {
   Bool: "bool",
   UInt32: "uint32_t",
   UInt64: "uint64_t",
@@ -115,6 +116,7 @@ function enumLines(type: SchemaEnum): string[] {
 function columnType(kind: ColumnKind): string {
   if (kind.tag === "Enum") return kind.type.name;
   if (kind.tag === "Flags") return `OptionSet<${kind.type.name}>`;
+  if (kind.tag === "Type") throw new Error("a Type column has no values in C++");
   return columnTypes[kind.tag];
 }
 
@@ -133,6 +135,8 @@ function columnValue(kind: ColumnKind, value: ColumnValue): string {
       return kind.tag === "UInt64" ? `${value.value}ull` : `${value.value}`;
     case "Text":
       return cppLiteral(value.value);
+    case "Type":
+      return value.type?.name ?? "void";
     case "Member":
       return qualifiedMember(kind, value.member);
     case "Members":
@@ -141,8 +145,23 @@ function columnValue(kind: ColumnKind, value: ColumnValue): string {
   }
 }
 
-function columnLines(type: SchemaEnum): string[] {
+/** The functor is called with the type of the member's row as its template argument, and with void for none. */
+function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
+  const cases = type.members.map(member => ({
+    label: member.name,
+    value: `functor.template operator()<${columnValue(column.kind, member.values[position])}>()`,
+  }));
+  const signature = `decltype(auto) with${upperFirst(column.name)}Of(${type.name} value, const Functor& functor)`;
+  return [
+    "template<typename Functor>",
+    ...constexprSwitch({ signature, subject: "value", enumName: type.name, cases, defaultValue: null }),
+  ];
+}
+
+function columnLines(type: SchemaEnum, isWanted: (column: EnumColumn) => boolean = () => true): string[] {
   const lookups = type.columns.map((column, position) => {
+    if (!isWanted(column)) return [];
+    if (column.kind.tag === "Type") return typeColumnLines(type, column, position);
     const cppType = columnType(column.kind);
     const table = `${column.name}By${type.name}`;
     const head = `inline constexpr ${cppType} ${table}[] =`;
@@ -234,9 +253,10 @@ function wireEnumsHeader(schema: Schema): string[] {
   ]);
 }
 
-function wireColumnsHeader(schema: Schema, files: readonly string[], includes: Lines): string[] {
+function wireColumnsHeader(schema: Schema, files: readonly string[], includes: Lines, isEngine = false): string[] {
   const abi = schema.enums.filter(type => type.isAbi && files.includes(type.file.path));
-  return cppHeader(includes, inNamespace("Wire", blocks(...abi.map(columnLines))));
+  const lines = abi.map(type => columnLines(type, column => column.isEngine === isEngine));
+  return cppHeader(includes, inNamespace("Wire", blocks(...lines)));
 }
 
 function declaredEnumsHeader(schema: Schema): string[] {
@@ -256,7 +276,7 @@ function declaredEnumsHeader(schema: Schema): string[] {
       "",
       ...nameDecls(own),
       "",
-      ...blocks(...own.map(columnLines)),
+      ...blocks(...own.map(type => columnLines(type))),
       "",
       "} // namespace Typed",
       "",
@@ -485,6 +505,7 @@ export function emitCppEnums(context: EmitContext): OutputFile[] {
     { name: "AOTWireLimitColumns.h", lines: wireColumnsHeader(schema, [limitsFile], includes) },
     { name: "AOTWireDiagnosticColumns.h", lines: wireColumnsHeader(schema, [diagnosticsFile], includes) },
     { name: "AOTWireEnumColumns.h", lines: wireColumnsHeader(schema, otherFiles, includes) },
+    { name: "AOTWireEngineColumns.h", lines: wireColumnsHeader(schema, paths, includes, true) },
     { name: "AOTSchemaDeclaredEnums.h", lines: declaredEnumsHeader(schema) },
     { name: "AOTSchemaEntryEnums.h", lines: entryEnumsHeader(schema) },
     { name: "AOTSchemaEnums.h", lines: umbrellaHeader() },

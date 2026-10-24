@@ -254,8 +254,7 @@ public:
     bool calleeWasEntered() const { return m_calleeWasEntered; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
     CallFrame* framePointer() const { return m_cursor.framePointer; }
-    // The frame that returns to callSite().address.
-    CallFrame* calleeFrame() const { return m_cursor.calleeFrame; }
+    void* stackPointer() const { return m_cursor.stackPointer; }
     CallFrame* generatorStubFrameLeft() const { return m_cursor.generatorStubFrame; }
     CallFrame* asyncGeneratorStubFrameLeft() const { return m_cursor.asyncGeneratorStubFrame; }
     // The frame that returns to that stub frame: the body's, or that of the stub that throws because the stack has no room for the body's.

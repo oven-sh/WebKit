@@ -7,13 +7,15 @@
 
 #if ENABLE(AOT)
 
-#include "AOTPass.h"
+#include "AOTIR.h"
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
 
-class PassRunner;
+class BuildContext;
 
-void removeUnusedResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
+namespace Typed {
+
+void expectFieldsByNamesAsked(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

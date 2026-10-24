@@ -12,6 +12,7 @@
 #include "AOTHost.h"
 #include "AOTImageLoading.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTVector.h"
 #include "ConsoleClient.h"
 #include "CustomGetterSetter.h"

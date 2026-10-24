@@ -14,7 +14,6 @@
 #include "AOTInductionVariables.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
-#include "AOTShapeTestEmitter.h"
 #include "AOTVector.h"
 #include "B3InductionRecords.h"
 #include "B3KnownProperties.h"
@@ -424,37 +423,15 @@ void CodeGenerator::checkInlineStores(const OperationContext& context, const Dec
     for (const ExemptStores& exempt : m_exemptStores)
         exemptPositions.append({ positionOf(exempt.begin), positionOf(exempt.end) });
 
-    // The constructor of a built-in class makes the objects of a class below it: cells without an order word, a shape word or slots, whatever layout types them.
-    Vector<LValue, 2> operandsWithoutSlots;
-    const Instruction& instruction = context.instruction();
-    // A slot access names its receivers, and a guard may stand for them where the type of the object lists more.
-    bool namesReceivers = context.valueID() && familyOf(function().at(context.valueID()).opcode) == OperationFamily::SlotAccess;
-    for (uint32_t operandIndex = 0; operandIndex < instruction.numberOfOperands(); ++operandIndex) {
-        ValueID operand = instruction.operand(operandIndex);
-        if (!operand || !m_values[operand.index()])
-            continue;
-        bool isReceiver = namesReceivers && operand == function().at(context.valueID()).objectOperand();
-        if (emitter<ShapeTestEmitter>().mayBeMadeByBuiltinBase(isReceiver ? Type::forLayoutSet(function().at(context.valueID()).receivers()) : typeOf(operand)))
-            operandsWithoutSlots.append(get(operand).value);
-    }
-    auto isInCompiledObject = [&](const B3::AbstractHeap& heap) {
-        if (&heap == &m_heaps.JSCell_typeInfoFlags)
-            return true;
-        std::optional<CoveredLocations> locations = m_heaps.locationsOf(heap);
-        return locations && (locations->heap == AbstractHeap::OrderWords || locations->heap == AbstractHeap::ShapeWords || locations->heap == AbstractHeap::ObjectFields);
-    };
-
     LocationMasks declared = context.effects().onAnyEdge().writes;
     unsigned position = 0;
-    forEachStoreSince(mark, [&](const B3::AbstractHeap& heap, B3::Value* store) {
+    forEachStoreSince(mark, [&](const B3::AbstractHeap& heap, B3::Value*) {
         unsigned current = position++;
         bool isExempt = exemptPositions.containsIf([&](const StorePositions& exempt) {
             return exempt.begin <= current && current < exempt.end;
         });
         if (!isExempt && !m_heaps.isCoveredBy(heap, declared))
             fail(context, InternalErrorKind::StoreOutsideDeclaredEffects);
-        if (operandsWithoutSlots.contains(store->lastChild()) && isInCompiledObject(heap))
-            fail(context, InternalErrorKind::StoreIntoObjectWithoutSlots);
     });
 }
 

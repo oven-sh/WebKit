@@ -795,23 +795,14 @@ static void testSwitchRange()
     checkSwitchRange(0xfffffff0, 0x20, { 0xfffffff0, 0xfffffffe }, { lastFunctionIndex, 0xffffffef, nullID });
 }
 
-static void testRecordedOptionsHash()
+static void testRecordedOptionsEquality()
 {
-    using Bytes = std::array<uint8_t, sizeof(RecordedOptions)>;
-
     auto readSampleOptions = [] {
         return readValidOptions(optionsWith({ "validate"_s, "layout-seed=9"_s, "disable=flow-results"_s })).recorded;
     };
     RecordedOptions options = readSampleOptions();
     AOT_TEST_CHECK(options != RecordedOptions { });
     AOT_TEST_CHECK(options == readSampleOptions());
-    AOT_TEST_CHECK(options.hash() == readSampleOptions().hash());
-
-    for (size_t i = 0; i < sizeof(RecordedOptions); ++i) {
-        Bytes bytes = std::bit_cast<Bytes>(options);
-        bytes[i] ^= 1;
-        AOT_TEST_CHECK(std::bit_cast<RecordedOptions>(bytes).hash() != options.hash());
-    }
 }
 
 static CompileOptions readWords(std::initializer_list<StringView> words)
@@ -880,7 +871,7 @@ std::span<const NativeTest> optionWordTests()
         { "compile-options/thread-count-follows-max-workers"_s, testThreadCountFollowsMaxWorkers },
         { "compile-options/follow-can-be-lowered"_s, testWireOptionsFollowCanBeLowered },
         { "recorded-options/switch-range"_s, testSwitchRange },
-        { "recorded-options/hash"_s, testRecordedOptionsHash },
+        { "recorded-options/equality"_s, testRecordedOptionsEquality },
         { "recorded-options/admitted-code"_s, testAdmittedCodeIsRecorded },
         { "recorded-options/excluded-function-source"_s, testExcludedFunctionSourceIsRecorded },
         { "recorded-options/instrumentation-and-testing-switches"_s, testInstrumentationAndTestingSwitchesAreRecorded },

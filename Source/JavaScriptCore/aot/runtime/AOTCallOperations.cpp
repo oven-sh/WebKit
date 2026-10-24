@@ -234,17 +234,34 @@ void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
     throwException(globalObject, scope, createNotAFunctionError(globalObject, callee));
 }
 
+static bool fitsOnStack(VM& vm, uint64_t length)
+{
+    return length <= maxArguments && vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length);
+}
+
 static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgumentBuffer& arguments, JSValue list)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned length = sizeOfVarargs(globalObject, list, 0);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length)) [[unlikely]] {
+    if (list.isUndefinedOrNull())
+        return true;
+    if (!list.isObject()) {
+        throwException(globalObject, scope, createInvalidFunctionApplyParameterError(globalObject, list));
+        return false;
+    }
+    JSObject* object = asObject(list);
+    uint64_t length;
+    if (auto* array = dynamicDowncast<JSArray>(object)) [[likely]]
+        length = array->length();
+    else {
+        length = toLength(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    if (!fitsOnStack(vm, length)) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return false;
     }
-    for (unsigned index = 0; index < length; ++index) {
-        arguments.append(asObject(list)->getIndex(globalObject, index));
+    for (uint64_t index = 0; index < length; ++index) {
+        arguments.append(object->getIndex(globalObject, index));
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (arguments.hasOverflowed()) [[unlikely]] {
@@ -256,9 +273,9 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
 
 static StringView nameOfCalleeAtCallSite(VM&);
 
-static JSValue constructValue(JSGlobalObject* globalObject, JSValue callee, JSValue newTarget, const ArgList& arguments, bool isParent)
+template<bool isParent>
+static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
 {
-    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
@@ -278,7 +295,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* insta
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConstruct);
     ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
-    OPERATION_RETURN(scope, JSValue::encode(constructValue(globalObject, JSValue::decode(callee), JSValue::decode(newTarget), arguments, false)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<false>(globalObject, vm, JSValue::decode(callee), JSValue::decode(newTarget), arguments)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list))
@@ -421,7 +438,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instan
     EXCEPTION_ASSERT(didAppend == !scope.exception());
     if (!didAppend) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(constructValue(globalObject, JSValue::decode(callee), JSValue::decode(newTarget), arguments, false)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<false>(globalObject, vm, JSValue::decode(callee), JSValue::decode(newTarget), arguments)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
@@ -433,7 +450,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* 
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    OPERATION_RETURN(scope, JSValue::encode(constructValue(globalObject, JSValue::decode(parent), JSValue::decode(newTarget), arguments, true)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list))
@@ -445,7 +462,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     EXCEPTION_ASSERT(didAppend == !scope.exception());
     if (!didAppend) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(constructValue(globalObject, JSValue::decode(parent), JSValue::decode(newTarget), arguments, true)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 static StringView nameOfCalleeAtCallSite(VM& vm)

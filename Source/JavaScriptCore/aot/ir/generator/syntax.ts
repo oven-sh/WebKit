@@ -77,6 +77,7 @@ export interface ExternalSyntax {
 export interface ColumnDeclarationSyntax {
   readonly name: Name;
   readonly kind: Name;
+  readonly isEngine: boolean;
 }
 
 export interface MemberSyntax {
@@ -303,6 +304,22 @@ export interface InlineSyntax {
   readonly isFormOnly: boolean;
 }
 
+export type OptionWordActionSyntax =
+  | { readonly form: "sets"; readonly path: Name; readonly member: Name }
+  | { readonly form: "names"; readonly path: Name; readonly members: readonly Name[] }
+  | { readonly form: "number"; readonly path: Name; readonly sentenceForZero: string | null }
+  | { readonly form: "custom"; readonly apply: Name; readonly list: Name | null }
+  | { readonly form: "frontEnd" };
+
+export interface OptionWordSyntax {
+  readonly declares: "word";
+  readonly key: string;
+  readonly valueSyntax: string | null;
+  readonly noun: string | null;
+  readonly action: OptionWordActionSyntax;
+  readonly location: Location;
+}
+
 export type Declaration =
   | IncludeSyntax
   | ConstantSyntax
@@ -322,7 +339,8 @@ export type Declaration =
   | FamilySyntax
   | EntrySyntax
   | RuntimeSyntax
-  | InlineSyntax;
+  | InlineSyntax
+  | OptionWordSyntax;
 
 export interface ParsedFile {
   readonly path: string;

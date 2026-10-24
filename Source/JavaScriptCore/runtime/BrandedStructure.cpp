@@ -35,7 +35,6 @@ BrandedStructure::BrandedStructure(VM& vm, Structure* previous, UniquedStringImp
     : Structure(vm, StructureVariant::Branded, previous)
     , m_brand(brandUid)
     , m_parentBrand(previous->isBrandedStructure() ? previous : nullptr, WriteBarrierEarlyInit)
-    , m_compiledClassWord(previous->isBrandedStructure() ? uncheckedDowncast<BrandedStructure>(previous)->m_compiledClassWord & ~compiledClassStateMask : 0)
 {
     ASSERT(isBrandedStructure());
 }
@@ -44,7 +43,6 @@ BrandedStructure::BrandedStructure(VM& vm, BrandedStructure* previous)
     : Structure(vm, StructureVariant::Branded, previous)
     , m_brand(previous->m_brand)
     , m_parentBrand(previous->m_parentBrand.get(), WriteBarrierEarlyInit)
-    , m_compiledClassWord(previous->m_compiledClassWord & ~compiledClassStateMask)
 {
     ASSERT(isBrandedStructure());
 }

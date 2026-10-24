@@ -615,8 +615,6 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         if (request.firstRead)
             firstRead = { addSite(*context, { .origin = request.firstRead }) };
         site = { addSite(*context, options) };
-        if (options.throwSite && options.origin)
-            m_records.sites.itemSites.append({ *site, 0, addRecordedSite(*context, { .origin = context->origin() }) });
     }
 
     CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall };
@@ -748,12 +746,7 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)
 {
-    return addRecordedSite(context, recordedSiteOf(context, options));
-}
-
-uint32_t RuntimeCallEmitter::addRecordedSite(const OperationContext& context, const RecordedSite& site)
-{
-    uint32_t number = m_records.sites.addSite(site);
+    uint32_t number = m_records.sites.addSite(recordedSiteOf(context, options));
     uint64_t numbersInUse = uint64_t { number } + 1;
     if (numbersInUse <= build().limit(LimitID::SitesPerFunction))
         return number;

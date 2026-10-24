@@ -12,11 +12,11 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
-#include "AOTHoistLoopInvariantReads.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
+#include "AOTProgramPasses.h"
 #include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -440,6 +440,8 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             definingBlock[id.index()] = preheader;
             ++numberOfHoistedReads;
             appendKeptReadForValidation(builder, remaining, id);
+            if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
+                function.edit(id).setMayPrecedeItsStore(true);
         }
         if (numberOfHoistedReads > numberOfReadsBefore)
             function.edit(blockID).values = WTF::move(remaining);

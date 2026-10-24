@@ -20,6 +20,7 @@ struct Instance;
 
 using ModuleEvaluationStack = WTF::Vector<AbstractModuleRecord*, 8>;
 using ModuleLinkingStack = WTF::Vector<CyclicModuleRecord*, 8>;
+using StarExportTargets = WTF::Vector<AbstractModuleRecord*, 8>;
 using VisitedModuleRecords = UncheckedKeyHashSet<AbstractModuleRecord*>;
 
 class ModuleRecord final : public CyclicModuleRecord {
@@ -47,6 +48,10 @@ public:
     bool isOnStack(const ModuleEvaluationStack& stack) const { return m_evaluationStack == &stack; }
     void setEvaluationStack(const ModuleEvaluationStack* stack) { m_evaluationStack = stack; }
 
+    // Until it does, the table of the modules has the status, and the record only stands for the module where a name is resolved.
+    bool holdsStatus() const { return m_holdsStatus; }
+    void setHoldsStatus() { m_holdsStatus = true; }
+
     bool isRetained() const { return m_isRetained; }
     void retain() { m_isRetained = true; }
 
@@ -56,8 +61,9 @@ public:
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
 
-    Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
-    void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&);
+    // What the module itself says of the name. The search goes on in the targets: they are those of the `export *` whose names the build did not see.
+    Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
+    void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
@@ -68,12 +74,13 @@ public:
 private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
     Modules& modules() const;
+    void appendDynamicStarTargets(StarExportTargets&);
 
     Instance& m_instance;
     ModuleID m_module;
     const ModuleEvaluationStack* m_evaluationStack { nullptr };
     Vector<UniquedStringImpl*, 2> m_resolveSet;
-    bool m_isInExportStarSet { false };
+    bool m_holdsStatus { false };
     bool m_isRetained { false };
 };
 

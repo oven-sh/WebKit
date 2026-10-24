@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTInterningPhases.h"
 #include "AOTOpcode.h"
 #include "AOTPass.h"
-#include "AOTPassTriggers.h"
 #include "AOTProgramAnalyses.h"
 #include "AOTResultRuleMonotonicity.h"
 #include "AOTVector.h"
@@ -35,10 +35,12 @@ namespace JSC { namespace AOT { namespace Typed {
 // The passes whose changes may give this pass something to do.
 const PassSet& passesEnabling(PassID);
 const PassSet& passesThatCanWaitBehind(PassID changer);
+// False for a pass that may have something to do in any body.
+bool hasTriggers(PassID);
+// The passes that may have something to do in such a body.
+PassSet passesThatMayFireIn(const BodyContents&);
 
 void shrinkToFit(Function&);
-
-enum class BodiesAreChanged : uint8_t { Anyhow, ThroughEditors };
 
 class PassRunner {
     WTF_MAKE_NONCOPYABLE(PassRunner);
@@ -191,7 +193,7 @@ private:
         PassSet passesThatRan;
         // None behind a change, until somebody asks.
         std::optional<BodyContents> contents;
-        PassesByTrigger passesThatMayFire;
+        PassSet passesThatMayFire;
         // A run that says that it has changed nothing may still have added a value that stands in no list.
         size_t numberOfValuesInContents { 0 };
         std::array<bool, numberOfPasses> reachedFixpoint { };
@@ -291,10 +293,7 @@ auto PassRunner::runProgramPassWithoutEditor(PassID id, Program& program, Progra
     auto timer = beginProgramPass(id, program);
     if (!timer)
         return std::invoke_result_t<Functor>();
-    if (bodiesAreChanged == BodiesAreChanged::ThroughEditors)
-        analyses.willChangeBodiesThroughOwnEditors();
-    else
-        analyses.willChangeBodiesWithoutEditor();
+    analyses.willChangeBodies(bodiesAreChanged);
     auto endPass = makeScopeExit([&] {
         analyses.invalidate(descriptorOf(id).invalidatedResults);
         endProgramPass(id, program, *timer, PassOutcome::Changed);

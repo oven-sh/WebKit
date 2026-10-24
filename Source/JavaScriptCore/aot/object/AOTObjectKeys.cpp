@@ -397,22 +397,6 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     appendEntries(vm(), state, *this, added.span());
 }
 
-void Object::appendField(State& state, const FieldData& field)
-{
-    willCreateField(state, field);
-    const LayoutData& layout = this->layout();
-    if (layout.keysAreNeverEnumerated)
-        return;
-    uint16_t index = indexOf(field);
-    if (!hasOutOfLineKeyOrder()) {
-        if (auto orderAndCount = state.objects->keyOrders.orderAfterCreating(layout, orderWord() & orderAndCountMask, index)) {
-            setOrderAndCount(*orderAndCount);
-            return;
-        }
-    }
-    appendEntries(vm(), state, *this, singleElementSpan(index));
-}
-
 void Object::setKeyOrder(VM& vm, State& state, std::span<const uint16_t> keys)
 {
     const LayoutData& layout = this->layout();

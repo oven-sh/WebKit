@@ -109,7 +109,6 @@ private:
     StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
     StubCallResult resultOfCall(StubResult, B3::PatchpointValue*);
-    uint32_t addRecordedSite(const OperationContext&, const RecordedSite&);
     LValue transientBuffer(size_t bytes);
     B3::Air::StackSlot* ensureRegisterStorage(B3::Air::StackSlot*&);
 

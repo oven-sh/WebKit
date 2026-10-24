@@ -90,8 +90,6 @@ struct GaveUp {
     LimitID limit;
 };
 
-template<typename T> using OrGaveUp = std::expected<T, GaveUp>;
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

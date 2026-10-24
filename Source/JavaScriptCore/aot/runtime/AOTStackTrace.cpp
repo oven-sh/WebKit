@@ -108,6 +108,160 @@ std::optional<SourcePosition> FunctionDescription::definition() const
     return std::nullopt;
 }
 
+// What the two registers hold in the frame that rawPC runs in.
+struct RunStart {
+    void* stackPointer;
+    CallFrame* framePointer;
+    void* rawPC;
+    EntryFrame* entryFrame;
+    bool isAtFirstReadSite;
+    bool calleeWasEntered;
+};
+
+// Goes over the machine frames of one run of compiled code as CompiledFrameIterator does. It reads the frame records and the call site cache and keeps only what a capture asks for.
+class RunWalk {
+public:
+    RunWalk(const VMState& state, const RunStart& start)
+        : m_cache(*state.callSiteCache)
+        , m_image(*state.image)
+        , m_stackPointer(start.stackPointer)
+        , m_framePointer(start.framePointer)
+        , m_rawPC(start.rawPC)
+        , m_entryFrame(start.entryFrame)
+        , m_isAtFirstReadSite(start.isAtFirstReadSite)
+    {
+        ASSERT(m_framePointer);
+        findFunctionFrame();
+    }
+
+    const Image& image() const { return m_image; }
+    bool isAtEnd() const { return !m_site; }
+    const CallSiteCache::Entry& site() const
+    {
+        ASSERT(!isAtEnd());
+        return *m_site;
+    }
+    bool isAtFirstReadSite() const { return m_isAtFirstReadSite && site().site.firstReadSite; }
+    const CompiledFrameExit& exit() const
+    {
+        ASSERT(isAtEnd());
+        return m_exit;
+    }
+    const CompiledFrameIterator::RunEnd& runEnd() const
+    {
+        ASSERT(isAtEnd());
+        return m_runEnd;
+    }
+
+    ALWAYS_INLINE void advance()
+    {
+        ASSERT(!isAtEnd());
+        m_isAtFirstReadSite = false;
+        if (passOverFrame())
+            findFunctionFrame();
+    }
+
+private:
+    void leaveRun()
+    {
+        m_site = nullptr;
+        EntryFrame* entryFrameBefore = m_entryFrame;
+        void* returnPC = m_callFrame->rawReturnPC();
+        m_exit.callFrame = m_callFrame->callerFrame(m_entryFrame);
+        m_exit.entryFrame = m_entryFrame;
+        m_exit.crossedEntryFrame = m_entryFrame != entryFrameBefore;
+        m_exit.returnPC = m_exit.crossedEntryFrame ? nullptr : returnPC;
+        m_exit.calleeFrame = m_exit.crossedEntryFrame ? nullptr : m_callFrame;
+    }
+
+    ALWAYS_INLINE bool passOverFrame()
+    {
+        if (m_site->frame.hasFrameRecord()) {
+            if (m_callFrame->callerFrameOrEntryFrame() == m_entryFrame) [[unlikely]] {
+                leaveRun();
+                return false;
+            }
+            m_framePointer = m_callFrame->callerFrame();
+        }
+        m_rawPC = m_callFrame->rawReturnPC();
+        m_stackPointer = stackPointerOfCaller(m_callFrame, bytesAboveReturnAddressOf(*m_site));
+        return true;
+    }
+
+    bool passOverStubFrame(StubFrameKind kind)
+    {
+        switch (kind) {
+        case StubFrameKind::Plain:
+        case StubFrameKind::EngineCallee:
+        case StubFrameKind::HostCall:
+        case StubFrameKind::GeneratorBody:
+        case StubFrameKind::AsyncGeneratorBody:
+        case StubFrameKind::ArgumentList:
+        case StubFrameKind::BelowSpilledArguments:
+        case StubFrameKind::AtStubEntry:
+            break;
+        case StubFrameKind::FirstOfTwoReads:
+            m_isAtFirstReadSite = true;
+            break;
+        case StubFrameKind::Adapter:
+        case StubFrameKind::HandlerOfJob:
+            m_runEnd.adapterFrame = m_callFrame;
+            leaveRun();
+            return false;
+        case StubFrameKind::ConstructAdapter:
+            m_runEnd.adapterFrame = m_callFrame;
+            m_runEnd.isConstruct = true;
+            leaveRun();
+            return false;
+        case StubFrameKind::SavedFrameAdapter:
+            m_runEnd.adapterFrame = m_callFrame;
+            m_runEnd.resumesSavedFrame = true;
+            leaveRun();
+            return false;
+        case StubFrameKind::InHostCallFrame:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return passOverFrame();
+    }
+
+    ALWAYS_INLINE void findFunctionFrame()
+    {
+        for (;;) {
+            const void* pc = removeCodePtrTag(m_rawPC);
+            m_site = m_cache.find(pc);
+            if (!m_site) [[unlikely]] {
+                m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
+                if (!m_site) {
+                    m_exit = { m_framePointer, m_rawPC, m_entryFrame, false, m_callFrame };
+                    return;
+                }
+            }
+            if (m_site->isStubReturnSite() && m_site->stubFrameKind == StubFrameKind::InHostCallFrame) [[unlikely]] {
+                m_site = nullptr;
+                m_exit = { m_framePointer, m_rawPC, m_entryFrame, false, m_callFrame };
+                return;
+            }
+            m_callFrame = frameAtReturnSite(m_site->frame, m_stackPointer, m_framePointer);
+            if (!m_site->isStubReturnSite()) [[likely]]
+                return;
+            if (!passOverStubFrame(m_site->stubFrameKind))
+                return;
+        }
+    }
+
+    CallSiteCache& m_cache;
+    const Image& m_image;
+    void* m_stackPointer;
+    CallFrame* m_framePointer;
+    CallFrame* m_callFrame { nullptr };
+    void* m_rawPC;
+    EntryFrame* m_entryFrame;
+    bool m_isAtFirstReadSite;
+    const CallSiteCache::Entry* m_site { nullptr };
+    CompiledFrameExit m_exit;
+    CompiledFrameIterator::RunEnd m_runEnd;
+};
+
 struct CapturedRun {
     using Trace = ReturnAddressTrace;
     static constexpr size_t inlineCapacity = 2 * Trace::returnAddressesPerFlagWord;
@@ -155,20 +309,18 @@ static NEVER_INLINE void countLogicalFrames(const Image& image, const CallSiteCa
     }
 }
 
-// Goes over the machine frames of the run: it asks for callSite() alone, so it never pays for frame().
-static void captureRun(CompiledFrameIterator& walk, const Image& image, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove)
+static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered)
 {
     using Trace = ReturnAddressTrace;
     ASSERT(!walk.isAtEnd());
-    uintptr_t codeStart = std::bit_cast<uintptr_t>(image.code().data());
+    uintptr_t codeStart = std::bit_cast<uintptr_t>(walk.image().code().data());
     ASSERT(codeStart == imageCodeStart());
     ShownFrameFilter filter(framesAbove.exist || lastConstructorToSkip);
     run.numberShown = framesAbove.numberShown;
     CompiledFunctionID outermostCode;
 
-    for (; !walk.isAtEnd(); walk.advanceToCallerMachineFrame()) {
-        const CallSiteCache::Entry& site = walk.callSite();
-        bool calleeWasEntered = walk.calleeWasEntered();
+    for (; !walk.isAtEnd(); walk.advance(), calleeWasEntered = true) {
+        const CallSiteCache::Entry& site = walk.site();
         if (site.site.isConstruct && !run.returnAddresses.isEmpty())
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         outermostCode = site.code;
@@ -190,10 +342,10 @@ static void captureRun(CompiledFrameIterator& walk, const Image& image, Captured
                 filter = ShownFrameFilter(true);
             continue;
         }
-        countLogicalFrames(image, site, calleeWasEntered, filter, run, lastConstructorToSkip);
+        countLogicalFrames(walk.image(), site, calleeWasEntered, filter, run, lastConstructorToSkip);
     }
 
-    if (walk.isAtEnd() && walk.runEnd().constructs(image.rootFunctionOf(outermostCode.index())))
+    if (walk.isAtEnd() && walk.runEnd().constructs(walk.image().rootFunctionOf(outermostCode.index())))
         run.addFlagToLast(Trace::Flag::IsConstructCall);
     run.foundConstructorToSkip = !lastConstructorToSkip;
 }
@@ -267,8 +419,34 @@ static bool fitsInTrace(const CapturedRun& run)
     return run.numberShown <= ReturnAddressTrace::maxLimit && run.numberOmitted <= ReturnAddressTrace::maxOmittedFrames && run.returnAddresses.size() <= ReturnAddressTrace::maxNumberOfReturnAddresses;
 }
 
+static std::optional<RunStart> findRunAtTop(VM& vm)
+{
+    if (!isTopFrameCompiled(vm))
+        return std::nullopt;
+    CallFrame* operationRecord = vm.topCallFrame;
+    return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
+}
+
+static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
+{
+    std::optional<CompiledFrameIterator> frames;
+    vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
+    if (!frames || frames->isAtEnd() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
+        return std::nullopt;
+    return RunStart { frames->stackPointer(), frames->framePointer(), const_cast<void*>(frames->callSite().address), frames->entryFrame(), frames->isAtFirstReadSite(), frames->calleeWasEntered() };
+}
+
+static Instance* findInstance(VM& vm, const RunStart& start)
+{
+    const VMState& state = vm.aotState();
+    if (state.instances.size() == 1) [[likely]]
+        return state.instances.first();
+    auto frames = CompiledFrameIterator::tryCreate(vm, start.framePointer, start.rawPC, start.entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, start.stackPointer);
+    return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
+}
+
 // Interpreter::appendStackTrace adds three things below a run: the frames that the way out of the run leads to, those of the embedder, and those of suspended async functions.
-static bool mayHaveFramesBelow(VM& vm, const CompiledFrameIterator& walk, EntryFrame* entryFrameOfRun, bool hasRoom)
+static bool mayHaveFramesBelow(VM& vm, const RunWalk& walk, EntryFrame* entryFrameOfRun, bool hasRoom)
 {
     if (hasRoom) {
         if (walk.exit().callFrame)
@@ -294,25 +472,24 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
 
     WTF::Vector<StackFrame> results;
     FramesAboveRun framesAbove;
-    bool isTopCompiled = isTopFrameCompiled(vm);
-    std::optional<CompiledFrameIterator> frames = isTopCompiled ? CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame) : std::optional<CompiledFrameIterator>();
-    if (!isTopCompiled) {
+    std::optional<RunStart> start = findRunAtTop(vm);
+    if (!start) {
         if (lastConstructorToSkip)
             return nullptr;
-        vm.interpreter.appendStackTrace(owner, results, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
-        if (results.size() > ReturnAddressTrace::maxFramesOnTop)
+        start = findRunBelowOtherFrames(vm, owner, results, maxStackSize);
+        if (!start)
             return nullptr;
         framesAbove = { results.size(), true };
     }
-    if (!frames || frames->isAtEnd())
+    Instance* instance = findInstance(vm, *start);
+    if (!instance)
         return nullptr;
 
-    CompiledFrameIterator& walk = *frames;
-    Instance* instance = walk.instance();
-    EntryFrame* entryFrameOfRun = walk.entryFrame();
-    bool calleeOfFirstFrameWasEntered = walk.calleeWasEntered();
+    RunWalk walk(vm.aotState(), *start);
+    if (walk.isAtEnd())
+        return nullptr;
     CapturedRun run;
-    captureRun(walk, *vm.aotState().image, run, maxStackSize, lastConstructorToSkip, framesAbove);
+    captureRun(walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered);
     if (!run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
         return nullptr;
 
@@ -321,14 +498,14 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     assertNoGC.emplace();
     if (!trace)
         return nullptr;
-    fillTrace(*trace, instance, run, maxStackSize, framesAbove, calleeOfFirstFrameWasEntered);
+    fillTrace(*trace, instance, run, maxStackSize, framesAbove, start->calleeWasEntered);
 
     // The frames below go behind the frames on top, so the frames on top count as results and not as frames above.
     size_t numberOfFramesAbove = std::min(run.numberShown, maxStackSize);
-    if (mayHaveFramesBelow(vm, walk, entryFrameOfRun, numberOfFramesAbove < maxStackSize)) {
+    if (mayHaveFramesBelow(vm, walk, start->entryFrame, numberOfFramesAbove < maxStackSize)) {
         vm.interpreter.appendStackTrace(owner, results, {
             .compiledFrameExit = walk.isAtEnd() ? &walk.exit() : nullptr,
-            .entryFrameOfFramesAbove = entryFrameOfRun,
+            .entryFrameOfFramesAbove = start->entryFrame,
             .numberOfFramesAbove = numberOfFramesAbove - framesAbove.numberShown,
         }, maxStackSize);
     }

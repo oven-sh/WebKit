@@ -26,9 +26,12 @@ enum ImageVerdict {
     Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
     MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable
 }
-enum DeclineKind {
-    Unknown HotCallNotInlined HotCallNotResolved GeneratorLoopNotFused ArrayChainNotFused StringBuilderNotCreated StringBuildersNotJoined AllocationNotSunk
-    TypedResultNotSelected IterationNotExpandedByClass LoopNotVersioned LoopBoundNotClamped StretchNotGuarded ResultNodeInterpreted GenericVersionNotCreated
+enum DeclineKind (| engine reason: Type) {
+    Unknown(none) HotCallNotInlined(none) HotCallNotResolved(CallDeclineReason) GeneratorLoopNotFused(GeneratorFusionDeclineReason)
+    ArrayChainNotFused(ArrayChainDeclineReason) StringBuilderNotCreated(StringBuilderDeclineReason) StringBuildersNotJoined(none)
+    AllocationNotSunk(AllocationEscapeReason) TypedResultNotSelected(TypedResultDeclineReason) IterationNotExpandedByClass(none)
+    LoopNotVersioned(LoopDeclineReason) LoopBoundNotClamped(LoopDeclineReason) StretchNotGuarded(none) ResultNodeInterpreted(InterpretedCause)
+    GenericVersionNotCreated(none)
 }
 enum TypedResultDeclineReason {
     None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
@@ -55,7 +58,9 @@ enum AllocationHeapCause {
     None NotTracked HasNoFrameForm Escapes SeveralLiveInstances HasUntrackedAlias LiveAcrossSuspension LiveAtReturnCall HeldByHeapCell HeldAcrossIterations ChangedByUse
     SeenByNativeCode ClosureIsNotOnlyCalled LayoutDefersClosures FieldsCreatedLater ExceedsLimit MaterializationDoesNotPay
 }
-enum AllocationOutcome { Unknown Removed Heap Frame FrameUntilMaterialized Slim Deferred }
+enum AllocationOutcome (| engine rank: UInt32, refinesHeap: Bool) {
+    Unknown(0, false) Removed(1, false) Heap(6, false) Frame(2, false) FrameUntilMaterialized(3, false) Slim(5, true) Deferred(4, true)
+}
 enum AllocationKind {
     Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
 }
@@ -149,3 +154,29 @@ record CompileOptions abi {
     heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
     excludedCode: ExcludedCode sabotage: Sabotage reserved: UInt32
 }
+
+word "validate" sets checks Validate
+word "check" "<name>,.." "check" names checks
+word "verify-only" sets action VerifyOnly
+word "check-only" sets action CheckOnly
+word "disable" "<switch>,.." custom applyDisable listSwitches
+word "only-passes" "<PassID>,.." "pass" custom applyOnlyPasses listOptionalPasses
+word "disable-in" "<first>[:<count>]" custom applyDisableIn
+word "limit" "<LimitID>:<n>" "limit" custom applyLimit listLimits
+word "heat" "<HeatOverride>" "heat override" names heatOverride
+word "testing" "<name>,.." "testing switch" custom applyTesting listTestingSwitches
+word "sabotage" "<Sabotage>" "sabotage" names sabotage
+word "count-branches" sets instrumentation CountBranches
+word "count-arrivals" sets instrumentation CountArrivals
+word "drop-guard" "<Opcode>:<n>" "opcode" custom applyDropGuard
+word "references" "narrow|wide" "reference width" names target::referenceWidth Narrow Wide
+word "image-form" "absolute|position-independent" "image form" names target::imageForm Absolute PositionIndependent
+word "type-errors" "silent|log" "type error policy" names mismatchPolicy Silent Report
+word "layout-seed" "<n>" number layoutSeed
+word "threads" "<n>" number threadCount "the number of threads is at least 1"
+word "report" "<name>,.." "report" names reports
+word "admit" "<name>,.." "admitted code" names admittedCode
+word "exclude" "<name>,.." "excluded code" names excludedCode
+word "obfuscate" sets output Obfuscate
+word "erase-types" frontEnd
+word "out" "<file>" frontEnd

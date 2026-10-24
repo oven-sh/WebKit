@@ -4597,13 +4597,14 @@ JSValue JSObject::getMethod(JSGlobalObject* globalObject, CallData& callData, co
 
 bool JSObject::anyObjectInChainMayInterceptIndexedAccesses() const
 {
-    auto* globalObject = realmMayBeNull();
-    bool typedArraysIntercept = globalObject && globalObject->typedArraysInterceptIndexedStores();
     for (const JSObject* current = this; ;) {
         if (current->structure()->mayInterceptIndexedAccesses() || current->hasFrozenElementsInPlace())
             return true;
-        if (typedArraysIntercept && isTypedArrayType(current->type())) [[unlikely]]
-            return true;
+        if (isTypedArrayType(current->type())) [[unlikely]] {
+            auto* globalObject = realmMayBeNull();
+            if (globalObject && globalObject->typedArraysInterceptIndexedStores())
+                return true;
+        }
 #if ENABLE(AOT)
         if (AOT::PropertyWalk::isCompiledObject(current)) [[unlikely]] {
             JSObject* holder = AOT::PropertyWalk::objectHoldingIndexedProperties(current);

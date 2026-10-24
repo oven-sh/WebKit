@@ -86,6 +86,17 @@ private:
 
 }
 
+static void defineCopiedProperty(JSGlobalObject* globalObject, JSObject* target, PropertyName name, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    Structure* structure = target->structure();
+    unsigned attributes = 0;
+    if (target->type() == FinalObjectType && structure->isStructureExtensible() && !parseIndex(name) && (structure->get(vm, name, attributes) == invalidOffset || !attributes))
+        target->putDirect(vm, name, value);
+    else
+        target->createDataProperty(globalObject, name, value, true);
+}
+
 JSObject* withAllPropertiesInline(JSGlobalObject* globalObject, JSObject* object)
 {
     if (!Instance::of(globalObject))
@@ -205,6 +216,76 @@ static bool takesPlainPropertiesDirectly(Structure* target)
         && !target->hasPolyProto();
 }
 
+namespace {
+
+struct CopiedProperties {
+    bool tryAppend(VM& vm, UniquedStringImpl* name, JSValue value)
+    {
+        if (name == vm.propertyNames->underscoreProto.impl())
+            return false;
+        names.append(name);
+        values.appendWithCrashOnOverflow(value);
+        return true;
+    }
+
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+};
+
+}
+
+static bool tryStoreCopiedProperties(VM& vm, JSObject* target, CopiedProperties& copied)
+{
+    Structure* structure = target->structure();
+    if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties()) {
+        for (UniquedStringImpl* name : copied.names) {
+            unsigned attributes;
+            if (isValidOffset(structure->get(vm, name, attributes)) && attributes)
+                return false;
+        }
+    }
+    if (!copied.names.isEmpty())
+        target->putOwnDataPropertyBatching(vm, copied.names.mutableSpan().data(), copied.values.data(), copied.names.size());
+    return true;
+}
+
+static bool tryCopyDataProperties(VM& vm, JSObject* target, JSObject* source)
+{
+    Structure* sourceStructure = source->structure();
+    if (!takesPlainPropertiesDirectly(target->structure()))
+        return false;
+    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+        return false;
+    if (sourceStructure->hasNonReifiedStaticProperties())
+        return false;
+
+    CopiedProperties copied;
+    bool canCopy = true;
+    EnsureStillAliveScope sourceStructureScope(sourceStructure);
+    sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
+            return true;
+        canCopy = !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue) && copied.tryAppend(vm, entry.key(), source->getDirect(entry.offset()));
+        return canCopy;
+    });
+    return canCopy && tryStoreCopiedProperties(vm, target, copied);
+}
+
+static bool tryCopyRecordDataProperties(VM& vm, JSObject* target, JSObject* object)
+{
+    Object* record = compiledObjectOrNull(object);
+    if (!record || !takesPlainPropertiesDirectly(target->structure()))
+        return false;
+
+    CopiedProperties copied;
+    bool canCopy = true;
+    bool hasOnlyFields = record->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+        canCopy = copied.tryAppend(vm, &name, value);
+        return canCopy;
+    }, Object::SymbolKeys::Include);
+    return hasOnlyFields && canCopy && tryStoreCopiedProperties(vm, target, copied);
+}
+
 // Of the primitives only a string has own properties. Options that nobody has given are an empty literal.
 static ALWAYS_INLINE bool hasOwnPropertiesToCopy(JSValue source)
 {
@@ -243,6 +324,12 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     if (takesPlainPropertiesDirectly(target->structure()) && tryDefinePropertiesOnOrdinaryObject(vm, *instance->state, target, from, excluded.names()))
         return "into an ordinary object, by a plan"_s;
+    if (excluded.isEmpty() && target->type() == FinalObjectType && from->type() == FinalObjectType) {
+        if (tryCopyDataProperties(vm, target, from))
+            return "final objects, tryCopyDataProperties"_s;
+    }
+    if (excluded.isEmpty() && target->type() == FinalObjectType && tryCopyRecordDataProperties(vm, target, from))
+        return "final objects, tryCopyRecordDataProperties"_s;
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
     if (canPutDirectly && excluded.isEmpty()) {
@@ -278,7 +365,7 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
             return "read by lookups, defined name by name"_s;
         }
         for (size_t i = 0; i < copiedNames.size(); ++i) {
-            target->createDataProperty(globalObject, copiedNames[i], copiedValues.at(i), true);
+            defineCopiedProperty(globalObject, target, copiedNames[i], copiedValues.at(i));
             RETURN_IF_EXCEPTION(scope, threw);
         }
         return "read by lookups, defined name by name"_s;
@@ -338,8 +425,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
         OPERATION_RETURN(scope);
     }
     ExcludedKeys excluded;
-    excluded.collect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
-    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (excludedRun || count) {
+        excluded.collect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+    }
     scope.release();
     copyDataPropertiesExcluding(instance, globalObject, vm, object, JSValue::decode(source), excluded);
     OPERATION_RETURN(scope);
@@ -420,7 +509,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCloneObjectAs, JSCell*, (Instance*
         JSValue value = JSValue::decode(values[i]);
         if (value.isUndefined())
             continue;
-        copy->createDataProperty(globalObject, identifierAt(instance, layout.fields()[request.fields[i]].name), value, true);
+        defineCopiedProperty(globalObject, copy, identifierAt(instance, layout.fields()[request.fields[i]].name), value);
         scope.assertNoException();
     }
     OPERATION_RETURN(scope, copy);

@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTOpcode.h"
+#include "AOTValue.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 // SelectTypedResults has nothing to do in a function without any of these.
-inline constexpr OpcodeSet typedResultCallOpcodes { Opcode::Call, Opcode::CallBuiltin };
+inline constexpr OpcodeSet typedResultCallOpcodes = Value::opcodesWithExpectedResult;
 
 } } } // namespace JSC::AOT::Typed
 

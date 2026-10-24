@@ -1556,6 +1556,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         Value& allocation = function.edit(object.allocation);
         allocation.setFields(fields.span());
         allocation.setValuesOperands(listedValues.span());
+        allocation.setListsOnlyStoredValues(false);
     };
 
     // The store writes the word that says "not made yet". The closure has no code, so it stands right in front of the store, where nothing comes between the two.

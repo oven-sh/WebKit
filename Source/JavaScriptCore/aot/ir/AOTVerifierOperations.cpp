@@ -232,7 +232,7 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Call:
         if (opcode == Opcode::CallDirect || opcode == Opcode::CallTable)
             verifyDirectCall(block, id, value);
-        else if (opcode == Opcode::Call || opcode == Opcode::Construct)
+        else if (opcode == Opcode::Call || opcode == Opcode::CallList || opcode == Opcode::Construct)
             verifyCallByValue(block, id, value);
         return;
     case OperationFamily::PrivateAccess:

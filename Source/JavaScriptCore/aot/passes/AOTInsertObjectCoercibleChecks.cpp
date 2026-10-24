@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTInsertObjectCoercibleChecks.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 

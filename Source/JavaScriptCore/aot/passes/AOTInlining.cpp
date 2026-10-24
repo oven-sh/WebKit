@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTArrayCapacities.h"
 #include "AOTArrayChains.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
@@ -36,6 +35,7 @@
 #include "AOTOperatorForms.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccess.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTRepresentation.h"

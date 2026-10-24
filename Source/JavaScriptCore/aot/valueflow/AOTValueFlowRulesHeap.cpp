@@ -360,6 +360,10 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         noteWrittenMembers(listed, key);
         noteMembersLookedForBeforeChange(listed, key);
     }
+    if (ClimbingSet holders = holdersOfReplaceableMemberListedBesideUnknownObject(object, receivers, key); holdsAnything(holders)) {
+        write(holders, writtenName(key, part), value);
+        noteWrittenMembers(holders, key, true);
+    }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
     markDefinition(receivers, key, part);
     mayThrow();
@@ -430,6 +434,18 @@ ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOp
 {
     ClimbingSet listed = builtinObjectsListedBesideUnknownObject(object, receivers, key);
     return holdsAnything(listed) ? m_context.valueWithin(listed, m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)) : ClimbingSet();
+}
+
+ClimbingSet HeapRule::holdersOfReplaceableMemberListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+{
+    if (key.keyClass != HeapKeyClass::Name || !isInProgramCode())
+        return { };
+    Members holders;
+    forEachMemberUnder(builtinObjectsListedBesideUnknownObject(object, receivers, key), key, [&](BuiltinID member, ModuleID module) {
+        if (!module && m_builtins.at(member).mutability == BuiltinMutability::ConstantUnlessWritten && !m_builtins.isLocationOfLockedObject(member))
+            holders.append(m_universe.objectOf(m_builtins.at(member).holder));
+    });
+    return ClimbingSet(m_context.maker().of(holders.span()));
 }
 
 bool HeapRule::isInProgramCode()
@@ -513,6 +529,10 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
         noteWrittenMembers(listed, key);
         noteMembersLookedForBeforeChange(listed, key, true);
         noteDeletedMembers(listed, key);
+    }
+    if (ClimbingSet holders = holdersOfReplaceableMemberListedBesideUnknownObject(object, receivers, key); holdsAnything(holders)) {
+        noteWrittenMembers(holders, key, true);
+        noteDeletedMembers(holders, key);
     }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
     m_context.mark(m_context.restrict(receivers, m_universe.objects()), ObjectMutation::DeleteField);

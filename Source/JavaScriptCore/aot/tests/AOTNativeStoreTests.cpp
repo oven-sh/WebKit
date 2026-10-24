@@ -19,6 +19,7 @@
 #include "AOTModules.h"
 #include "AOTNativeTest.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTProgramFile.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTTemporaryFile.h"

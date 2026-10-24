@@ -316,16 +316,11 @@ std::unique_ptr<Heat> ProgramAnalyses::takeHeat(const FlowResults& flow)
     return std::exchange(m_heat, nullptr);
 }
 
-void ProgramAnalyses::willChangeBodiesWithoutEditor()
+void ProgramAnalyses::willChangeBodies(BodiesAreChanged bodiesAreChanged)
 {
     m_bodyIndex->growTo(m_program.functions.size());
-    m_bodyIndex->didGiveOutAll();
-    m_bodiesAreGivenOutWithoutEditor = true;
-}
-
-void ProgramAnalyses::willChangeBodiesThroughOwnEditors()
-{
-    m_bodyIndex->growTo(m_program.functions.size());
+    if (bodiesAreChanged != BodiesAreChanged::ThroughEditors)
+        m_bodyIndex->didGiveOutAll();
     m_bodiesAreGivenOutWithoutEditor = true;
 }
 

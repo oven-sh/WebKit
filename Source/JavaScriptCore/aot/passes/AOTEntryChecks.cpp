@@ -23,7 +23,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
-#include "AOTResolveCalls.h"
+#include "AOTProgramPasses.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"

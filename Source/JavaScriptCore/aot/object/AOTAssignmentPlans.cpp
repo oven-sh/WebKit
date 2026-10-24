@@ -397,6 +397,9 @@ void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGl
             }
             names.append(property.name);
             copied.append({ property, index });
+            // Each name is looked for among those before it.
+            if (names.size() > JSFinalObject::maxInlineCapacity)
+                return notePlanWithoutUse("the properties of two sources do not fit a cell"_s);
         }
     }
     size_t size = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(names.size() + 1));

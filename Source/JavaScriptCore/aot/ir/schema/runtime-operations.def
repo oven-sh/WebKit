@@ -32,8 +32,6 @@ runtime Apply : EncodedJSValue (EncodedJSValue callee, EncodedJSValue thisValue,
 runtime NewArgumentList : JSCell* (EncodedJSValue callee, EncodedJSValue arrayLike) ; unknownCode
 runtime ConstructWithArray : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list) ; unknownCode
 runtime SuperConstruct : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
-runtime DidConstructBuiltinBase : void (JSCell* object, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t classIndex, uint32_t builtinParent) ; reads(all) writes(ShapeWords, AllocatorState, RuntimeState) collects
-runtime LookAtStructureBelowBuiltinBase : size_t (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime SuperConstructList : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list) ; unknownCode
 runtime ThrowUnlessCallable : void (EncodedJSValue callee) ; reads(all) throws
 runtime ThrowUnlessCallableNamed : void (EncodedJSValue callee, uint32_t name) ; reads(all) throws

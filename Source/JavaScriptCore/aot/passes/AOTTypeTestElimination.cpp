@@ -10,8 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
-#include "AOTEliminateGuards.h"
 #include "AOTInlineBuiltinForms.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"

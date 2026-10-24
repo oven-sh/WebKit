@@ -203,19 +203,28 @@ bool tryStoreInExpectedRow(ObjectBuilder& builder, unsigned index, const JSC__AO
 
 } // namespace
 
+JSMap* createPreparedPlans(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    DeferGCForAWhile deferGC(vm);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    // A plan and a rule are JSON, which neither name is.
+    map->set(globalObject, jsNontrivialString(vm, "deferReport"_s), JSFunction::create(vm, globalObject, 3, "deferReport"_s, deferReport, ImplementationVisibility::Private));
+    scope.releaseAssertNoException();
+    map->set(globalObject, jsNontrivialString(vm, "matchesPattern"_s), JSFunction::create(vm, globalObject, 2, "matchesPattern"_s, matchesPattern, ImplementationVisibility::Private));
+    scope.releaseAssertNoException();
+    return map;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetPreparedPlans, EncodedJSValue, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetPreparedPlans);
     DeferGCForAWhile deferGC(vm);
     JSCell*& kept = instance->realm.preparedPlans;
     if (!kept) [[unlikely]] {
-        DeferTerminationForAWhile deferTermination(vm);
-        JSMap* map = JSMap::create(vm, globalObject->mapStructure());
-        // A plan and a rule are JSON, which neither name is.
-        map->set(globalObject, jsNontrivialString(vm, "deferReport"_s), JSFunction::create(vm, globalObject, 3, "deferReport"_s, deferReport, ImplementationVisibility::Private));
-        scope.releaseAssertNoException();
-        map->set(globalObject, jsNontrivialString(vm, "matchesPattern"_s), JSFunction::create(vm, globalObject, 2, "matchesPattern"_s, matchesPattern, ImplementationVisibility::Private));
-        scope.releaseAssertNoException();
+        JSMap* map = createPreparedPlans(globalObject);
         vm.mutatorFence();
         kept = map;
     }

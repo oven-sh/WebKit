@@ -51,7 +51,7 @@ static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStri
     return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
 }
 
-static bool putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot, const Invocable<void()> auto& didNotFile)
+static ALWAYS_INLINE bool putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot, const Invocable<void()> auto& didNotFile)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -260,7 +260,7 @@ static PropertyAnswer classifyFreeNameStore(VM& vm, JSGlobalObject* globalObject
     return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Store, globalObject, offset);
 }
 
-static void setFreeName(Instance* instance, uint32_t key, SiteCache site, JSValue value, bool isStrict)
+static ALWAYS_INLINE void setFreeName(Instance* instance, uint32_t key, SiteCache site, JSValue value, bool isStrict)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
@@ -324,7 +324,7 @@ struct BindingAccess {
 
 } // anonymous namespace
 
-static BindingAccess bindingAccess(Instance* instance, uint32_t number)
+static ALWAYS_INLINE BindingAccess bindingAccess(Instance* instance, uint32_t number)
 {
     GlobalBindings& bindings = *instance->state->globalBindings;
     return { *instance, *instance->vm, instance->globalObject, bindings, number, bindings.nameOf(number) };
@@ -409,7 +409,7 @@ static bool tryFileAbsence(const BindingAccess& access)
     return true;
 }
 
-static JSValue getGlobalBinding(Instance* instance, uint32_t number, bool seesScriptBindings)
+static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t number, bool seesScriptBindings)
 {
     if (EncodedJSValue* location = filedLocationOrNull(instance, number, seesScriptBindings)) {
         if (JSValue value = JSValue::decode(*location))
@@ -499,7 +499,7 @@ static bool tryFileStore(const BindingAccess& access, const PutPropertySlot& slo
     return true;
 }
 
-static void setGlobalBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
+static ALWAYS_INLINE void setGlobalBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
 {
     if (tryStoreAtFiledLocation(instance, number, true, value))
         return;
@@ -513,7 +513,7 @@ static void setGlobalBinding(Instance* instance, uint32_t number, JSValue value,
         access.didNotFile();
 }
 
-static void setGlobalObjectBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
+static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
 {
     if (tryStoreAtFiledLocation(instance, number, false, value))
         return;

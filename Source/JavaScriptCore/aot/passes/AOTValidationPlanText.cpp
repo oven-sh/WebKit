@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTCompile.h"
 #include "AOTSelectTypedResultsNodes.h"
 #include "AOTStringArena.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -315,5 +317,26 @@ StringID validationRuleText(const Program& program, StringArena& strings, const 
 }
 
 } } } // namespace JSC::AOT::Typed
+
+namespace JSC { namespace AOT {
+
+Vector<uint8_t> writeValidationPlans(std::span<const uint8_t> bytes, const Wire::CompileOptions& options)
+{
+    BuildContext build(options, nullptr);
+    std::unique_ptr<Typed::Program> program = Typed::Program::read(bytes, build);
+    Vector<uint8_t> plans;
+    if (!program)
+        return plans;
+    for (uint32_t index = 0; index < program->expectedResults.size(); ++index) {
+        Vector<uint8_t> plan = Typed::writeValidationPlan(*program, Typed::ExpectedResultID(index), 0);
+        uint32_t length = static_cast<uint32_t>(plan.size());
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            plans.append(static_cast<uint8_t>(length >> shift));
+        plans.appendVector(plan);
+    }
+    return plans;
+}
+
+} } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

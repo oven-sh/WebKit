@@ -91,11 +91,6 @@ VM& Object::vm() const
     return *instance().vm;
 }
 
-const FieldData* Object::fieldNamed(State& state, PropertyName name) const
-{
-    return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
-}
-
 void* Object::slotOf(const FieldData& field) const
 {
     if (!field.isOutOfLine()) [[likely]]

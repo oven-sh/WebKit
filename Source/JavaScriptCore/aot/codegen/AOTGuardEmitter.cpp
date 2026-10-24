@@ -159,7 +159,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
 
 void GuardEmitter::generateHasNoExtraProperties(const ValueContext& value)
 {
-    defineTest(value, emitter<ShapeTestEmitter>().hasNoExtraProperties(in<CellPointer>(value->objectOperand()), typeOf(value->objectOperand())));
+    defineTest(value, emitter<ShapeTestEmitter>().hasNoExtraProperties(in<CellPointer>(value->objectOperand())));
 }
 
 // The bits of the flags byte of a compiled object that pass the test when they are clear. None: the test looks elsewhere.
@@ -171,7 +171,7 @@ uint8_t GuardEmitter::flagsTestedBy(const Value& test)
     case Opcode::HasNoFieldOutsideSlot:
         return test.mayMeetUnfinishedObject() || generator().validates() ? 0 : TypeInfoPerCellBit;
     case Opcode::HasLayoutPrototype:
-        return emitter<ShapeTestEmitter>().mayBeMadeByBuiltinBase(typeOf(test.objectOperand())) ? 0 : JSC::IsPristine;
+        return JSC::IsPristine;
     default:
         return 0;
     }
@@ -280,10 +280,8 @@ void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
     // The state of an object that was handed a prototype is known only behind a test that has passed.
     if (emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand()))
         defineTest(value, boolean(true));
-    else if (flagsTestedBy(value.value()))
-        defineTest(value, testOfFlags(value));
     else
-        defineTest(value, emitter<ShapeTestEmitter>().hasLayoutPrototype(in<CellPointer>(value->objectOperand()), typeOf(value->objectOperand())));
+        defineTest(value, testOfFlags(value));
 }
 
 void GuardEmitter::generateIsPristine(const ValueContext& value)

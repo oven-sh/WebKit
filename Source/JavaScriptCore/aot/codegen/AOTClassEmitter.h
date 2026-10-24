@@ -26,7 +26,6 @@ public:
     void generateGetConstructPrototype(const ValueContext&);
     void generateSuperConstruct(const ValueContext&);
     void generateSuperConstructList(const ValueContext&);
-    Boxed noteObjectMadeByBuiltinBase(const ValueContext&, Boxed object);
 
 private:
     std::optional<uint32_t> rankOfClassWithOnePrototypeObject(const ValueContext&) const;

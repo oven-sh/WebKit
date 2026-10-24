@@ -78,6 +78,7 @@ private:
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
     };
 
+    const ImageRegExp* m_records { nullptr };
     UncheckedKeyHashSet<RegExp*, CellHash> m_cells;
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };

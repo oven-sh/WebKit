@@ -90,6 +90,8 @@ bool distinguishesOmittedFromUndefined(const BuiltinTable&, const BuiltinParamet
 
 bool overloadHasForm(const BuiltinTable&, BuiltinOverloadID, BuiltinCallForm);
 
+// SelectTypedResults puts the validation behind the call, whoever is called. Until then whoever makes other calls of this one leaves the validation out.
+bool awaitsValidation(const Program&, const Value& call);
 bool isCallThatRequiredPassRemoves(const Program&, const Value& call);
 
 bool overloadTakesOperands(const TypingContext&, const Value& call);

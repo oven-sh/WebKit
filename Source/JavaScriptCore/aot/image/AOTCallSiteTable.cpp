@@ -48,13 +48,12 @@ struct SiteCheckpoint {
 static_assert(sizeof(SiteCheckpoint) == 12 && sizeof(SiteCheckpoint::position) == 4 && sizeof(SiteCheckpoint::frame) == 4);
 
 struct HeadWord {
-    uint64_t encode() const { return numberOfSites << 3 | hasPrologueChecks << 2 | hasInlineFrames << 1 | hasSpreadSites; }
-    static HeadWord decode(uint64_t word) { return { word >> 3, !!(word & 4), !!(word & 2), !!(word & 1) }; }
+    uint64_t encode() const { return numberOfSites << 3 | hasPrologueChecks << 2 | hasInlineFrames << 1; }
+    static HeadWord decode(uint64_t word) { return { word >> 3, !!(word & 4), !!(word & 2) }; }
 
     uint64_t numberOfSites;
     bool hasPrologueChecks;
     bool hasInlineFrames;
-    bool hasSpreadSites;
 };
 
 struct InlineFrameWord {
@@ -87,7 +86,6 @@ struct StreamHead {
     const uint8_t* sites() const { return checkpoints + SiteCheckpoint::numberFor(numberOfSites) * sizeof(SiteCheckpoint); }
 
     uint64_t numberOfSites { 0 };
-    bool hasSpreadSites { false };
     Vector<std::pair<uint32_t, uint32_t>, 1> prologueChecks;
     uint64_t numberOfSitesWithoutCode { 0 };
     uint64_t numberOfInlineFrames { 0 };
@@ -185,13 +183,12 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
         }));
     }
     Vector<SiteWithCode, 32> returnSites = collectReturnSites(code);
-    RELEASE_ASSERT(sites.positions.size() == 1 + static_cast<size_t>(sites.numberOfSitesWithoutCode) + returnSites.size() + sites.spreadSites.size());
+    RELEASE_ASSERT(sites.positions.size() == 1 + static_cast<size_t>(sites.numberOfSitesWithoutCode) + returnSites.size());
     if (returnSites.isEmpty() && prologueChecks.empty())
         return;
 
     bool hasInlineFrames = sites.hasEncodedInlineFrames();
-    bool hasSpreadSites = !returnSites.isEmpty() && !sites.spreadSites.isEmpty();
-    appendVarint(stream, HeadWord { returnSites.size(), !prologueChecks.empty(), hasInlineFrames, hasSpreadSites }.encode());
+    appendVarint(stream, HeadWord { returnSites.size(), !prologueChecks.empty(), hasInlineFrames }.encode());
     if (!prologueChecks.empty()) {
         appendVarint(stream, prologueChecks.size());
         std::optional<uint32_t> previousCallOffset;
@@ -219,14 +216,6 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
         stream.appendVector(frames);
     }
     appendSites(stream, code, returnSites.span());
-    if (hasSpreadSites) {
-        appendVarint(stream, sites.spreadSites.size());
-        for (auto& entry : sites.spreadSites) {
-            appendVarint(stream, entry.callSite);
-            appendVarint(stream, entry.item);
-            appendVarint(stream, entry.site);
-        }
-    }
 }
 
 Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, BuildContext& context)
@@ -257,7 +246,6 @@ static StreamHead readHead(const uint8_t* cursor)
     HeadWord word = HeadWord::decode(readVarint(cursor));
     StreamHead head;
     head.numberOfSites = word.numberOfSites;
-    head.hasSpreadSites = word.hasSpreadSites;
     if (word.hasPrologueChecks) {
         for (uint64_t count = readVarint(cursor); count--;) {
             uint32_t callOffset = static_cast<uint32_t>(readVarint(cursor) * codeOffsetUnit);
@@ -465,32 +453,6 @@ void* resumeAddressAfterStackCheck(const void* returnAddress)
     return const_cast<uint8_t*>(image->codeOf(check->function)) + check->resumeOffset;
 }
 
-std::optional<CallSiteIndex> Image::spreadSiteAt(uint32_t function, CallSiteIndex callSite, unsigned item) const
-{
-    std::optional<StreamHead> head = readHead(*this, function);
-    if (!head || !head->hasSpreadSites)
-        return std::nullopt;
-    const uint8_t* cursor = head->sites();
-    uint64_t numberOfSites = head->numberOfSites;
-    if (uint64_t numberOfCheckpoints = SiteCheckpoint::numberFor(numberOfSites)) {
-        cursor += SiteCheckpoint::at(head->checkpoints, numberOfCheckpoints - 1).position;
-        numberOfSites -= numberOfCheckpoints * SiteCheckpoint::sitesBetween;
-    }
-    for (uint64_t count = numberOfSites; count--;) {
-        uint64_t word = readVarint(cursor);
-        if (word & 1)
-            readVarint(cursor);
-    }
-    for (uint64_t count = readVarint(cursor); count--;) {
-        uint64_t spreadCallSite = readVarint(cursor);
-        uint64_t spreadItem = readVarint(cursor);
-        uint64_t site = readVarint(cursor);
-        if (spreadCallSite == callSite.bits() && spreadItem == item)
-            return CallSiteIndex(static_cast<uint32_t>(site));
-    }
-    return std::nullopt;
-}
-
 static_assert(!static_cast<uint8_t>(HandlerType::Catch) && static_cast<uint8_t>(HandlerType::Finally) == 1 && static_cast<uint8_t>(HandlerType::SynthesizedCatch) == 2 && static_cast<uint8_t>(HandlerType::SynthesizedFinally) == 3);
 static_assert(std::endian::native == std::endian::little);
 
@@ -617,14 +579,12 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
     size_t count = sites.positions.size();
     size_t numberOfInlineFrames = inlineFrameCount(sites);
     size_t numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
-    RELEASE_ASSERT(sites.spreadSites.size() < count);
-    size_t lastSiteWithCode = count - 1 - sites.spreadSites.size();
-    RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode <= lastSiteWithCode);
+    RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
     size_t numberOfSuspensionSites = numberOfSitesWithoutCode - numberOfInlineFrames;
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
     // Has to match SiteFrames::next(), the decoder's only way to learn the frame of a site.
     auto stateFrame = [&](size_t site) -> uint32_t {
-        if (!followsInlineFrames || site <= numberOfSuspensionSites || site > lastSiteWithCode)
+        if (!followsInlineFrames || site <= numberOfSuspensionSites)
             return 0;
         if (site <= numberOfSitesWithoutCode)
             return sites.inlineFrames[site - numberOfSuspensionSites].parent;

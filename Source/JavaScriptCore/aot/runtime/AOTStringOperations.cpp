@@ -142,6 +142,16 @@ static ALWAYS_INLINE size_t findSeparators(const CharacterType* characters, uint
 }
 
 template<typename CharacterType>
+static ALWAYS_INLINE bool hasTextAt(const CharacterType* characters, std::span<const Latin1Character> text)
+{
+    for (size_t k = 0; k < text.size(); ++k) {
+        if (characters[k] != text[k])
+            return false;
+    }
+    return true;
+}
+
+template<typename CharacterType>
 static ALWAYS_INLINE size_t findLongSeparators(const CharacterType* characters, uint32_t length, std::span<const Latin1Character> text, uint32_t* positions, uint32_t wanted)
 {
     ASSERT(!text.empty());
@@ -149,14 +159,29 @@ static ALWAYS_INLINE size_t findLongSeparators(const CharacterType* characters, 
         return 0;
     uint32_t count = 0;
     for (uint32_t i = 0; i + text.size() <= length;) {
-        if (!std::equal(text.begin(), text.end(), characters + i)) {
+        if (!hasTextAt(characters + i, text)) {
             ++i;
             continue;
         }
-        if (positions)
-            positions[count] = i;
+        positions[count] = i;
         if (++count == wanted)
             break;
+        i += text.size();
+    }
+    return count;
+}
+
+template<typename CharacterType>
+static ALWAYS_INLINE size_t countLongSeparators(const CharacterType* characters, uint32_t length, std::span<const Latin1Character> text)
+{
+    ASSERT(!text.empty());
+    size_t count = 0;
+    for (uint32_t i = 0; i + text.size() <= length;) {
+        if (!hasTextAt(characters + i, text)) {
+            ++i;
+            continue;
+        }
+        ++count;
         i += text.size();
     }
     return count;
@@ -280,12 +305,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLongSeparators16, size_t, (Ins
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountLongSeparators8, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text))
 {
-    return findLongSeparators(characters, length, textOf(text).span8(), nullptr, UINT32_MAX);
+    return countLongSeparators(characters, length, textOf(text).span8());
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountLongSeparators16, size_t, (Instance*, const char16_t* characters, uint32_t length, uint32_t text))
 {
-    return findLongSeparators(characters, length, textOf(text).span8(), nullptr, UINT32_MAX);
+    return countLongSeparators(characters, length, textOf(text).span8());
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringFindLiteral8, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start))
@@ -356,7 +381,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrings, size_t, (Instance* instance
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     auto second = rightString->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
-    OPERATION_RETURN(scope, static_cast<size_t>(operationAOTCompareStringImpls(first->impl(), second->impl())));
+    auto order = codePointCompare(StringView { first.data }, StringView { second.data });
+    OPERATION_RETURN(scope, static_cast<size_t>(static_cast<int64_t>(order < 0 ? -1 : order > 0 ? 1 : 0)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringsAreEqual, size_t, (Instance* instance, JSCell* first, JSCell* second))
@@ -421,66 +447,58 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringEndsWithLiteral, size_t, (Instance* i
     OPERATION_RETURN(scope, characters->endsWith(other));
 }
 
-static size_t indexOfText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView other, unsigned position)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (string->length() < static_cast<uint64_t>(other.length()) + position)
-        return notFound;
-    if (other.length() == 1 && string->isRope() && string->length() >= JSString::minLengthForRopeWalk) {
-        if (auto found = string->tryFindOneChar(globalObject, other[0], position))
-            return *found;
-    }
-    auto characters = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, notFound);
-    if (other.length() == 1)
-        return characters->find(other[0], position);
-    return characters->find(vm.adaptiveStringSearcherTables(), other, position);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfFrom, size_t, (Instance* instance, JSCell* string, JSCell* other, int32_t position))
+JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfFrom, size_t, (Instance* instance, JSCell* string, JSCell* other, int32_t startPosition))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringIndexOfFrom);
+    constexpr size_t none = static_cast<size_t>(-1);
     JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringIndexOfFrom);
     JSString* argument = cellArgument<JSString>(other, Entry::operationAOTStringIndexOfFrom);
-    if (base->length() < static_cast<uint64_t>(argument->length()) + static_cast<unsigned>(position))
-        OPERATION_RETURN(scope, notFound);
+    unsigned position = startPosition;
+    if (base->length() < static_cast<uint64_t>(argument->length()) + position)
+        OPERATION_RETURN(scope, none);
     auto otherCharacters = argument->view(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
-    OPERATION_RETURN(scope, indexOfText(globalObject, vm, base, otherCharacters.data, position));
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (argument->length() == 1 && base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        if (auto found = base->tryFindOneChar(globalObject, otherCharacters[0], position))
+            OPERATION_RETURN(scope, *found == notFound ? none : *found);
+    }
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    size_t found = characters->find(vm.adaptiveStringSearcherTables(), otherCharacters, position);
+    OPERATION_RETURN(scope, found == notFound ? none : found);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfLiteral, size_t, (Instance* instance, JSCell* string, uint32_t text, int32_t position))
+JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfLiteral, size_t, (Instance* instance, JSCell* string, uint32_t text, int32_t fromIndex))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringIndexOfLiteral);
-    OPERATION_RETURN(scope, indexOfText(globalObject, vm, cellArgument<JSString>(string, Entry::operationAOTStringIndexOfLiteral), textOf(text), position));
+    JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringIndexOfLiteral);
+    StringView other = textOf(text);
+    unsigned position = fromIndex;
+    if (base->length() < static_cast<uint64_t>(other.length()) + position)
+        OPERATION_RETURN(scope, notFound);
+    if (other.length() == 1 && base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        if (auto found = base->tryFindOneChar(globalObject, other[0], position))
+            OPERATION_RETURN(scope, *found);
+    }
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    OPERATION_RETURN(scope, characters->find(vm.adaptiveStringSearcherTables(), other, position));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfCharacter, size_t, (Instance* instance, JSCell* string, uint32_t character, int32_t position))
+JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfCharacter, size_t, (Instance* instance, JSCell* string, uint32_t character, int32_t fromIndex))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringIndexOfCharacter);
-    char16_t unit = static_cast<char16_t>(character);
-    OPERATION_RETURN(scope, indexOfText(globalObject, vm, cellArgument<JSString>(string, Entry::operationAOTStringIndexOfCharacter), std::span<const char16_t> { &unit, 1 }, position));
-}
-
-static size_t lastIndexOfText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView other, int32_t position)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned length = string->length();
-    unsigned otherLength = other.length();
-    if (length < otherLength)
-        return notFound;
-    unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
-    if (otherLength == 1 && string->isRope() && length >= JSString::minLengthForRopeWalk) {
-        if (auto found = string->tryFindLastOneChar(globalObject, other[0], start))
-            return *found;
+    JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringIndexOfCharacter);
+    unsigned position = fromIndex;
+    if (base->length() <= position)
+        OPERATION_RETURN(scope, notFound);
+    if (base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        if (auto found = base->tryFindOneChar(globalObject, static_cast<char16_t>(character), position))
+            OPERATION_RETURN(scope, *found);
     }
-    auto characters = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, notFound);
-    if (otherLength == 1)
-        return characters->reverseFind(other[0], start);
-    if (!start)
-        return characters->startsWith(other) ? 0 : notFound;
-    return characters->reverseFind(other, start);
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    OPERATION_RETURN(scope, characters->find(static_cast<char16_t>(character), position));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOf, size_t, (Instance* instance, JSCell* cell, JSCell* otherCell, int32_t position))
@@ -488,54 +506,108 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOf, size_t, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringLastIndexOf);
     JSString* string = cellArgument<JSString>(cell, Entry::operationAOTStringLastIndexOf);
     JSString* other = cellArgument<JSString>(otherCell, Entry::operationAOTStringLastIndexOf);
-    if (string->length() < other->length())
+    unsigned length = string->length();
+    unsigned otherLength = other->length();
+    if (length < otherLength)
         OPERATION_RETURN(scope, notFound);
+    unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
     auto otherCharacters = other->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
-    OPERATION_RETURN(scope, lastIndexOfText(globalObject, vm, string, otherCharacters.data, position));
+    if (otherLength == 1 && string->isRope() && length >= JSString::minLengthForRopeWalk) {
+        if (auto found = string->tryFindLastOneChar(globalObject, otherCharacters[0], start))
+            OPERATION_RETURN(scope, *found);
+    }
+    auto characters = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
+    if (otherLength == 1)
+        OPERATION_RETURN(scope, characters->reverseFind(otherCharacters[0], start));
+    if (!start)
+        OPERATION_RETURN(scope, characters->startsWith(otherCharacters) ? 0 : notFound);
+    OPERATION_RETURN(scope, characters->reverseFind(otherCharacters, start));
 }
+
+static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfLiteralGeneric(Instance*, JSCell*, uint32_t text, int32_t position);
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringLastIndexOfLiteral, size_t, (Instance* instance, JSCell* cell, uint32_t text, int32_t position))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringLastIndexOfLiteral);
-    OPERATION_RETURN(scope, lastIndexOfText(globalObject, vm, cellArgument<JSString>(cell, Entry::operationAOTStringLastIndexOfLiteral), textOf(text), position));
+    if (const StringImpl* impl = uncheckedDowncast<JSString>(cell)->tryGetValueImpl(); position <= 0 && impl && impl->is8Bit()) {
+        StringView other = textOf(text);
+        if (other.is8Bit()) [[likely]] {
+            if (impl->length() < other.length())
+                return { notFound, nullptr };
+            return { WTF::equal(impl->span8().data(), other.span8()) ? 0 : notFound, nullptr };
+        }
+    }
+    [[clang::musttail]] return stringLastIndexOfLiteralGeneric(instance, cell, text, position);
 }
 
-template<size_t maxLength>
-static ALWAYS_INLINE std::optional<std::span<const char16_t>> tryGetLatin1Units(JSString* string, std::array<char16_t, maxLength>& units)
+static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringLastIndexOfLiteralGeneric(Instance* instance, JSCell* cell, uint32_t text, int32_t position)
 {
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringLastIndexOfLiteral);
+    JSString* string = cellArgument<JSString>(cell, Entry::operationAOTStringLastIndexOfLiteral);
+    StringView other = textOf(text);
     unsigned length = string->length();
-    RELEASE_ASSERT(length <= maxLength);
-    string->resolveToBuffer(std::span { units }.first(length));
-    std::span<const char16_t> result = std::span { units }.first(length);
-    if (!WTF::charactersAreAllLatin1(result))
-        return std::nullopt;
-    return result;
+    unsigned otherLength = other.length();
+    if (length < otherLength)
+        OPERATION_RETURN(scope, notFound);
+    unsigned start = std::min<unsigned>(std::max(position, 0), length - otherLength);
+    if (otherLength == 1 && string->isRope() && length >= JSString::minLengthForRopeWalk) {
+        if (auto found = string->tryFindLastOneChar(globalObject, other[0], start))
+            OPERATION_RETURN(scope, *found);
+    }
+    auto characters = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
+    if (otherLength == 1)
+        OPERATION_RETURN(scope, characters->reverseFind(other[0], start));
+    if (!start)
+        OPERATION_RETURN(scope, characters->startsWith(other) ? 0 : notFound);
+    OPERATION_RETURN(scope, characters->reverseFind(other, start));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, size_t, (Instance*, JSCell* cell, uint64_t text))
 {
     auto* string = cellArgument<JSString>(cell, Entry::operationAOTStringEqualsLiteralInRegister);
-    RELEASE_ASSERT(string->length());
-    std::array<char16_t, maxRegisterStringLength> buffer;
-    auto units = tryGetLatin1Units(string, buffer);
-    return units && Typed::packStringIntoRegister(*units) == text;
+    unsigned length = string->length();
+    RELEASE_ASSERT(length && length <= maxRegisterStringLength);
+    std::array<char16_t, maxRegisterStringLength> units;
+    string->resolveToBuffer(std::span { units }.first(length));
+    for (unsigned i = 0; i < length; ++i) {
+        if (!WTF::isLatin1(units[i]))
+            return false;
+    }
+    return Typed::packStringIntoRegister(std::span<const char16_t> { units }.first(length)) == text;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTShortStringOfString, EncodedJSValue, (Instance*, EncodedJSValue encoded))
 {
-    std::array<char16_t, maxShortStringLength> buffer;
-    auto units = tryGetLatin1Units(cellArgument<JSString>(JSValue::decode(encoded).asCell(), Entry::operationAOTShortStringOfString), buffer);
-    return static_cast<EncodedJSValue>(units ? shortStringWord(*units) : noShortString);
+    auto* string = cellArgument<JSString>(JSValue::decode(encoded).asCell(), Entry::operationAOTShortStringOfString);
+    unsigned length = string->length();
+    RELEASE_ASSERT(length <= maxShortStringLength);
+    std::array<char16_t, maxShortStringLength> units;
+    string->resolveToBuffer(std::span { units }.first(length));
+    for (unsigned i = 0; i < length; ++i) {
+        if (!WTF::isLatin1(units[i]))
+            return static_cast<EncodedJSValue>(noShortString);
+    }
+    return static_cast<EncodedJSValue>(shortStringWord(std::span<const char16_t> { units }.first(length)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteral, size_t, (Instance*, JSCell* cell, uint32_t text))
 {
     auto* string = cellArgument<JSString>(cell, Entry::operationAOTStringEqualsLiteral);
     StringView expected = textOf(text);
-    return string->length() == expected.length() && withCharactersOf(string, [&](StringView characters) {
-        return characters == expected;
-    });
+    if (string->length() != expected.length())
+        return false;
+    if (!string->isRope())
+        return StringView { *string->tryGetValueImpl() } == expected;
+    if (string->is8Bit()) {
+        Vector<Latin1Character, 64> characters(expected.length());
+        string->resolveToBuffer(characters.mutableSpan());
+        return StringView { characters.span() } == expected;
+    }
+    Vector<char16_t, 64> characters(expected.length());
+    string->resolveToBuffer(characters.mutableSpan());
+    return StringView { characters.span() } == expected;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* instance, uint64_t bits))
@@ -699,22 +771,21 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
                 return nullptr;
             if (!changes)
                 return string;
-            auto convertTo = [&](Latin1Character* converted) ALWAYS_INLINE_LAMBDA {
-                for (size_t i = 0; i < length; ++i)
-                    converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
-            };
+            if (length == 1)
+                return vm.smallStrings.singleCharacterString(static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[0]) : toASCIIUpper(characters[0])));
             if (length <= StringKeyCache::maxCaseConvertedStringLength) {
                 std::array<Latin1Character, StringKeyCache::maxCaseConvertedStringLength> converted;
-                convertTo(converted.data());
-                if (length == 1)
-                    return vm.smallStrings.singleCharacterString(converted[0]);
+                for (size_t i = 0; i < length; ++i)
+                    converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
                 JSString* result = keys.caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
                 keys.cacheCaseConversion(vm, string, letterCase, result);
                 return result;
             }
             std::span<Latin1Character> buffer;
             Ref impl = StringImpl::createUninitialized(length, buffer);
-            convertTo(buffer.data());
+            Latin1Character* converted = buffer.data();
+            for (size_t i = 0; i < length; ++i)
+                converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
             return jsString(vm, String { WTF::move(impl) });
         };
         if (JSString* converted = view->is8Bit() ? convertIfASCII(view->span8()) : convertIfASCII(view->span16()))
@@ -753,24 +824,51 @@ static void fillWithPattern(std::span<CharacterType> buffer, StringView pattern)
     }
 }
 
+template<typename CharacterType>
+static JSString* createRepeatedString(JSGlobalObject* globalObject, StringView pattern, unsigned count)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto checkedLength = checkedProduct<unsigned>(pattern.length(), count);
+    if (checkedLength.hasOverflowed() || checkedLength > JSString::MaxLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    unsigned length = checkedLength;
+
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(length, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    fillWithPattern(buffer, pattern);
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
+}
+
+template<typename CharacterType>
 static JSString* createPaddedString(JSGlobalObject* globalObject, StringView string, StringView filler, unsigned length, bool isAtStart)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto create = [&]<typename CharacterType>(std::span<CharacterType> buffer) -> JSString* {
-        auto impl = StringImpl::tryCreateUninitialized(length, buffer);
-        if (!impl) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
-        }
-        unsigned fillLength = length - string.length();
-        fillWithPattern(isAtStart ? buffer.first(fillLength) : buffer.last(fillLength), filler);
-        string.getCharacters(isAtStart ? buffer.last(string.length()) : buffer.first(string.length()));
-        return jsString(vm, impl.releaseNonNull());
-    };
-    if (string.is8Bit() && filler.is8Bit())
-        return create(std::span<Latin1Character> { });
-    return create(std::span<char16_t> { });
+
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(length, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    unsigned stringLength = string.length();
+    unsigned fillLength = length - stringLength;
+    if (isAtStart) {
+        fillWithPattern(buffer.first(fillLength), filler);
+        string.getCharacters(buffer.last(stringLength));
+    } else {
+        string.getCharacters(buffer.first(stringLength));
+        fillWithPattern(buffer.last(fillLength), filler);
+    }
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringRepeat, JSCell*, (Instance* instance, JSCell* cell, uint32_t count))
@@ -789,12 +887,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringRepeat, JSCell*, (Instance* instance,
             OPERATION_RETURN(scope, repeatCharacter(globalObject, static_cast<Latin1Character>(unit), count));
         OPERATION_RETURN(scope, repeatCharacter(globalObject, unit, count));
     }
-    auto length = checkedProduct<unsigned>(view->length(), count);
-    if (length.hasOverflowed() || length > JSString::MaxLength) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        OPERATION_RETURN(scope, nullptr);
-    }
-    OPERATION_RETURN(scope, createPaddedString(globalObject, ""_s, view, length, true));
+    if (view->is8Bit())
+        OPERATION_RETURN(scope, createRepeatedString<Latin1Character>(globalObject, view, count));
+    OPERATION_RETURN(scope, createRepeatedString<char16_t>(globalObject, view, count));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringPad, JSCell*, (Instance* instance, JSCell* cell, uint32_t length, JSCell* fillerCell, uint32_t isAtStart))
@@ -808,7 +903,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringPad, JSCell*, (Instance* instance, JS
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     auto pattern = filler->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    OPERATION_RETURN(scope, createPaddedString(globalObject, view, pattern, length, !!isAtStart));
+    if (view->is8Bit() && pattern->is8Bit())
+        OPERATION_RETURN(scope, createPaddedString<Latin1Character>(globalObject, view, pattern, length, !!isAtStart));
+    OPERATION_RETURN(scope, createPaddedString<char16_t>(globalObject, view, pattern, length, !!isAtStart));
 }
 
 static bool isUnchangedByURICoding(StringView text, URICoding coding)
@@ -850,7 +947,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceString, JSCell*, (Instance* in
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceString);
     JSString* string = cellArgument<JSString>(stringCell, Entry::operationAOTStringReplaceString);
     JSString* search = cellArgument<JSString>(searchCell, Entry::operationAOTStringReplaceString);
-    OPERATION_RETURN(scope, JSC::replace<StringReplaceMode::Single>(vm, globalObject, string, search, cellArgument<JSString>(replacementCell, Entry::operationAOTStringReplaceString)));
+    JSString* replacement = cellArgument<JSString>(replacementCell, Entry::operationAOTStringReplaceString);
+    if (JSString* result = tryReplaceOneCharUsingString<DollarCheck::Yes>(globalObject, string, search, replacement))
+        OPERATION_RETURN(scope, result);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    auto stringView = string->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    auto searchView = search->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    auto replacementText = replacement->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, (stringReplaceStringString<StringReplaceSubstitutions::Yes, StringReplaceUseTable::No, BoyerMooreHorspoolTable<uint8_t>>(globalObject, string, stringView, searchView, replacement, replacementText, nullptr)));
 }
 
 // A text that is sought as it stands and a replacement that stands for itself: the two literals of most calls.
@@ -917,7 +1024,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance*
     if (JSString* result = tryReplaceAllWithPlainText(globalObject, vm, string, search, replacement))
         OPERATION_RETURN(scope, result);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    OPERATION_RETURN(scope, JSC::replace<StringReplaceMode::Global>(vm, globalObject, string, search, replacement));
+    auto stringView = string->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    auto searchView = search->value(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, replaceUsingStringSearch<StringReplaceMode::Global>(vm, globalObject, string, stringView, searchView, replacement));
 }
 
 // A text cut at a flat text that is not empty.

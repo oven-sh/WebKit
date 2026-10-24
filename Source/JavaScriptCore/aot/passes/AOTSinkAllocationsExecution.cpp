@@ -2454,7 +2454,12 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     for (const FreshResultField& part : variant.parts)
         parts.append(FieldValue { part.field, valueOfField(object, *family.findField(part.field)) });
 
-    ValueID cell = cursor().emit(makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible }));
+    Value allocation = makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible });
+    if (allocation.opcode == Opcode::NewObject) {
+        bool mayListPlaceholders = program().at(allocation.layout()).kind != LayoutKind::Record;
+        allocation.setListsOnlyStoredValues(mayListPlaceholders && !placeholder && storedByName.isEmpty() && hasEveryFieldOfBirthStored(m_sinking.shapeContext(object), shape));
+    }
+    ValueID cell = cursor().emit(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)
         cursor().emit(makeStoreByName(stored, cell));
     if (m_sinking.at(object).needsGuard) {

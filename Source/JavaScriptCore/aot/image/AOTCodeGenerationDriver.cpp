@@ -192,7 +192,7 @@ static void shrinkToFit(CompiledCode& code)
     auto& sites = code.sites;
     shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables);
     shrink(code.frame.frameRanges, code.frame.prologueChecks);
-    shrink(sites.positions, sites.inlineFrames, sites.spreadSites, sites.flaggedSites, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
+    shrink(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
 }
 
 static void prepareForImage(CompiledCode& code, BuildContext& context)

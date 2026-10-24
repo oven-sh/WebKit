@@ -20,8 +20,6 @@ namespace JSC { namespace AOT {
 class Object;
 enum class Entry : uint16_t;
 struct FieldData;
-struct Instance;
-struct RuntimeType;
 
 using Typed::ValidationFailureKind;
 

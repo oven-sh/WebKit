@@ -10,7 +10,6 @@
 
 #include "AOTAccessEmitter.h"
 #include "AOTCallEmitter.h"
-#include "AOTClassEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConvention.h"
@@ -203,7 +202,7 @@ void ArgumentsEmitter::generateConstructSuperForwardVarargs(const ValueContext& 
     Boxed newTarget = in<Boxed>(value->newTargetOperand());
     Word32 count = restLength(value->firstArgument());
     Pointer list = restList(value->firstArgument());
-    define(value, emitter<ClassEmitter>().noteObjectMadeByBuiltinBase(value, emitter<CallEmitter>().superConstructWithList(value, parent, newTarget, count, list)));
+    define(value, emitter<CallEmitter>().superConstructWithList(value, parent, newTarget, count, list));
 }
 
 } } } // namespace JSC::AOT::Typed

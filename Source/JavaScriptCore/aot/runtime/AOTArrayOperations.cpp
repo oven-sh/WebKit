@@ -10,7 +10,7 @@
 
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinIDTypes.h"
-#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTConvention.h"
@@ -42,6 +42,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
+static NEVER_INLINE bool appendBoxedDoubles(JSGlobalObject* globalObject, VM& vm, JSArray* target, const double* numbers, unsigned length)
+{
+    Vector<EncodedJSValue, 16> boxed(length, [&](size_t i) {
+        return JSValue::encode(JSValue(JSValue::EncodeAsDouble, numbers[i]));
+    });
+    return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, boxed.span());
+}
+
 // NaN stands for a hole in Double storage.
 static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> values)
 {
@@ -58,6 +66,8 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
     if (hasDouble(type)) {
         if (containsHole(source->butterfly()->contiguousDouble().data(), length))
             return false;
+        if (hasContiguous(target->indexingType()) && copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
+            return appendBoxedDoubles(globalObject, vm, target, source->butterfly()->contiguousDouble().data(), length);
     } else if (hasInt32(type) || hasContiguous(type)) {
         if (containsHole(source->butterfly()->contiguous().data(), length))
             return false;
@@ -225,12 +235,29 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     lookedAtInVain -= std::min(lookedAtInVain, worthOfConversion);
 }
 
+// What a native function or general code has just made: an array of the realm with storage of its own.
+static bool tryConvertPlainInt32Array(JSGlobalObject* globalObject, VM& vm, JSArray* array)
+{
+    Structure* structure = array->structure();
+    if (structure != globalObject->originalArrayStructureForIndexingType(ArrayWithInt32) || array->indexingMode() != ArrayWithInt32 || structure->transitionWatchpointSetIsStillValid())
+        return false;
+    Butterfly* values = array->butterfly();
+    for (unsigned i = values->vectorLength(); i--;) {
+        JSValue value = values->contiguous().atUnsafe(i).get();
+        values->contiguousDouble().atUnsafe(i) = value.isInt32() ? value.asInt32() : PNaN;
+    }
+    array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
+    return true;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
     DeferTerminationForAWhile deferTermination(vm);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
     // An array that refuses stays as it was, and goes on failing the test for Double storage.
+    if (tryConvertPlainInt32Array(globalObject, vm, array))
+        return;
     if (hasInt32(array->indexingType()) || hasUndecided(array->indexingType()))
         array->tryMakeWritableDouble(vm);
     else if (hasContiguous(array->indexingType()))

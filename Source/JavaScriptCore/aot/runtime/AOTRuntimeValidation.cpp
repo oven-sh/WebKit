@@ -19,7 +19,6 @@
 #include "AOTNativeCallValidation.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
-#include "AOTOperandSnapshot.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeReporter.h"
@@ -30,12 +29,10 @@
 #include "AOTStubDescriptor.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
-#include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
 #include "MarkedBlockInlines.h"
-#include "MarkedSpace.h"
 #include "PreciseAllocation.h"
 #include "Reg.h"
 #include "SubspaceInlines.h"
@@ -69,9 +66,9 @@ static void dumpClassOf(PrintStream& out, JSValue found)
 }
 
 // Numbers and kinds only: what a program holds is not for a log.
-static bool holdsType(const RuntimeLayoutTable& layouts, const RuntimeType& type, JSValue held, unsigned position)
+static bool holdsType(Instance& instance, const RuntimeType& type, JSValue held, unsigned position)
 {
-    if (layouts.valueHasType(type, held))
+    if (instance.state->objects->layouts.valueHasType(type, held))
         return true;
     dataLog("AOT: number ", position, " of what the container holds is outside a type of ", type.literalStrings().size(), " texts and ", type.cellTests().size(), " tests of cells: ");
     dumpClassOf(WTF::dataFile(), held);
@@ -82,19 +79,28 @@ static bool holdsType(const RuntimeLayoutTable& layouts, const RuntimeType& type
 template<typename Collection>
 static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
 {
-    const RuntimeLayoutTable& layouts = instance.state->objects->layouts;
     JSCell* storage = collection->storage();
     typename Collection::Helper::Entry entry = 0;
     for (unsigned numberOfTestedEntries = 0; storage && numberOfTestedEntries < maxNumberOfTestedElements; ++numberOfTestedEntries) {
         auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
         if (!next.storage)
             return true;
-        if (!holdsType(layouts, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
+        if (!holdsType(instance, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
             return false;
         storage = next.storage;
         entry = next.entry + 1;
     }
     return true;
+}
+
+static bool anyProperty(VM& vm, Structure* structure, const auto& predicate)
+{
+    bool isFound = false;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        isFound = predicate(entry);
+        return !isFound;
+    });
+    return isFound;
 }
 
 // A data property under a name like "-1" costs the structure its mark and leaves true what the storage aspect says.
@@ -105,35 +111,11 @@ static bool hasOrdinaryElements(VM& vm, JSValue value)
         return false;
 
     Structure* structure = array->structure();
-    JSGlobalObject* realm = structure->realm();
-    if (structure->mayInterceptIndexedAccesses() || hasSlowPutArrayStorage(structure->indexingType()) || !structure->isStructureExtensible())
+    if (!array->canDoFastIndexedAccess() || structure->realm()->isHavingABadTime() || hasSlowPutArrayStorage(structure->indexingType()) || !structure->isStructureExtensible() || !structure->hasMonoProto())
         return false;
-    if (realm->isHavingABadTime() || !realm->arrayPrototypeChainIsSaneWatchpointSet().isStillValid())
-        return false;
-    if (!structure->hasMonoProto() || structure->storedPrototype() != realm->arrayPrototype())
-        return false;
-
-    if (!structure->hasAnyKindOfGetterSetterProperties())
-        return true;
-    bool hasAccessorUnderNumericName = false;
-    structure->forEachProperty(vm, [&](const auto& entry) {
-        hasAccessorUnderNumericName |= (entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isCanonicalNumericIndexString(entry.key());
-        return !hasAccessorUnderNumericName;
+    return !structure->hasAnyKindOfGetterSetterProperties() || !anyProperty(vm, structure, [](const auto& entry) {
+        return (entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isCanonicalNumericIndexString(entry.key());
     });
-    return !hasAccessorUnderNumericName;
-}
-
-static bool hasOwnSymbol(VM& vm, Structure* structure)
-{
-    // Adding a symbol clears this, in a dictionary too.
-    if (structure->isQuickPropertyAccessAllowedForEnumeration())
-        return false;
-    bool hasSymbol = false;
-    structure->forEachProperty(vm, [&](const auto& entry) {
-        hasSymbol = entry.key()->isSymbol();
-        return !hasSymbol;
-    });
-    return hasSymbol;
 }
 
 // The array may have thousands of names and is asked at every use, so it is asked for the few names that would count: the members of its prototypes and what built-ins probe for.
@@ -142,17 +124,19 @@ static bool shadowsLockedPrototypeChain(VM& vm, Structure* structure)
     auto hasOwn = [&](PropertyName name) {
         return isValidOffset(structure->get(vm, name));
     };
-    if (hasOwn(vm.propertyNames->then) || hasOwn(vm.propertyNames->toJSON) || hasOwnSymbol(vm, structure))
+    // Adding a symbol clears the permission, in a dictionary too.
+    bool hasOwnSymbol = !structure->isQuickPropertyAccessAllowedForEnumeration() && anyProperty(vm, structure, [](const auto& entry) {
+        return entry.key()->isSymbol();
+    });
+    if (hasOwn(vm.propertyNames->then) || hasOwn(vm.propertyNames->toJSON) || hasOwnSymbol)
         return true;
 
     for (JSObject* prototype = structure->storedPrototypeObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {
         Structure* prototypeStructure = prototype->structure();
         if (!prototypeStructure->hasImmutablePrototype() || !prototypeStructure->hasImmutableIndexedProperties() || prototypeStructure->hasNonReifiedStaticProperties())
             return true;
-        bool shadowsMember = false;
-        prototypeStructure->forEachProperty(vm, [&](const auto& entry) {
-            shadowsMember = hasOwn(entry.key());
-            return !shadowsMember;
+        bool shadowsMember = anyProperty(vm, prototypeStructure, [&](const auto& entry) {
+            return hasOwn(entry.key());
         });
         if (shadowsMember)
             return true;
@@ -173,7 +157,6 @@ static bool hasPristineNames(VM& vm, JSValue value)
     return !shadowsLockedPrototypeChain(vm, structure);
 }
 
-// Looks at no more than a fixed number of the values a large container holds.
 static bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
 {
     if (auto* map = dynamicDowncast<JSMap>(container))
@@ -185,13 +168,12 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
     if (!array || slot != Typed::ContentsSlot::Element)
         return true;
 
-    const RuntimeLayoutTable& layouts = instance.state->objects->layouts;
     uint64_t length = array->length();
     uint64_t stride = std::max<uint64_t>(1, length / maxNumberOfTestedElements);
     for (uint64_t position = 0; position < length; position += stride) {
         unsigned index = static_cast<unsigned>(position);
         JSValue element = array->tryGetIndexQuickly(index);
-        if (element && !holdsType(layouts, type, element, index))
+        if (element && !holdsType(instance, type, element, index))
             return false;
     }
     return true;
@@ -259,23 +241,17 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }
 
-namespace {
-
 struct Photograph {
     JSObject* object { nullptr };
     AbstractHeaps written;
     OperandSnapshot before;
 };
 
-} // anonymous namespace
-
 // One call of a thread is photographed at a time: it runs no other compiled code. A call that throws leaves its photographs behind, and the next one takes their places.
 static std::span<Photograph, PhotographedCall::maxOperands> photographsOfThread()
 {
-    static thread_local Photograph* photographs = nullptr;
-    if (!photographs)
-        photographs = new Photograph[PhotographedCall::maxOperands];
-    return std::span<Photograph, PhotographedCall::maxOperands>(photographs, PhotographedCall::maxOperands);
+    static thread_local auto* photographs = new std::array<Photograph, PhotographedCall::maxOperands>;
+    return *photographs;
 }
 
 void photographOperand(VM& vm, JSValue operand, AbstractHeaps written, unsigned position)
@@ -284,17 +260,8 @@ void photographOperand(VM& vm, JSValue operand, AbstractHeaps written, unsigned 
     auto photographs = photographsOfThread();
     for (Photograph& later : photographs.subspan(position))
         later.object = nullptr;
-    if (!canCapture(operand))
-        return;
-    photographs[position] = { asObject(operand), written, capture(asObject(operand)) };
-}
-
-static String describeCalleeOf(uint32_t positionAndCallee)
-{
-    uint32_t callee = positionAndCallee >> PhotographedCall::calleeShift;
-    if (callee & PhotographedCall::calleeIsStub)
-        return makeString("stub "_s, descriptorOf(static_cast<StubFamily>(callee & ~PhotographedCall::calleeIsStub)).name);
-    return nameOf(static_cast<Entry>(callee));
+    if (canCapture(operand))
+        photographs[position] = { asObject(operand), written, capture(asObject(operand)) };
 }
 
 void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndCallee, FunctionID function, Typed::ValueID value)
@@ -321,7 +288,9 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
         if (heaps.isEmpty() || written.containsAny(heaps))
             continue;
         String message = makeString("operand "_s, position, ": "_s, describe(difference), ", the call writes "_s, describeMembers(written), " through it, not "_s, describeMembers(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');
-        reportOrCrash(vm, { ValidationFailureKind::OperationWroteHeap, function, value, object }, "operation"_s, describeCalleeOf(positionAndCallee), message);
+        uint32_t callee = positionAndCallee >> PhotographedCall::calleeShift;
+        String nameOfCallee = callee & PhotographedCall::calleeIsStub ? makeString("stub "_s, descriptorOf(static_cast<StubFamily>(callee & ~PhotographedCall::calleeIsStub)).name) : String(nameOf(static_cast<Entry>(callee)));
+        reportOrCrash(vm, { ValidationFailureKind::OperationWroteHeap, function, value, object }, "operation"_s, nameOfCallee, message);
     }
 }
 
@@ -338,10 +307,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCompareOperandWithPhotograph, void
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFailedGuard, void, (Instance*, uint32_t function, uint32_t opcode, uint32_t ordinal))
 {
     static Lock lock;
-    static HashSet<uint64_t>* noted;
     Locker locker { lock };
-    if (!noted)
-        noted = new HashSet<uint64_t>;
+    static auto* noted = new HashSet<uint64_t>;
     constexpr unsigned bitsOfOrdinal = 20;
     constexpr unsigned bitsOfOpcode = 12;
     uint64_t guard = (static_cast<uint64_t>(function) << (bitsOfOpcode + bitsOfOrdinal)) | (static_cast<uint64_t>(opcode) << bitsOfOrdinal) | (ordinal & ((1u << bitsOfOrdinal) - 1));
@@ -385,12 +352,10 @@ NEVER_INLINE void OperationValidationScope::close()
     bool didEnterVM = m_mayNotEnterVM && m_vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
     bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersionsOf(m_vm) != m_collectionVersions;
-    if (didEnterVM || didCollect)
+    if (didEnterVM || didCollect) {
         dataLogLn("AOT: ", nameOf(m_entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
-    if (didEnterVM)
-        crashOnValidationFailure(m_vm, { ValidationFailureKind::OperationEnteredVM, { }, { }, { } });
-    if (didCollect)
-        crashOnValidationFailure(m_vm, { ValidationFailureKind::OperationCollected, { }, { }, { } });
+        crashOnValidationFailure(m_vm, { didEnterVM ? ValidationFailureKind::OperationEnteredVM : ValidationFailureKind::OperationCollected, { }, { }, { } });
+    }
     m_vm.didEnterVM |= m_didEnterVMBefore;
 }
 
@@ -409,17 +374,13 @@ static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* c
 
 static bool slotMayHold(State& state, const RuntimeType& type, JSValue value)
 {
-    const RuntimeLayoutTable& layouts = state.objects->layouts;
     OptionSet<PrimitiveSet> primitives = type.primitiveSet();
     JSCell* cell = value.isCell() ? value.asCell() : nullptr;
-    if (!cell || cell->isHeapBigInt())
-        return layouts.valueHasType(type, value);
-    if (cell->isString()) {
-        // To compare a rope with the literals of a type is to flatten it.
-        if (asString(cell)->isRope())
-            return primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString });
-        return layouts.valueHasType(type, value);
-    }
+    // To compare a rope with the literals of a type is to flatten it.
+    if (cell && cell->isString() && asString(cell)->isRope())
+        return primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString });
+    if (!cell || cell->isHeapBigInt() || cell->isString())
+        return state.objects->layouts.valueHasType(type, value);
     if (cell->isSymbol() && primitives.containsAny({ PrimitiveSet::Symbol, PrimitiveSet::LiteralSymbol }))
         return true;
     if (!cell->isSymbol() && !cell->isObject())

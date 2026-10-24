@@ -326,21 +326,6 @@ static void testCallSitesSiteFramesWithoutCode()
     AOT_TEST_CHECK(built.table().positionOf(index, CallSiteIndex(3)) == sourcePositionOf(third));
 }
 
-static void testCallSitesSpreadSites()
-{
-    SiteBody body = bodyWithSpreadSites(1, false);
-    BodiesImage built(3, bodies(WTF::move(body.code), bodyWithCalls(2, 2).code));
-    checkCallSites(built.image, 1, body.sites);
-    const Image& table = built.table();
-    uint32_t index = built.image.indexOf(1);
-    AOT_TEST_CHECK(table.spreadSiteAt(index, CallSiteIndex(1), 0) == CallSiteIndex(3));
-    AOT_TEST_CHECK(table.spreadSiteAt(index, CallSiteIndex(1), 1) == CallSiteIndex(4));
-    AOT_TEST_CHECK(table.spreadSiteAt(index, CallSiteIndex(2), 0) == CallSiteIndex(5));
-    AOT_TEST_CHECK(!table.spreadSiteAt(index, CallSiteIndex(1), 2));
-    AOT_TEST_CHECK(!table.spreadSiteAt(index, CallSiteIndex(3), 0));
-    AOT_TEST_CHECK(!table.spreadSiteAt(built.image.indexOf(2), CallSiteIndex(1), 0));
-}
-
 static void testCallSitesFaultAndPollSites()
 {
     CodeSketch sketch(1);
@@ -606,13 +591,6 @@ static void testPositionsSuspensionPositions()
     checkBodyPositions(bodyWithInlineFrames(1, 5, siblingFrames, frames), 4);
 }
 
-static void testPositionsSpreadItemInInlineFrame()
-{
-    SiteBody body = bodyWithSpreadSites(1, true);
-    AOT_TEST_CHECK(body.code.sites.positions[4].inlineFrame == 1);
-    checkBodyPositions(WTF::move(body), 3);
-}
-
 static void testPositionsOwnPosition()
 {
     SiteBody body = bodyWithCalls(1, 1);
@@ -667,7 +645,6 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/many-inline-frames"_s, testCallSitesManyInlineFrames },
         { "image/call-sites/site-frames"_s, testCallSitesSiteFrames },
         { "image/call-sites/site-frames-without-code"_s, testCallSitesSiteFramesWithoutCode },
-        { "image/call-sites/spread-sites"_s, testCallSitesSpreadSites },
         { "image/call-sites/fault-and-poll-sites"_s, testCallSitesFaultAndPollSites },
         { "image/call-sites/outlined-call"_s, testCallSitesOutlinedCall },
         { "image/call-sites/equal-streams-share"_s, testCallSitesEqualStreamsShare },
@@ -688,7 +665,6 @@ std::span<const NativeTest> siteTableTests()
         { "image/positions/with-inline-frames"_s, [] { checkBodyPositions(bodyWithInlineFrames(1, 1, chainedFrames, chainedFramesByCall), 5); } },
         { "image/positions/alternating-frames"_s, testPositionsAlternatingFrames },
         { "image/positions/suspension-positions"_s, testPositionsSuspensionPositions },
-        { "image/positions/spread-item-in-inline-frame"_s, testPositionsSpreadItemInInlineFrame },
         { "image/positions/own-position"_s, testPositionsOwnPosition },
         { "image/positions/many-functions"_s, testPositionsOfManyFunctions },
         { "image/positions/obfuscated"_s, testPositionsObfuscated },

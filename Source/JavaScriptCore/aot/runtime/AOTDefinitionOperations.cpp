@@ -244,7 +244,7 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
     return object->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(stored), attributes);
 }
 
-static PropertyDescriptor descriptorFromBits(JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
+static ALWAYS_INLINE PropertyDescriptor descriptorFromBits(JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     PropertyDescriptor descriptor;
     if (bits.hasEnumerable)
@@ -395,6 +395,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance* instance,
     for (uint32_t index = 0; index < count; ++index) {
         const DefinedAccessor& accessor = accessors[index];
         uint32_t accessorFlags = (getters >> index & 1 ? accessorIsGetter : 0) | (enumerable >> index & 1 ? accessorIsEnumerable : 0);
+        if (UniquedStringImpl* name = compiledObject && accessorFlags & accessorIsGetter ? atomOfKey(JSValue::decode(accessor.key)) : nullptr) {
+            unsigned attributes = PropertyAttribute::Accessor | (accessorFlags & accessorIsEnumerable ? PropertyAttribute::None : PropertyAttribute::DontEnum);
+            if (compiledObject->tryDefineAbsentGetterInSlot(vm, globalObject, name, asObject(JSValue::decode(accessor.function)), attributes))
+                continue;
+        }
         defineAccessor(globalObject, object, JSValue::decode(accessor.key), JSValue::decode(accessor.function), accessorFlags);
         OPERATION_RETURN_IF_EXCEPTION(scope);
     }

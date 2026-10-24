@@ -11,9 +11,9 @@
 #include "AOTBindGlobalNames.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInt32Conversions.h"
+#include "AOTProgramPasses.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResolveBuiltinsInternal.h"
-#include "AOTResolveCalls.h"
 #include "AOTSelectTypedResultsInternal.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
 #include <bit>

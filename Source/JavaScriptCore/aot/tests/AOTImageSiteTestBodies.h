@@ -123,29 +123,6 @@ inline SiteBody bodyWithInlineFrames(uint32_t function, unsigned numberOfSuspens
     return finishBody(sketch, WTF::move(expected));
 }
 
-inline SiteBody bodyWithSpreadSites(uint32_t function, bool hasInlineFrame)
-{
-    CodeSketch sketch(function);
-    startFramedBody(sketch, function);
-    SiteDescription& sites = sketch.code().sites;
-    if (hasInlineFrame) {
-        OptionalIndex callSite = sketch.addSite(0, 20, 2);
-        sites.inlineFrames.append(InlineFrame { 0, 0, 0, false, false });
-        sites.inlineFrames.append(InlineFrame { 0, *callSite, sketch.calleeIndex(function + 1), false, false });
-        sites.numberOfSitesWithoutCode = 1;
-    }
-    Vector<ExpectedSite> expected;
-    appendCall(sketch, expected, 0);
-    appendCall(sketch, expected, 1);
-    OptionalIndex firstItem = sketch.addSite(hasInlineFrame ? 1 : 0, 70, 3);
-    OptionalIndex secondItem = sketch.addSite(0, 40, 4);
-    OptionalIndex thirdItem = sketch.addSite(0, 90, 5);
-    sites.spreadSites.append(SpreadSite { expected[0].number, 0, *firstItem });
-    sites.spreadSites.append(SpreadSite { expected[0].number, 1, *secondItem });
-    sites.spreadSites.append(SpreadSite { expected[1].number, 0, *thirdItem });
-    return finishBody(sketch, WTF::move(expected));
-}
-
 inline SitePosition positionAt(uint32_t line, uint32_t column, ModuleID module = ModuleID(0u))
 {
     return { line, column, module, 0, 0 };

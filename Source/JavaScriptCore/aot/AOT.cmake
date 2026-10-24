@@ -64,7 +64,9 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
 
 # Written by aot-source-lists.ts: what Bun, a JavaScriptCore header outside aot/ or an exported header of the built-ins table includes, and what those include.
 set(JavaScriptCore_AOT_EXPORTED_HEADERS
+    aot/builtins/AOTBuiltinWords.h
     aot/codegen/AOTArrivalSiteNumbers.h
+    aot/codegen/AOTCodegenScratchWords.h
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
@@ -93,6 +95,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTLayoutData.h
     aot/object/AOTObject.h
     aot/object/AOTObjectVisiting.h
+    aot/object/AOTObjectWords.h
     aot/object/AOTPagedBitSet.h
     aot/object/AOTProgramTables.h
     aot/object/AOTPropertyList.h
@@ -112,20 +115,25 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTCompiledCaller.h
     aot/runtime/AOTCompiledFrame.h
     aot/runtime/AOTCompiledFrameExit.h
+    aot/runtime/AOTCoroutineWords.h
     aot/runtime/AOTFunctionDescription.h
     aot/runtime/AOTGenerator.h
     aot/runtime/AOTHeapCellClasses.h
     aot/runtime/AOTHeapCellVisits.h
     aot/runtime/AOTHeapHooks.h
     aot/runtime/AOTHost.h
+    aot/runtime/AOTInstance.h
     aot/runtime/AOTInstanceLayout.h
     aot/runtime/AOTJSONHooks.h
+    aot/runtime/AOTJSONWords.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
+    aot/runtime/AOTModuleWords.h
     aot/runtime/AOTOperationData.h
     aot/runtime/AOTPropertyCachesStringKeys.h
+    aot/runtime/AOTPropertyCachesWords.h
     aot/runtime/AOTRealmStartup.h
     aot/runtime/AOTRemovableFeature.h
     aot/runtime/AOTRuntimeCounters.h
@@ -138,6 +146,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTSavedFrameMap.h
     aot/runtime/AOTShownFrameFilter.h
     aot/runtime/AOTStackTrace.h
+    aot/runtime/AOTState.h
     aot/runtime/AOTStringBuilderStorage.h
     aot/runtime/AOTStringBuilderWords.h
     aot/runtime/AOTTraceFrame.h
@@ -149,7 +158,9 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/stubs/AOTStubKey.h
     aot/stubs/AOTStubLeafConvention.h
     aot/stubs/AOTStubRegisters.h
+    aot/stubs/AOTStubWords.h
     aot/stubs/AOTStubsArrayFamilies.def
+    aot/stubs/AOTStubsArrayWords.h
     aot/stubs/AOTStubsCallFamilies.def
     aot/stubs/AOTStubsCoroutineFamilies.def
     aot/stubs/AOTStubsPropertyFamilies.def

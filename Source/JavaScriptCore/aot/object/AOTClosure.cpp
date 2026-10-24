@@ -133,11 +133,6 @@ void Closure::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         analyzeCaptures(cell, closure->captures(), closure->numberOfReferences(), analyzer);
 }
 
-State& Closure::state() const
-{
-    return *Instance::of(structure()->realm())->state;
-}
-
 JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

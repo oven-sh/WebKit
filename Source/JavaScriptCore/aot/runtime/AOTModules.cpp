@@ -17,7 +17,6 @@
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleNamespace.h"
-#include "AOTModuleStarExports.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
@@ -179,25 +178,31 @@ void Modules::setStatus(ModuleID module, ModuleStatus status)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ModuleRecord* Modules::ensureRecord(ModuleID module)
+ModuleRecord* Modules::ensureRecordWithoutStatus(ModuleID module)
 {
-    // While the body of a module with a record runs, the table has the status.
     if (ModuleRecord* record = m_records.get(module))
         return record;
 
-    VM& vm = *m_instance.vm;
-    const ModuleData& moduleData = data(module);
+    ModuleRecord* record = ModuleRecord::create(m_instance, m_instance.vm->aotState().moduleRecordStructure.get(), loader(), moduleKey(module), module);
+    record->setHasTLA(data(module).hasTopLevelAwait());
+    Locker locker { m_state.caches->lock() };
+    m_records.add(module, record);
+    m_storedReferences.recordAll();
+    return record;
+}
+
+ModuleRecord* Modules::ensureRecord(ModuleID module)
+{
+    ModuleRecord* record = ensureRecordWithoutStatus(module);
+    // While the body of a module with a record runs, the table has the status.
+    if (record->holdsStatus())
+        return record;
+
     ModuleStatus moduleStatus = status(module);
-    ModuleRecord* record = ModuleRecord::create(m_instance, vm.aotState().moduleRecordStructure.get(), loader(), moduleKey(module), module);
-    record->setHasTLA(moduleData.hasTopLevelAwait());
-    record->setStatus(moduleStatus == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode() ? CyclicModuleRecord::Status::New : recordStatusFor(moduleStatus));
+    record->setHoldsStatus();
+    record->setStatus(moduleStatus == ModuleStatus::Unlinked && data(module).reachesUncompiledCode() ? CyclicModuleRecord::Status::New : recordStatusFor(moduleStatus));
     if (moduleStatus == ModuleStatus::Evaluated)
-        record->setCycleRoot(vm, record);
-    {
-        Locker locker { m_state.caches->lock() };
-        m_records.add(module, record);
-        m_storedReferences.recordAll();
-    }
+        record->setCycleRoot(*m_instance.vm, record);
     setStoredStatus(module, StoredModuleStatus::InRecord);
     return record;
 }
@@ -371,14 +376,14 @@ JSValue Modules::capturedValue(ModuleID module, const Identifier& name)
     if (!captured && loaded.capturedFields)
         return capturedField(loaded, name.impl());
     RELEASE_ASSERT(captured);
-    JSValue value = StarExportResolver::storedValue(realm, captured, name);
+    JSValue value = storedValue(realm, captured, name);
     RETURN_IF_EXCEPTION(scope, { });
     if (value != JSValue(captured))
         return value;
     value = loaded.deferredExportsSource->get(realm, name);
     RETURN_IF_EXCEPTION(scope, { });
     // The getter may have come back here and filled the export. A variable filled in the meantime holds that value.
-    JSValue filledMeanwhile = StarExportResolver::storedValue(realm, captured, name);
+    JSValue filledMeanwhile = storedValue(realm, captured, name);
     if (filledMeanwhile != JSValue(captured))
         return filledMeanwhile;
     captured->putDirectMayBeIndex(realm, name, value);
@@ -395,7 +400,7 @@ bool Modules::hasCapturedExport(ModuleID module, const Identifier& name)
     if (!loaded.capturedExports && loaded.capturedFields)
         return !!capturedField(loaded, name.impl());
     RELEASE_ASSERT(loaded.capturedExports);
-    return !!StarExportResolver::storedValue(m_instance.globalObject, loaded.capturedExports, name);
+    return !!storedValue(m_instance.globalObject, loaded.capturedExports, name);
 }
 
 bool Modules::isExportAmbiguous(ModuleID module, unsigned index) const
@@ -792,19 +797,25 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
         return record;
 
     OrderedHashSet<UniquedStringImpl*> keys;
-    ModuleRequestWalk walk(m_table, module);
-    for (ModuleRequestWalk::Step step = walk.next(); step.kind != ModuleRequestWalk::StepKind::Done; step = walk.next()) {
-        if (step.kind == ModuleRequestWalk::StepKind::Leave)
+    BitVector visited(m_table.size());
+    visited.quickSet(module.index());
+    Vector<std::span<const ModuleRequestData>, 16> path { m_table.requests(module) };
+    while (!path.isEmpty()) {
+        std::span<const ModuleRequestData>& requests = path.last();
+        if (requests.empty()) {
+            path.removeLast();
             continue;
-        ModuleID target = step.request->targetModule();
+        }
+        ModuleID target = requests.front().targetModule();
+        requests = requests.subspan(1);
         if (!data(target).reachesUncompiledCode())
             continue;
         if (data(target).isUncompiledCode()) {
             const Identifier& key = resolvedKey(target);
             RETURN_IF_EXCEPTION(scope, nullptr);
             keys.add(key.impl());
-        } else if (!walk.hasVisited(target) && status(target) == ModuleStatus::Unlinked)
-            walk.enter(target);
+        } else if (status(target) == ModuleStatus::Unlinked && !visited.quickSet(target.index()))
+            path.append(m_table.requests(target));
     }
     for (UniquedStringImpl* key : keys)
         record->appendRequestedModule(Identifier::fromUid(vm, key), nullptr, ModulePhase::Evaluation);
@@ -837,6 +848,15 @@ AbstractModuleRecord* Modules::uncompiledRecord(ModuleID external)
         return nullptr;
     }
     loaded.uncompiledRecord.set(*this, record);
+    return record;
+}
+
+AbstractModuleRecord* Modules::recordForResolution(ModuleID module)
+{
+    if (data(module).isUncompiledCode())
+        return uncompiledRecord(module);
+    ModuleRecord* record = ensureRecordWithoutStatus(module);
+    record->retain();
     return record;
 }
 
@@ -1295,13 +1315,29 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
 }
 
-auto ModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier& exportName) -> Resolution
+void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
+    Modules& modules = this->modules();
+    if (!modules.data(m_module).hasDynamicStarExport())
+        return;
+    for (const ModuleRequestData& request : modules.table().requests(m_module)) {
+        if (!request.isDynamicStarExport)
+            continue;
+        AbstractModuleRecord* target = modules.recordForResolution(request.targetModule());
+        RETURN_IF_EXCEPTION(scope, void());
+        targets.append(target);
+    }
+}
+
+auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifier& exportName, StarExportTargets& starTargets) -> Resolution
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Modules& modules = this->modules();
     const ModuleData& data = modules.data(m_module);
-    Resolution absent = exportName == vm.propertyNames->defaultKeyword ? Resolution::error() : Resolution::notFound();
+    bool isDefault = exportName == vm.propertyNames->defaultKeyword;
+    Resolution absent = isDefault ? Resolution::error() : Resolution::notFound();
 
     retain();
     if (data.capturesExports()) {
@@ -1310,47 +1346,25 @@ auto ModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier&
         return hasExport ? Resolution { Resolution::Type::Resolved, this, exportName } : absent;
     }
 
-    // An uncompiled module starts another search with a resolveSet of its own, so a circular request is found here.
+    // The search below for an indirect export has a resolveSet of its own, so a circular request is found here.
     if (m_resolveSet.contains(exportName.impl()))
         return Resolution::notFound();
-    m_resolveSet.append(exportName.impl());
-    auto removeFromResolveSet = makeScopeExit([&] {
-        m_resolveSet.removeLast();
-    });
 
     std::optional<unsigned> index = modules.table().findExport(m_module, exportName.impl());
     const ModuleExportData* entry = index ? &modules.table().exports(m_module)[*index] : nullptr;
-    StarExportResolver resolver(modules);
-    const StarCandidate* candidate = nullptr;
-    if (data.hasDynamicStarExport() && (!entry || entry->isFromStarExport)) {
-        candidate = resolver.find(m_module, exportName.impl());
+    if (!isDefault && (!entry || entry->isFromStarExport)) {
+        appendDynamicStarTargets(starTargets);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
-        if (candidate && candidate->isAmbiguous)
-            return Resolution::ambiguous();
     }
-
-    if (!entry) {
-        if (!candidate)
-            return absent;
-        if (auto* uncompiled = std::get_if<UncompiledBinding>(&candidate->binding))
-            return { Resolution::Type::Resolved, uncompiled->record, Identifier::fromUid(vm, uncompiled->localName) };
-        return { Resolution::Type::Resolved, this, exportName };
-    }
+    if (!entry)
+        return absent;
 
     // A Resolution has no phase, and its readers take *namespace* as the namespace object of phase Evaluation.
     if (entry->kind() == ModuleExportKind::Variable || (entry->kind() == ModuleExportKind::Namespace && entry->isDeferred))
         return { Resolution::Type::Resolved, this, exportName, *index };
     if (entry->kind() == ModuleExportKind::Namespace) {
-        ModuleID target = entry->targetModule();
-        AbstractModuleRecord* record = nullptr;
-        if (modules.data(target).isUncompiledCode()) {
-            record = modules.uncompiledRecord(target);
-            RETURN_IF_EXCEPTION(scope, Resolution::error());
-        } else {
-            ModuleRecord* compiled = modules.ensureRecord(target);
-            compiled->retain();
-            record = compiled;
-        }
+        AbstractModuleRecord* record = modules.recordForResolution(entry->targetModule());
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
         return { Resolution::Type::Resolved, record, vm.propertyNames->starNamespacePrivateName };
     }
     RELEASE_ASSERT(entry->kind() == ModuleExportKind::Indirect);
@@ -1361,33 +1375,26 @@ auto ModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier&
         throwException(globalObject, scope, createModuleGraphTooDeepError(globalObject));
         return Resolution::error();
     }
+    m_resolveSet.append(exportName.impl());
+    auto removeFromResolveSet = makeScopeExit([&] {
+        m_resolveSet.removeLast();
+    });
     RELEASE_AND_RETURN(scope, record->resolveExport(globalObject, modules.identifier(indirectExport.importName)));
 }
 
-void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vector<Identifier>& names)
+void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vector<Identifier>& names, StarExportTargets& starTargets)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Modules& modules = this->modules();
-    const ModuleData& data = modules.data(m_module);
 
-    if (!data.hasDynamicStarExport() && !data.capturesExports()) {
-        for (const ModuleExportData& entry : modules.table().exports(m_module))
-            names.append(modules.identifier(entry.name));
-        return;
+    if (modules.data(m_module).capturesExports()) {
+        RELEASE_AND_RETURN(scope, modules.forEachCapturedExport(m_module, [&](const Identifier& name, JSValue) {
+            names.append(name);
+        }));
     }
-
-    // An uncompiled module starts another walk with an exportStarSet of its own, so an export * cycle is found here.
-    if (m_isInExportStarSet)
-        return;
-    SetForScope exportStarSetScope(m_isInExportStarSet, true);
-
-    StarExportResolver resolver(modules);
-    const StarCandidates* candidates = resolver.candidatesOf(m_module);
-    RETURN_IF_EXCEPTION(scope, void());
-    // An ambiguous name is listed, as in GetExportedNames: it is ambiguous in every module that has export * from this one.
-    for (auto& name : candidates->keys())
-        names.append(Identifier::fromUid(vm, name.get()));
+    for (const ModuleExportData& entry : modules.table().exports(m_module))
+        names.append(modules.identifier(entry.name));
+    RELEASE_AND_RETURN(scope, appendDynamicStarTargets(starTargets));
 }
 
 JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier& exportName, std::optional<unsigned> exportIndex)
@@ -1412,36 +1419,42 @@ JSObject* ModuleRecord::moduleNamespaceObject(JSGlobalObject*, ModulePhase phase
     return modules().moduleNamespace(m_module, phase);
 }
 
+// Each importer of a host value has an External record of its own. The value says which of them are one module.
+static const void* identityOfModule(const Modules& modules, ModuleID module)
+{
+    JSValue value = modules.data(module).isHostValue() ? modules.value(module) : JSValue();
+    return value && value.isObject() ? static_cast<const void*>(value.asCell()) : &modules.data(module);
+}
+
+// The variable, or the module and the name in it. A deferred namespace object has no name.
+using IdentityOfBinding = std::tuple<std::optional<SlotData>, const void*, UniquedStringImpl*>;
+
+static IdentityOfBinding identityOfBinding(const Modules& modules, const AbstractModuleRecord::Resolution& resolution)
+{
+    ModuleID module = uncheckedDowncast<ModuleRecord>(resolution.moduleRecord)->module();
+    UniquedStringImpl* name = resolution.localName.impl();
+    if (resolution.compiledExportIndex) {
+        const ModuleExportData& entry = modules.table().exports(module)[*resolution.compiledExportIndex];
+        if (entry.kind() == ModuleExportKind::Variable)
+            return { entry.variable, nullptr, nullptr };
+        RELEASE_ASSERT(entry.kind() == ModuleExportKind::Namespace && entry.isDeferred);
+        return { std::nullopt, identityOfModule(modules, entry.targetModule()), nullptr };
+    }
+    // export { x } from "./c.cjs" and export * from "./c.cjs" end at one binding. An export entry names it by the variable that holds the captured value.
+    for (const SyntheticExportData& syntheticExport : modules.table().syntheticExports(module)) {
+        if (syntheticExport.hasVariable && modules.identifier(syntheticExport.name).impl() == name)
+            return { syntheticExport.variable, nullptr, nullptr };
+    }
+    return { std::nullopt, identityOfModule(modules, module), name };
+}
+
 bool ModuleRecord::isSameBinding(const Resolution& first, const Resolution& second)
 {
     auto* firstRecord = uncheckedDowncast<ModuleRecord>(first.moduleRecord);
-    VM& vm = firstRecord->vm();
-    // Resolution::isSameBinding() has no caller that checks for an exception.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    const Identifier& starNamespace = vm.propertyNames->starNamespacePrivateName;
-    if (first.localName == starNamespace || second.localName == starNamespace)
-        return false;
     if (&firstRecord->m_instance != &uncheckedDowncast<ModuleRecord>(second.moduleRecord)->m_instance)
         return false;
-
     Modules& modules = firstRecord->modules();
-    StarExportResolver resolver(modules);
-    auto bindingOf = [&](const Resolution& resolution) -> std::optional<StarBinding> {
-        ModuleID module = uncheckedDowncast<ModuleRecord>(resolution.moduleRecord)->module();
-        if (resolution.compiledExportIndex)
-            return resolver.bindingOf(modules.table().exports(module)[*resolution.compiledExportIndex]);
-        const StarCandidate* candidate = resolver.find(module, resolution.localName.impl());
-        return candidate ? std::optional(candidate->binding) : std::nullopt;
-    };
-    std::optional<StarBinding> firstBinding = bindingOf(first);
-    if (!scope.exception()) [[likely]] {
-        std::optional<StarBinding> secondBinding = bindingOf(second);
-        if (!scope.exception()) [[likely]]
-            return firstBinding && secondBinding && *firstBinding == *secondBinding;
-    }
-    scope.clearExceptionExceptTermination();
-    return false;
+    return identityOfBinding(modules, first) == identityOfBinding(modules, second);
 }
 
 void ModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen)
@@ -1581,12 +1594,12 @@ JSValue ModuleNamespace::readDynamicExport(JSGlobalObject* globalObject, Propert
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Identifier identifier = Identifier::fromUid(globalObject->vm(), name.uid());
     if (JSObject* liveSources = m_liveSources.get()) {
-        JSValue source = StarExportResolver::storedValue(globalObject, liveSources, identifier);
+        JSValue source = Modules::storedValue(globalObject, liveSources, identifier);
         RETURN_IF_EXCEPTION(scope, { });
         if (source)
             RELEASE_AND_RETURN(scope, asObject(source)->get(globalObject, name));
     }
-    if (JSValue captured = StarExportResolver::storedValue(globalObject, m_capturedValues.get(), identifier))
+    if (JSValue captured = Modules::storedValue(globalObject, m_capturedValues.get(), identifier))
         return captured;
     // A deferred export: the host makes the value when somebody first asks for it, as it does in plain Bun, and the module keeps it from then on.
     RELEASE_AND_RETURN(scope, modules().capturedValue(m_module, identifier));

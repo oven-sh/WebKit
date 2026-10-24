@@ -47,11 +47,6 @@ struct SiteReference {
     bool isFirstRead { false };
 };
 
-struct RenumberedSites {
-    Vector<RecordedSite> sites;
-    size_t numberOfSitesBeforeItems { 0 };
-};
-
 // B3 may copy a site, and each copy has an edge to a landing pad of its own. The copies record their landing pads in the order in which their code is emitted.
 class LandingPadsOfCopies {
 public:
@@ -167,11 +162,9 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
     return references;
 }
 
-static RenumberedSites renumberSites(const CodeRecords& records, LinkBuffer& linkBuffer, std::span<const SiteReference> references, SiteDescription& sites)
+static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer& linkBuffer, std::span<const SiteReference> references, SiteDescription& sites)
 {
     const Vector<RecordedSite>& recorded = records.sites.positions;
-    const Vector<SpreadSite>& itemSites = records.sites.itemSites;
-    ASSERT(std::ranges::is_sorted(itemSites, { }, &SpreadSite::callSite));
     LandingPadsOfCopies landingPads(records.exceptions, recorded.size(), references);
     auto recordOf = [&](uint32_t recordedNumber) -> const RecordedSite& {
         RELEASE_ASSERT(recordedNumber && recordedNumber <= recorded.size());
@@ -188,32 +181,24 @@ static RenumberedSites renumberSites(const CodeRecords& records, LinkBuffer& lin
         return a && b ? a->landingPad == b->landingPad && a->type == b->type : a == b;
     };
 
-    RenumberedSites result;
-    result.sites.reserveInitialCapacity(records.sites.numberOfSitesWithoutCode + references.size() + itemSites.size());
-    result.sites.append(recorded.span().first(records.sites.numberOfSitesWithoutCode));
+    Vector<RecordedSite> result;
+    result.reserveInitialCapacity(records.sites.numberOfSitesWithoutCode + references.size());
+    result.append(recorded.span().first(records.sites.numberOfSitesWithoutCode));
     for (const SiteReference& reference : references) {
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        auto firstItem = std::ranges::lower_bound(itemSites, recordedNumber, { }, &SpreadSite::callSite);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall && (firstItem == itemSites.end() || firstItem->callSite != recordedNumber);
+        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
-            *reference.site = result.sites.size();
+            *reference.site = result.size();
             continue;
         }
-        result.sites.append(record);
-        uint32_t number = result.sites.size();
+        result.append(record);
+        uint32_t number = result.size();
         *reference.site = number;
         if (landingPad)
             sites.handlers.append({ number, linkBuffer.offsetOf(*records.exceptions.landingPads[landingPad->landingPad]), landingPad->type });
-        for (auto entry = firstItem; entry != itemSites.end() && entry->callSite == recordedNumber; ++entry)
-            sites.spreadSites.append({ number, entry->item, entry->site });
         last = saysOnlyWhereItIs ? LastSite { &record, landingPad } : LastSite { };
-    }
-    result.numberOfSitesBeforeItems = result.sites.size();
-    for (SpreadSite& entry : sites.spreadSites) {
-        result.sites.append(recordOf(entry.site));
-        entry.site = result.sites.size();
     }
     return result;
 }
@@ -284,28 +269,26 @@ static ShownFunctions findShownFunctions(const DescribedFunction& described)
     return shownFunctions;
 }
 
-static Vector<SitePosition> describePositions(const DescribedFunction& described, const RenumberedSites& renumbered)
+static Vector<SitePosition> describePositions(const DescribedFunction& described, const Vector<RecordedSite>& renumbered)
 {
     const Program& program = described.program;
     ShownFunctions shownFunctions = findShownFunctions(described);
     Vector<SitePosition> positions;
-    positions.reserveInitialCapacity(renumbered.sites.size() + 1);
+    positions.reserveInitialCapacity(renumbered.size() + 1);
     positions.append(positionIn(program, shownFunctions[0], program.at(shownFunctions[0].id).position, 0));
-    for (size_t i = 0; i < renumbered.sites.size(); ++i) {
-        Origin origin = renumbered.sites[i].origin;
-        positions.append(positionIn(program, shownFunctions[origin.inlineFrame], origin.position, i >= renumbered.numberOfSitesBeforeItems ? 0 : origin.inlineFrame));
-    }
+    for (const RecordedSite& site : renumbered)
+        positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
     return positions;
 }
 
-static Vector<FlaggedSite> collectFlaggedSites(const RenumberedSites& renumbered, uint32_t numberOfSitesWithoutCode)
+static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renumbered, uint32_t numberOfSitesWithoutCode)
 {
     Vector<FlaggedSite> flaggedSites;
-    for (uint32_t i = numberOfSitesWithoutCode; i < renumbered.sites.size(); ++i) {
+    for (uint32_t i = numberOfSitesWithoutCode; i < renumbered.size(); ++i) {
         OptionSet<SiteFlag> flags;
-        if (renumbered.sites[i].constructs)
+        if (renumbered[i].constructs)
             flags.add(SiteFlag::Constructs);
-        if (renumbered.sites[i].isTailCall)
+        if (renumbered[i].isTailCall)
             flags.add(SiteFlag::IsTailCall);
         if (!flags.isEmpty())
             flaggedSites.append({ i + 1, flags });
@@ -348,7 +331,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     AOT::sort(sites.pollSites, { }, &PollSite::offset);
 
     Vector<SiteReference, 32> references = collectSiteReferences(body, sites);
-    RenumberedSites renumbered = renumberSites(records, linkBuffer, references.span(), sites);
+    Vector<RecordedSite> renumbered = renumberSites(records, linkBuffer, references.span(), sites);
     sites.positions = describePositions(described, renumbered);
     sites.flaggedSites = collectFlaggedSites(renumbered, sites.numberOfSitesWithoutCode);
     // No walk of the stack can stand in a body without a site that has code, so nobody asks which functions it took in.

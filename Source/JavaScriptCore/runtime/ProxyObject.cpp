@@ -37,6 +37,7 @@
 #include <wtf/text/MakeString.h>
 
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 
 // Note that we use NO_TAIL_CALLS() throughout this file because we rely on the machine stack
 // growing larger for throwing OOM errors for when we have an effectively cyclic prototype chain.

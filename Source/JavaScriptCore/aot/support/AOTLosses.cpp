@@ -11,6 +11,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
+#include "AOTWireEngineColumns.h"
 #include <algorithm>
 #include <span>
 #include <tuple>
@@ -21,44 +22,20 @@
 
 namespace JSC { namespace AOT {
 
-template<typename Reason>
-static Reason memberAt(uint32_t word)
-{
-    RELEASE_ASSERT(word < numberOfEnumerators<Reason>);
-    return static_cast<Reason>(word);
-}
-
 DeclineReason decodeDeclineReason(DeclineKind kind, uint32_t word)
 {
-    switch (kind) {
-    case DeclineKind::HotCallNotResolved:
-        return memberAt<Wire::CallDeclineReason>(word);
-    case DeclineKind::GeneratorLoopNotFused:
-        return memberAt<Wire::GeneratorFusionDeclineReason>(word);
-    case DeclineKind::ArrayChainNotFused:
-        return memberAt<Wire::ArrayChainDeclineReason>(word);
-    case DeclineKind::StringBuilderNotCreated:
-        return memberAt<Wire::StringBuilderDeclineReason>(word);
-    case DeclineKind::AllocationNotSunk:
-        RELEASE_ASSERT(!(word >> numberOfEnumerators<AllocationEscapeReason>));
-        return OptionSet<AllocationEscapeReason>::fromRaw(word);
-    case DeclineKind::TypedResultNotSelected:
-        return memberAt<Wire::TypedResultDeclineReason>(word);
-    case DeclineKind::LoopNotVersioned:
-    case DeclineKind::LoopBoundNotClamped:
-        return memberAt<Wire::LoopDeclineReason>(word);
-    case DeclineKind::ResultNodeInterpreted:
-        return memberAt<Wire::InterpretedCause>(word);
-    case DeclineKind::Unknown:
-    case DeclineKind::HotCallNotInlined:
-    case DeclineKind::StringBuildersNotJoined:
-    case DeclineKind::IterationNotExpandedByClass:
-    case DeclineKind::StretchNotGuarded:
-    case DeclineKind::GenericVersionNotCreated:
-        RELEASE_ASSERT(!word);
-        return std::monostate { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return Wire::withReasonOf(kind, [&]<typename Reason>() -> DeclineReason {
+        if constexpr (std::is_void_v<Reason>) {
+            RELEASE_ASSERT(!word);
+            return std::monostate { };
+        } else if constexpr (isFlagWord<Reason>) {
+            RELEASE_ASSERT(!(word >> numberOfEnumerators<Reason>));
+            return OptionSet<Reason>::fromRaw(word);
+        } else {
+            RELEASE_ASSERT(word < numberOfEnumerators<Reason>);
+            return static_cast<Reason>(word);
+        }
+    });
 }
 
 uint32_t encodeDeclineReason(DeclineKind kind, const DeclineReason& reason)
@@ -148,27 +125,6 @@ static auto declineOrderKey(const Wire::DeclineRecord& decline)
 
 static_assert(sizeof(Wire::DeclineRecord) == 8 * sizeof(uint32_t), "declineOrderKey has to compare every member");
 
-static unsigned rankOf(AllocationOutcome outcome)
-{
-    switch (outcome) {
-    case AllocationOutcome::Unknown:
-        return 0;
-    case AllocationOutcome::Removed:
-        return 1;
-    case AllocationOutcome::Frame:
-        return 2;
-    case AllocationOutcome::FrameUntilMaterialized:
-        return 3;
-    case AllocationOutcome::Deferred:
-        return 4;
-    case AllocationOutcome::Slim:
-        return 5;
-    case AllocationOutcome::Heap:
-        return 6;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static auto remarkOrderKey(const AllocationRemark& remark)
 {
     const auto& [site, location, outcome, cause, forcedBy, forcingOpcode, reasons, limit, copies] = remark;
@@ -178,25 +134,9 @@ static auto remarkOrderKey(const AllocationRemark& remark)
     };
 }
 
-static bool refinesHeapOutcome(AllocationOutcome outcome)
-{
-    switch (outcome) {
-    case AllocationOutcome::Deferred:
-    case AllocationOutcome::Slim:
-        return true;
-    case AllocationOutcome::Unknown:
-    case AllocationOutcome::Removed:
-    case AllocationOutcome::Frame:
-    case AllocationOutcome::FrameUntilMaterialized:
-    case AllocationOutcome::Heap:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isOnHeap(AllocationOutcome outcome)
 {
-    return outcome == AllocationOutcome::Heap || refinesHeapOutcome(outcome);
+    return outcome == AllocationOutcome::Heap || refinesHeapOf(outcome);
 }
 
 static bool haveSameStorage(AllocationOutcome a, AllocationOutcome b)
@@ -217,7 +157,7 @@ static AllocationRemark mergeCopiesOfSite(std::span<const AllocationRemark> wors
             merged.copies = saturatingSum<uint32_t>(merged.copies, copy.copies);
         if (copy.outcome == AllocationOutcome::Heap)
             ++numberOfHeapCopies;
-        if (!refinesHeapOutcome(copy.outcome))
+        if (!refinesHeapOf(copy.outcome))
             continue;
         ++numberOfRefinedCopies;
         if (!worstRefinement)

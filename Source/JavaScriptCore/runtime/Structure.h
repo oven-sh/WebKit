@@ -768,11 +768,6 @@ public:
         return OBJECT_OFFSETOF(Structure, m_previousOrRareData);
     }
 
-    static constexpr ptrdiff_t variantOffset()
-    {
-        return OBJECT_OFFSETOF(Structure, m_structureVariant);
-    }
-
     static constexpr ptrdiff_t bitFieldOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_bitField);

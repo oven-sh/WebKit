@@ -27,6 +27,7 @@ struct AddedEffects;
 class BorrowedParameters;
 class PassRunner;
 
+enum class BodiesAreChanged : uint8_t { Anyhow, ThroughEditors };
 enum class EffectSummariesFor : uint8_t { Reader, Nobody };
 enum class HeatFor : uint8_t;
 
@@ -84,8 +85,7 @@ public:
     // Program::bodyIndex() while this lives.
     BodyIndex& bodyIndex() { return *m_bodyIndex; }
     // Somebody is about to change bodies without an editor, and calls invalidate() when that is done.
-    void willChangeBodiesWithoutEditor();
-    void willChangeBodiesThroughOwnEditors();
+    void willChangeBodies(BodiesAreChanged);
 
     // Anything in the program may have changed.
     void invalidate(OptionSet<ProgramResult>);

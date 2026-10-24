@@ -156,6 +156,8 @@ struct AssignmentPlan {
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
     bool readsOutOfLineFields { false };
+    // In a row: runs in which a value has left its slot.
+    uint8_t numberOfRunsInVain { 0 };
     std::optional<uint32_t> orderWordBeforeRun { };
     uint32_t orderWordAfterRun { 0 };
     uint64_t granuleBitsFilled { 0 };

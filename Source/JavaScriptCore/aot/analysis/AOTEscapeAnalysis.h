@@ -194,8 +194,6 @@ public:
         return object.index() < m_objectsRenewedAtMakers.size() ? m_objectsRenewedAtMakers[object.index()] : m_noObjects;
     }
 
-    // The objects are numbered in the reverse post order of the blocks and in the order of their lists, and the uses are listed in that order. Neither changes with the numbers.
-    void didRenumber(const Renumbering&);
     // Types and expected types have changed, and nothing else. Answers whether the solver would be told all that it was told: then it would find what it has found.
     bool didRetypeValues();
 

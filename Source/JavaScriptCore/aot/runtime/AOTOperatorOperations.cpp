@@ -34,6 +34,28 @@ namespace JSC { namespace AOT {
         OPERATION_RETURN(scope, result); \
     }
 
+#define AOT_DEFINE_NUMERIC_BINARY_OPERATION(name, function, bigIntFunction) \
+    JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    { \
+        AOT_OPERATION_BEGIN(instance, Entry::name); \
+        JSValue left = JSValue::decode(encodedLeft); \
+        JSValue right = JSValue::decode(encodedRight); \
+        if (left.isHeapBigInt() && right.isHeapBigInt()) \
+            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bigIntFunction(globalObject, left.asHeapBigInt(), right.asHeapBigInt()))); \
+        OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
+    }
+
+#define AOT_DEFINE_COMPARISON_OPERATION(name, ofHeapBigInts, result) \
+    JSC_DEFINE_JIT_OPERATION(name, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
+    { \
+        AOT_OPERATION_BEGIN(instance, Entry::name); \
+        JSValue left = JSValue::decode(encodedLeft); \
+        JSValue right = JSValue::decode(encodedRight); \
+        if (left.isHeapBigInt() && right.isHeapBigInt()) \
+            OPERATION_RETURN(scope, JSBigInt::compare(left.asHeapBigInt(), right.asHeapBigInt()) ofHeapBigInts); \
+        OPERATION_RETURN(scope, result); \
+    }
+
 #define AOT_DEFINE_UNARY_OPERATION(name, type, result) \
     JSC_DEFINE_JIT_OPERATION(name, type, (Instance* instance, EncodedJSValue encodedOperand)) \
     { \
@@ -47,6 +69,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueAdd);
     JSValue left = JSValue::decode(encodedLeft);
     JSValue right = JSValue::decode(encodedRight);
+    if (left.isHeapBigInt() && right.isHeapBigInt())
+        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, left.asHeapBigInt(), right.asHeapBigInt())));
     if (left.isString() && right.isInt32())
         OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, asString(left), int32ToString(vm, right.asInt32(), 10))));
     if (left.isInt32() && right.isString())
@@ -54,20 +78,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instan
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
 }
 
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueSub, EncodedJSValue, JSValue::encode(jsSub(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueMul, EncodedJSValue, JSValue::encode(jsMul(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueDiv, EncodedJSValue, JSValue::encode(jsDiv(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTValueMod, EncodedJSValue, JSValue::encode(jsRemainder(globalObject, left, right)))
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueSub, jsSub, sub)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMul, jsMul, multiply)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueDiv, jsDiv, divide)
+AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMod, jsRemainder, remainder)
 AOT_DEFINE_BINARY_OPERATION(operationAOTValuePow, EncodedJSValue, JSValue::encode(jsPow(globalObject, left, right)))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitAnd, EncodedJSValue, JSValue::encode(jsBitwiseAnd(globalObject, left, right)))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitOr, EncodedJSValue, JSValue::encode(jsBitwiseOr(globalObject, left, right)))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValueBitXor, EncodedJSValue, JSValue::encode(jsBitwiseXor(globalObject, left, right)))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValueLShift, EncodedJSValue, JSValue::encode(jsLShift(globalObject, left, right)))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValueRShift, EncodedJSValue, JSValue::encode(jsRShift(globalObject, left, right)))
-AOT_DEFINE_BINARY_OPERATION(operationAOTCompareLess, size_t, jsLess<true>(globalObject, left, right))
-AOT_DEFINE_BINARY_OPERATION(operationAOTCompareLessEq, size_t, jsLessEq<true>(globalObject, left, right))
-AOT_DEFINE_BINARY_OPERATION(operationAOTCompareGreater, size_t, jsLess<false>(globalObject, right, left))
-AOT_DEFINE_BINARY_OPERATION(operationAOTCompareGreaterEq, size_t, jsLessEq<false>(globalObject, right, left))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::ComparisonResult::LessThan, jsLess<true>(globalObject, left, right))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, jsLessEq<true>(globalObject, left, right))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, jsLess<false>(globalObject, right, left))
+AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreaterEq, != JSBigInt::ComparisonResult::LessThan, jsLessEq<false>(globalObject, right, left))
 AOT_DEFINE_BINARY_OPERATION(operationAOTCompareEq, size_t, JSValue::equal(globalObject, left, right))
 AOT_DEFINE_BINARY_OPERATION(operationAOTCompareStrictEq, size_t, JSValue::strictEqual(globalObject, left, right))
 AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::encode(jsBitwiseNot(globalObject, operand)))
@@ -76,6 +100,8 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encod
 AOT_DEFINE_UNARY_OPERATION(operationAOTToString, JSCell*, operand.toString(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
+#undef AOT_DEFINE_NUMERIC_BINARY_OPERATION
+#undef AOT_DEFINE_COMPARISON_OPERATION
 #undef AOT_DEFINE_UNARY_OPERATION
 
 JSC_DEFINE_JIT_OPERATION(operationAOTValueURShift, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))

@@ -125,7 +125,6 @@ struct RecordedOptions {
     JS_EXPORT_PRIVATE bool isEnabled(SelectionRuleID, Typed::FunctionID) const;
     JS_EXPORT_PRIVATE bool isEnabled(B3::PolicySwitch, Typed::FunctionID) const;
 
-    JS_EXPORT_PRIVATE uint64_t hash() const;
     JS_EXPORT_PRIVATE bool isCompatibleWithProcess() const;
 
     friend bool operator==(const RecordedOptions&, const RecordedOptions&) = default;
@@ -146,8 +145,6 @@ struct LoggingOptions {
     UTF8CString functionToDump;
     UTF8CString mapFilePath;
     std::optional<PassID> dumpedPass;
-
-    JS_EXPORT_PRIVATE static LoggingOptions fromJSCOptions();
 };
 
 struct CompileOptions {

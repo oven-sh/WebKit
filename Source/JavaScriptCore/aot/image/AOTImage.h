@@ -154,7 +154,6 @@ public:
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
-    std::optional<CallSiteIndex> spreadSiteAt(uint32_t function, CallSiteIndex, unsigned item) const;
 
     std::optional<FaultSite> faultSiteAt(const void* pc) const;
 

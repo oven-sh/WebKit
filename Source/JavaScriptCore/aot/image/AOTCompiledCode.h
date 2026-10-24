@@ -153,12 +153,11 @@ struct FaultingAccess {
 };
 
 struct SiteDescription {
-    bool hasEncodedInlineFrames() const { return inlineFrames.size() > 1 && positions.size() > 1 + spreadSites.size() + numberOfSitesWithoutCode; }
+    bool hasEncodedInlineFrames() const { return inlineFrames.size() > 1 && positions.size() > 1 + numberOfSitesWithoutCode; }
 
     uint32_t numberOfSitesWithoutCode { 0 };
     Vector<SitePosition> positions;
     Vector<InlineFrame> inlineFrames;
-    Vector<SpreadSite> spreadSites;
     Vector<FlaggedSite> flaggedSites;
     Vector<SiteHandler> handlers;
     Vector<FaultingAccess> faultingAccesses;

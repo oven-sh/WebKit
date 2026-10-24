@@ -87,7 +87,6 @@ static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t po
     }
 
     const Vector<SitePosition>& positions = code.sites.positions;
-    size_t firstRecord = records.size();
     for (uint32_t site = 0; site < positions.size(); ++site) {
         const SitePosition& sitePosition = positions[site];
         ModuleID source = sitePosition.source && evaluatedTextByFrame[sitePosition.inlineFrame] ? evaluatedTextByFrame[sitePosition.inlineFrame] : sitePosition.source;
@@ -98,8 +97,6 @@ static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t po
             .name = nameByFrame[sitePosition.inlineFrame],
         });
     }
-    for (const SpreadSite& item : code.sites.spreadSites)
-        records[firstRecord + item.site].name = nameByFrame[positions[item.callSite].inlineFrame];
 }
 
 ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context)

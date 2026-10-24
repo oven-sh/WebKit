@@ -29,7 +29,6 @@ class ThrowScope;
 namespace AOT {
 
 class ModuleLinkWalk;
-class StarExportResolver;
 struct EvaluationInProgress;
 struct Instance;
 struct State;
@@ -101,6 +100,10 @@ public:
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
     bool hasCapturedExport(ModuleID, const Identifier&);
+    // Hands over no value for a deferred export.
+    void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
+    // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: capturedValue() reads that one.
+    static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
     JSObject* moduleNamespace(ModuleID, ModulePhase);
     JSObject* importMeta(ModuleID);
     JSCell* builtinCell(BuiltinID, ModuleID);
@@ -157,6 +160,8 @@ public:
 
     ModuleRecord* exposeRecord(ModuleID);
     AbstractModuleRecord* uncompiledRecord(ModuleID);
+    // The record that stands for the module in ResolveExport() and GetExportedNames().
+    AbstractModuleRecord* recordForResolution(ModuleID);
     JSObject* uncompiledNamespace(ModuleID, ModulePhase);
 
 private:
@@ -215,6 +220,7 @@ private:
     ModuleStatus statusInRecord(ModuleID) const;
     void setStatus(ModuleID, ModuleStatus);
     void setFailed(ModuleID, JSValue error);
+    ModuleRecord* ensureRecordWithoutStatus(ModuleID);
     void retireRecord(ModuleRecord*);
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
@@ -243,7 +249,9 @@ private:
     void makeTableOfCapturedFields(LoadedModule&);
     void fillCapturedExports(ModuleID);
     void fillDeferredExports(ModuleID importer);
-    void fillStarExports(ModuleID, StarExportResolver&);
+    AbstractModuleRecord::Resolution::Type resolveRequiredName(ModuleID exporter, const Identifier&);
+    // Throws for the first name that an unlinked module of the list requires and that its exporter lacks or has from two bindings.
+    void checkRequiredNames(std::span<const ModuleID> modules);
     bool isDeferredExport(const LoadedModule&, const Identifier&) const;
     bool findsItsNamesInLibraryAlone(ModuleID) const;
     Vector<DynamicExport> collectDynamicExports(ModuleID);
@@ -251,6 +259,7 @@ private:
     void evaluateWithOwnStack(ModuleID root);
     JSValue callBody(ModuleID);
     JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus);
+    Vector<ModuleID, 8> modulesThatEvaluationWillBegin(ModuleID root);
     void evaluateByCallingBody(ModuleID module) { callBodyUnderOwnMark(module, true); }
     void didThrowInBody(ModuleID, JSValue error);
     void failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error);
@@ -281,6 +290,7 @@ private:
     // The pairs of a requiring and a required module that recordRequire() has seen, and whether a require() of the pair has returned.
     UncheckedKeyHashMap<uint64_t, bool> m_recordedRequires;
     BitVector m_modulesWithMarkOfRequire;
+    BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_admitsCodeOutsideImage;
     const bool m_admitsInspector;

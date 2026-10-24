@@ -166,7 +166,7 @@ public:
         return field.isAccessor() ? attributes & ~PropertyAttribute::ReadOnly : attributes;
     }
 
-    const FieldData* fieldNamed(State&, PropertyName) const;
+    inline const FieldData* fieldNamed(State&, PropertyName) const;
     uint16_t indexOf(const FieldData& field) const { return layout().indexOf(field); }
     void* slotOf(const FieldData&) const;
     bool isInSlot(const FieldData&) const;
@@ -281,7 +281,6 @@ public:
     std::optional<uint32_t> numberOfExtraKeysByStructure() const;
     void willCreateField(State&, const FieldData&);
     void didCreateField(State&, const FieldData&, bool withStorage = true);
-    void appendField(State&, const FieldData&);
     void setKeyOrder(VM&, State&, std::span<const uint16_t> keys);
     struct InitialKeyOrder {
         uint32_t orderAndCount;

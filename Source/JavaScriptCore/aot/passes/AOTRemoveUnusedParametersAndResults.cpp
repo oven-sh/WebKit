@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTRemoveUnusedParameters.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 
@@ -16,7 +16,6 @@
 #include "AOTIRBuilder.h"
 #include "AOTParameterUses.h"
 #include "AOTPassRunner.h"
-#include "AOTRemoveUnusedResults.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
 #include "AOTValueSubstitution.h"

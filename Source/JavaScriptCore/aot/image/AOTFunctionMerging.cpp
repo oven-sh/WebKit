@@ -94,7 +94,7 @@ static bool leavesOnlyByJumps(const CompiledCode& code)
     if (!body.returnSites.isEmpty() || !body.firstReadSites.isEmpty() || !body.constants.isEmpty() || !body.jumpTables.isEmpty())
         return false;
     if (sites.positions.size() != 1 || sites.numberOfSitesWithoutCode
-        || !sites.inlineFrames.isEmpty() || !sites.spreadSites.isEmpty() || !sites.flaggedSites.isEmpty() || !sites.handlers.isEmpty()
+        || !sites.inlineFrames.isEmpty() || !sites.flaggedSites.isEmpty() || !sites.handlers.isEmpty()
         || !sites.faultingAccesses.isEmpty() || !sites.pollSites.isEmpty() || !sites.frameMapWords.isEmpty())
         return false;
     return std::ranges::all_of(body.relocations, [](const Relocation& jump) {
@@ -538,7 +538,7 @@ static bool tryDescribeCandidate(uint32_t position, const FoldingInputs& inputs,
     const CodeBody& body = code.body;
     const FrameDescription& frame = code.frame;
     const SiteDescription& sites = code.sites;
-    if (!sites.handlers.isEmpty() || !sites.inlineFrames.isEmpty() || !sites.spreadSites.isEmpty() || !sites.frameMapWords.isEmpty())
+    if (!sites.handlers.isEmpty() || !sites.inlineFrames.isEmpty() || !sites.frameMapWords.isEmpty())
         return false;
     FunctionRole role = inputs.program.at(code.function).role;
     FunctionTraceRecord trace = Typed::functionTraceOf(inputs.program, code.function);

@@ -596,6 +596,11 @@ static KnownBoolean evaluateBirthTest(const ShapeContext& context, const Virtual
     return KnownBoolean::True;
 }
 
+bool hasEveryFieldOfBirthStored(const ShapeContext& context, const VirtualShape& shape)
+{
+    return shape.kind == VirtualShapeKind::Fields && !hasUnprovenField(context.family, shape) && evaluateBirthTest(context, shape) == KnownBoolean::True;
+}
+
 static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
     const Program& program = context.objects.program;

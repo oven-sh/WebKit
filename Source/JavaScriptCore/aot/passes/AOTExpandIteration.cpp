@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTExpandIteration.h"
+#include "AOTProgramPasses.h"
 
 #if ENABLE(AOT)
 

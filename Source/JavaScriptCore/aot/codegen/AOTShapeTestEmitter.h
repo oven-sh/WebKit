@@ -25,22 +25,12 @@ public:
 
     // Passes for compiled objects alone: what stands behind it may read and write the words and the slots of one.
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);
-    // Passes for every object of the layouts, also for one that the constructor of a built-in class made.
-    Condition hasLayoutIn(CellPointer, LayoutSetID tested, const Type& known);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const B3::FrequentedBlock> targets, B3::FrequentedBlock otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
-    // The constructor of a built-in class makes the objects of a class below it. Their Structures say which class each was made for, and what the run time found when it looked at one.
-    bool mayBeMadeByBuiltinBase(const Type&) const;
-    Condition hasNoExtraProperties(CellPointer, const Type& known);
-    Condition hasLayoutPrototype(CellPointer, const Type& known);
+    Condition hasNoExtraProperties(CellPointer);
 
 private:
-    bool isMadeByBuiltinBase(LayoutID) const;
-    Condition isBranded(Pointer structure);
-    Condition isMadeByBuiltinBaseFor(CellPointer, LayoutSetID tested);
-    Condition hasStateBelowBuiltinBase(CellPointer, uint32_t state);
-    Condition hasState(CellPointer, const Type& known, uint32_t stateBelowBuiltinBase, NOESCAPE const Invocable<Condition()> auto& ofCompiledObject);
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     Condition passesRange(Word32 shapeWord, const ShapeTest&);
     Condition passesBitSet(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

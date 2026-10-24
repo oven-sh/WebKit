@@ -56,20 +56,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveHeritage, EncodedJSValue, (Instance*
     OPERATION_RETURN(scope, JSValue::encode(instance->state->objects->classes.resolveHeritage(globalObject, JSValue::decode(heritage))));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidConstructBuiltinBase, void, (Instance* instance, JSCell* object, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t classIndex, uint32_t builtinParent))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidConstructBuiltinBase);
-    ClassTable& classes = instance->state->objects->classes;
-    DeferTerminationForAWhile deferTermination(vm);
-    if (JSValue::decode(parent) == JSValue(instance->state->builtinCells->findObject(BuiltinID(builtinParent))))
-        classes.didConstructBuiltinBase(vm, asObject(object), *classes.classWithIndex(classIndex), JSValue::decode(newTarget));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookAtStructureBelowBuiltinBase, size_t, (Instance* instance, JSCell* object))
-{
-    return instance->state->objects->classes.lookAtStructureBelowBuiltinBase(*instance->vm, asObject(object));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uint32_t request, EncodedJSValue constructor, EncodedJSValue heritage, EncodedJSValue prototypeParent))
 {
     constexpr Entry entry = Entry::operationAOTNewClass;
@@ -232,9 +218,8 @@ static bool isKnownToLackName(JSCellButterfly* token, uint32_t field, JSObject* 
     JSValue places = token->get(ClassToken::structuresWithoutNamesSlot);
     if (!places)
         return false;
-    auto* butterfly = uncheckedDowncast<JSCellButterfly>(places.asCell());
-    unsigned place = placeOfStructureWithoutName(object->structureID(), field);
-    return butterfly->get(place) == JSValue(object->structure()) && butterfly->get(place + 1) == jsNumber(field);
+    const WriteBarrier<Unknown>* place = uncheckedDowncast<JSCellButterfly>(places.asCell())->toButterfly()->contiguous().data() + placeOfStructureWithoutName(object->structureID(), field);
+    return place[0].get() == JSValue(object->structure()) && place[1].get() == jsNumber(field);
 }
 
 static void rememberStructureWithoutName(VM& vm, JSCellButterfly* token, uint32_t field, Structure* structure)
@@ -250,6 +235,12 @@ static void rememberStructureWithoutName(VM& vm, JSCellButterfly* token, uint32_
 static const LayoutData& declaringLayoutOf(State& state, JSCellButterfly* token)
 {
     return classLayoutAt(state.objects->classes, token->get(ClassToken::classIndexSlot).asUInt32());
+}
+
+static const LayoutData& declaringLayoutOf(State& state, const Object& object, JSCellButterfly* token)
+{
+    const LayoutData& layout = object.layout();
+    return layout.index == token->get(ClassToken::classIndexSlot).asUInt32() ? layout : declaringLayoutOf(state, token);
 }
 
 static const FieldData& declaredFieldOf(const LayoutData& declaringLayout, uint32_t fieldIndex)
@@ -390,10 +381,24 @@ static JSObject* createAbsentNameError(JSGlobalObject* globalObject, const Priva
     return absent.declared->isBrand() ? createPrivateMethodAccessError(globalObject) : createInvalidPrivateNameError(globalObject);
 }
 
-// The field of the object's layout that has the name of a field that a class declares.
+// The field of the object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
 static const FieldData* fieldUnderDeclaredName(VM& vm, State& state, const Object& object, const LayoutData& declaringLayout, const FieldData& declared)
 {
-    return &object.layout() == &declaringLayout ? &declared : object.fieldNamed(state, state.objects->layouts.nameOf(vm, declared));
+    struct Remembered {
+        const LayoutData* layoutOfObject;
+        const FieldData* declared;
+        const FieldData* field;
+    };
+    constexpr size_t numberOfPlaces = 64;
+    static thread_local Remembered places[numberOfPlaces];
+
+    const LayoutData& layout = object.layout();
+    if (&layout == &declaringLayout)
+        return &declared;
+    Remembered& place = places[((std::bit_cast<uintptr_t>(&declared) >> 3) ^ (std::bit_cast<uintptr_t>(&layout) >> 4)) % numberOfPlaces];
+    if (place.layoutOfObject != &layout || place.declared != &declared)
+        place = { &layout, &declared, object.fieldNamed(state, state.objects->layouts.nameOf(vm, declared)) };
+    return place.field;
 }
 
 // The declared name is shared by all evaluations of the class, and the brand tells them apart. A class that is evaluated once has nothing to tell apart.
@@ -409,20 +414,31 @@ static bool wasMadeByEvaluation(VM& vm, State& state, const Object& object, cons
 }
 
 // The usual access: an object of compiled code that keeps the name in the slot of its field, in the evaluation of the class that made the object.
-static const FieldData* fieldOfEvaluation(VM& vm, State& state, Object* object, JSCellButterfly* token, uint32_t fieldIndex)
+static const FieldData* fieldOfEvaluation(VM& vm, State& state, const Object& object, JSCellButterfly* token, uint32_t fieldIndex)
 {
-    if (!object)
+    const LayoutData& declaringLayout = declaringLayoutOf(state, object, token);
+    const FieldData* field = fieldUnderDeclaredName(vm, state, object, declaringLayout, declaredFieldOf(declaringLayout, fieldIndex));
+    if (!field || !wasMadeByEvaluation(vm, state, object, declaringLayout, token))
         return nullptr;
-    const LayoutData& declaringLayout = declaringLayoutOf(state, token);
-    const FieldData* field = fieldUnderDeclaredName(vm, state, *object, declaringLayout, declaredFieldOf(declaringLayout, fieldIndex));
-    return field && wasMadeByEvaluation(vm, state, *object, declaringLayout, token) ? field : nullptr;
+    return field;
 }
 
 static JSValue tryReadFromSlot(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex)
 {
     Object* object = compiledObjectOrNull(base);
-    const FieldData* field = fieldOfEvaluation(vm, state, object, token, fieldIndex);
+    if (!object)
+        return { };
+    const FieldData* field = fieldOfEvaluation(vm, state, *object, token, fieldIndex);
     return field ? object->readInline(*field) : JSValue();
+}
+
+static bool tryStoreIntoFilledSlot(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex, JSValue stored)
+{
+    Object* object = compiledObjectOrNull(base);
+    if (!object)
+        return false;
+    const FieldData* field = fieldOfEvaluation(vm, state, *object, token, fieldIndex);
+    return field && object->isInSlot(*field) && object->tryStore(vm, *field, stored);
 }
 
 // The usual definition: an object of compiled code whose slot for the field is still empty, in the evaluation of the class that made the object. Everything else, and every error, is left to the caller.
@@ -431,7 +447,7 @@ static bool tryDefineInEmptySlot(VM& vm, State& state, JSObject* base, JSCellBut
     Object* object = compiledObjectOrNull(base);
     if (!object || privateNameIfCreated(token, fieldIndex))
         return false;
-    const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+    const LayoutData& declaringLayout = declaringLayoutOf(state, *object, token);
     const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
     const FieldData* field = fieldUnderDeclaredName(vm, state, *object, declaringLayout, declared);
     if (!field || findFieldProperty(vm, *object, *field))
@@ -503,8 +519,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     JSValue stored = JSValue::decode(value);
-    Object* compiledObject = compiledObjectOrNull(base);
-    if (const FieldData* slot = fieldOfEvaluation(vm, *instance->state, compiledObject, classToken, field); slot && compiledObject->isInSlot(*slot) && compiledObject->tryStore(vm, *slot, stored))
+    if (tryStoreIntoFilledSlot(vm, *instance->state, base, classToken, field, stored))
         OPERATION_RETURN(scope);
     if (std::optional<PropertyOffset> offset = findInKnownStructure(classToken, field, base)) {
         Structure* structure = base->structure();
@@ -520,7 +535,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateSet, void, (Instance* instance, Enco
         throwException(globalObject, scope, createAbsentNameError(globalObject, location));
         OPERATION_RETURN(scope);
     }
+    Object* compiledObject = location.compiledObject;
     if (!compiledObject) {
+        Structure* structure = base->structure();
+        if (!location.property.attributes && !structure->mayHaveImmutableProperties()) [[likely]] {
+            structure->didReplaceProperty(location.property.offset);
+            base->putDirectOffset(vm, location.property.offset, stored);
+            OPERATION_RETURN(scope);
+        }
         PutPropertySlot slot(base, true);
         base->setPrivateField(globalObject, location.name, stored, slot);
     } else if (!location.property.isInSlot)

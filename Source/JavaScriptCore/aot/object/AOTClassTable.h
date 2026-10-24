@@ -163,9 +163,6 @@ public:
     std::optional<LazyPrototypeLookupResult> findThroughLazyPrototypes(VM&, JSObject* base, UniquedStringImpl*, bool isAbsentFromBase, MemberCreation = MemberCreation::Allowed);
 
     JSObject* createThis(JSGlobalObject*, JSObject* constructor, JSObject* newTarget);
-    // The constructor of a built-in class has made the object for a compiled constructor of the class. From here on the Structures of the object say which class it was made for.
-    void didConstructBuiltinBase(VM&, JSObject*, const LayoutData& constructorLayout, JSValue newTarget);
-    uint32_t lookAtStructureBelowBuiltinBase(VM&, JSObject*);
     JSObject* prototypeForInstancesOf(VM&, JSObject* compiledCallee);
     ALWAYS_INLINE JSObject* tryReadPrototypePropertyAtRememberedPlace(JSCell* function) const
     {
@@ -215,8 +212,6 @@ private:
     static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> 4 & (numberOfInstancesOfClassesBelow - 1); }
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
     State& m_state;
-    const Ref<PrivateSymbolImpl> m_brandBelowBuiltinBase { PrivateSymbolImpl::create(*StringImpl::empty()) };
-    UncheckedKeyHashMap<uint32_t, WTF::Vector<RefPtr<UniquedStringImpl>, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesDefinedByBuiltinBase;
     const ProgramTables& m_tables;
     mutable std::array<std::atomic<uint64_t>, 64> m_recentClassLookups { };
     UncheckedKeyHashMap<JSObject*, Structure*> m_classPrototypeStructures;

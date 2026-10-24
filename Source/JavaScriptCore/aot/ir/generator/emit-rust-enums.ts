@@ -19,6 +19,8 @@ function columnValue(schema: Schema, kind: ColumnKind, value: ColumnValue): stri
       return value.value.toString();
     case "Text":
       return rustLiteral(value.value);
+    case "Type":
+      throw new Error("a Type column exists in C++ only");
     case "Member":
       return `${columnType(schema, kind)}::${value.member.name}`;
     case "Members": {

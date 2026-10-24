@@ -166,7 +166,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
     case CellTestKind::CellTypeIs:
         return hasCellTypeIn(cell, test.cellTypes);
     case CellTestKind::ShapeIn:
-        return emitter<ShapeTestEmitter>().hasLayoutIn(cell, test.layouts, from);
+        return emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from);
     case CellTestKind::InheritsClassInfo:
         return inheritsClassInfo(cell, test.builtinClass);
     case CellTestKind::IsPristine: {

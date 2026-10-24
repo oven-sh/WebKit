@@ -471,6 +471,21 @@ JSValue Modules::callBody(ModuleID module)
     return callCompiledCode(realm, closures.createClosureForOneCall(vm, *body), jsUndefined(), ArgList());
 }
 
+Vector<ModuleID, 8> Modules::modulesThatEvaluationWillBegin(ModuleID root)
+{
+    Vector<ModuleID, 8> found;
+    found.append(root);
+    for (size_t next = 0; next < found.size(); ++next) {
+        for (const ModuleRequestData& request : m_table.requests(found[next])) {
+            ModuleID target = request.targetModule();
+            if (request.isRequire || request.isDeferred || storedStatus(target) >= StoredModuleStatus::InRecord || found.contains(target))
+                continue;
+            found.append(target);
+        }
+    }
+    return found;
+}
+
 // A body that stores the status of its module stores it in the table. The status of a module with a record is in the record, and whoever gave it the record goes by that: for the time of the call the table has it.
 JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus)
 {
@@ -482,14 +497,21 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus)
         setStoredStatus(module, StoredModuleStatus::Linked);
     uint32_t outerMark = m_instance.modules.evaluatingMark;
     uint8_t mark = static_cast<uint8_t>(std::min<uint32_t>(outerMark + 1, UINT8_MAX));
+    bool isUnderAnotherEvaluation = outerMark != static_cast<uint32_t>(StoredModuleStatus::Evaluating);
+    Vector<ModuleID, 8> begunHere;
+    if (isUnderAnotherEvaluation && bodyStoresStatus && !data(module).isSimple()) [[unlikely]]
+        begunHere = modulesThatEvaluationWillBegin(module);
     m_instance.modules.evaluatingMark = mark;
     JSValue result = callBody(module);
     m_instance.modules.evaluatingMark = outerMark;
     if (isInRecord)
         setStoredStatus(module, StoredModuleStatus::InRecord);
     Exception* exception = scope.exception();
-    if (!exception) [[likely]]
+    if (!exception) [[likely]] {
+        for (ModuleID begun : begunHere)
+            m_modulesEvaluatedUnderAnotherEvaluation.set(begun.index());
         return result;
+    }
 
     // What was being evaluated when a body threw has failed with it.
     Vector<ModuleID, 16> failedModules;
@@ -520,7 +542,7 @@ void Modules::abandonEvaluation(ModuleID module, JSValue error)
     failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID>(&module, 1), error);
 }
 
-// A module of a cycle of imports is evaluated for good when the first module of the cycle that was entered is. A require() makes no such cycle.
+// A module of a cycle of imports is evaluated for good when the first module of the cycle that was entered is. A require() makes no such cycle, and what it evaluates is evaluated for good when it returns.
 void Modules::failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error)
 {
     bool hasCycle = std::ranges::any_of(failedModules, [&](ModuleID module) {
@@ -546,7 +568,7 @@ void Modules::failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> f
     }
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleID module(index);
-        if (unfinishedComponents.quickGet(components.componentOf[index]) && storedStatus(module) == StoredModuleStatus::Evaluated)
+        if (unfinishedComponents.quickGet(components.componentOf[index]) && storedStatus(module) == StoredModuleStatus::Evaluated && !m_modulesEvaluatedUnderAnotherEvaluation.get(index))
             setFailed(module, error);
     }
 }

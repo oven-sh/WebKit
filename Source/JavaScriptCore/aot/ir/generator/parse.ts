@@ -27,6 +27,8 @@ import type {
   IncludeSyntax,
   Name,
   OpaqueSyntax,
+  OptionWordActionSyntax,
+  OptionWordSyntax,
   ParsedFile,
 } from "./syntax.ts";
 import { Cursor, tokenize, type Token } from "./tokens.ts";
@@ -103,6 +105,36 @@ function parseExtend(cursor: Cursor): ExtendSyntax {
   return { declares: "extend", target, source, suffix, column: takeName(cursor) };
 }
 
+function parseOptionWordAction(cursor: Cursor): OptionWordActionSyntax {
+  const form = takeWord(cursor);
+  switch (form.text) {
+    case "sets":
+      return { form: "sets", path: takeWord(cursor), member: takeWord(cursor) };
+    case "names": {
+      const path = takeWord(cursor);
+      const members: Name[] = [];
+      while (cursor.hasMore) members.push(takeWord(cursor));
+      return { form: "names", path, members };
+    }
+    case "number":
+      return { form: "number", path: takeWord(cursor), sentenceForZero: cursor.hasMore ? cursor.text() : null };
+    case "custom":
+      return { form: "custom", apply: takeWord(cursor), list: cursor.hasMore ? takeWord(cursor) : null };
+    case "frontEnd":
+      return { form: "frontEnd" };
+    default:
+      throw new SchemaError(form.location, `expected sets, names, number, custom or frontEnd, found '${form.text}'`);
+  }
+}
+
+function parseOptionWord(cursor: Cursor, location: Location): OptionWordSyntax {
+  const atText = () => cursor.peek()?.kind === "text";
+  const key = cursor.text();
+  const valueSyntax = atText() ? cursor.text() : null;
+  const noun = atText() ? cursor.text() : null;
+  return { declares: "word", key, valueSyntax, noun, action: parseOptionWordAction(cursor), location };
+}
+
 function parseAfterKeyword(cursor: Cursor, keyword: Token, isEngine: boolean): Declaration | null {
   switch (keyword.text) {
     case "include":
@@ -147,6 +179,8 @@ function parseAfterKeyword(cursor: Cursor, keyword: Token, isEngine: boolean): D
       return parseRuntime(cursor);
     case "inline":
       return parseInline(cursor);
+    case "word":
+      return parseOptionWord(cursor, keyword.location);
     default:
       return null;
   }

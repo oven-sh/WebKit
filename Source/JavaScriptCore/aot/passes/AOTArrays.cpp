@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTArrayCapacities.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
@@ -25,6 +24,7 @@
 #include "AOTIRProgram.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTIntegerRelations.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResolveCallsCallees.h"

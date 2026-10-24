@@ -9,7 +9,6 @@
 
 #include "AOTChildProcess.h"
 #include "AOTNativeCallValidation.h"
-#include "AOTOperandSnapshot.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"

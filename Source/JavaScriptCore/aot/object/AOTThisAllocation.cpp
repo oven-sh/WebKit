@@ -14,10 +14,8 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
-#include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
-#include "BrandedStructure.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
 #include "JSCInlines.h"
@@ -166,61 +164,6 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     if (canRemember)
         target->ensureRareData(vm)->setCompiledAllocation(vm, object->structure(), constructor == newTarget ? constructorIsNewTarget : function->index());
     return object;
-}
-
-void ClassTable::didConstructBuiltinBase(VM& vm, JSObject* object, const LayoutData& constructorLayout, JSValue newTarget)
-{
-    std::optional<FunctionID> target = newTarget.isCell() ? functionInInstance(m_state.instance, newTarget.asCell()) : std::nullopt;
-    const LayoutData* layout = target ? classConstructedBy(*target) : nullptr;
-    if (!layout || ancestryOf(*this, *layout, constructorLayout) != Ancestry::SameOrBelow)
-        return;
-    Structure* structure = object->structure();
-    if (structure->isBrandedStructure() || structure->isCompiledStructure() || structure->hasBeenDictionary())
-        return;
-
-    Structure* branded = Structure::setBrandTransitionFromExistingStructureConcurrently(structure, m_brandBelowBuiltinBase.ptr());
-    if (!branded) {
-        auto& names = m_namesDefinedByBuiltinBase.add(layout->index, WTF::Vector<RefPtr<UniquedStringImpl>, 4>()).iterator->value;
-        structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-            if (!names.contains(entry.key()))
-                names.append(entry.key());
-            return true;
-        });
-        DeferredStructureTransitionWatchpointFire deferred(vm, structure);
-        branded = Structure::setBrandTransition(vm, structure, Symbol::create(vm, m_brandBelowBuiltinBase.get()), &deferred);
-        uncheckedDowncast<BrandedStructure>(branded)->setCompiledClassWord((layout->index + 1) << BrandedStructure::compiledClassStateBits);
-    }
-    object->setStructure(vm, branded);
-}
-
-uint32_t ClassTable::lookAtStructureBelowBuiltinBase(VM& vm, JSObject* object)
-{
-    auto* structure = uncheckedDowncast<BrandedStructure>(object->structure());
-    uint32_t word = structure->compiledClassWord();
-    if (!(word >> BrandedStructure::compiledClassStateBits) || structure->isDictionary())
-        return word | BrandedStructure::wasLookedAt;
-
-    const LayoutData& layout = *classWithIndex((word >> BrandedStructure::compiledClassStateBits) - 1);
-    word |= BrandedStructure::wasLookedAt;
-    Structure* atBirth = structure;
-    while (atBirth && !(atBirth->transitionKind() == TransitionKind::SetBrand && atBirth->transitionPropertyName() == m_brandBelowBuiltinBase.ptr()))
-        atBirth = atBirth->previousID();
-    if (atBirth && structure->hasMonoProto() && structure->storedPrototype() == atBirth->storedPrototype())
-        word |= BrandedStructure::hasPrototypeOfCompiledClass;
-
-    auto definedByBase = m_namesDefinedByBuiltinBase.find(layout.index);
-    const auto& identifiers = *vm.aotState().identifiers;
-    bool hasOnlyKnownNames = true;
-    structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-        std::optional<uint32_t> key = identifiers.numberOf(entry.key());
-        bool isField = key && std::ranges::contains(layout.fields(), *key, [](const FieldData& field) -> uint32_t { return field.name; });
-        hasOnlyKnownNames = isField || (definedByBase != m_namesDefinedByBuiltinBase.end() && definedByBase->value.contains(entry.key()));
-        return hasOnlyKnownNames;
-    });
-    if (hasOnlyKnownNames)
-        word |= BrandedStructure::hasOnlyNamesOfCompiledClass;
-    structure->setCompiledClassWord(word);
-    return word;
 }
 
 JSFinalObject* ClassTable::createOrdinaryInstance(JSGlobalObject* realm, unsigned numberOfProperties, JSObject* prototype)

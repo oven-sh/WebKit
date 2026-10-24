@@ -1,6 +1,5 @@
-# `inst.value`, asked in a library of a value that is expected to be a store of the application or an instance of the library's own class. Each has a getter of its own under the name.
-# One test is made, for one of the two, and both are one layout. A library handles the objects that it makes itself: the arm with a layout of the module in which the access is written is the one
-# that is tested. (A field and a getter are tested for together: place-type-tests-a-field-here-and-a-getter-there.ir.)
+# `inst.value`, asked of a value that is expected to be a store of the application or an instance of a library's class. Each has a getter of its own under the name.
+# One test is made for both, wherever the access is written, and the read is divided among the getters behind it, as a field and a getter are: place-type-tests-a-field-here-and-a-getter-there.ir.
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass PlaceTypeTests
@@ -24,12 +23,12 @@ function f4 name="inTheLibrary" module=m1 parameters=[{type=L0|L1 flags=[IsExpec
   b0(v0: anything ~ L0|L1):
     v1 = PropGet v0 key="value"
     Return v1
-# CHECK: = TypeTest v0 testedType=L1
+# CHECK: = TypeTest v0 testedType=L0|L1
 }
 
 function f5 name="inTheApplication" module=m0 parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0|L1):
     v1 = PropGet v0 key="value"
     Return v1
-# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = TypeTest v0 testedType=L0|L1
 }
