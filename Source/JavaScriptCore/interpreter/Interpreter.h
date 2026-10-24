@@ -173,6 +173,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
 
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+        // Nothing reads the stack of the Exception that a throw at the top call frame creates: a user catch clause
+        // takes the thrown value, or the throw leaves a microtask job that rejects a promise with the value.
         bool isExceptionCaughtByUserCatchClause();
 
     private:
