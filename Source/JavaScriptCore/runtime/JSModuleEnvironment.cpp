@@ -32,6 +32,7 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "SymbolTableInlines.h"
 
@@ -73,7 +74,7 @@ inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JS
         importSlot(i).clear();
 }
 
-JSModuleEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot)
+JSLexicalEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot)
 {
     for (unsigned i = 0; i < depth; ++i)
         scope = scope->next();
@@ -130,7 +131,24 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
     JSModuleEnvironment* thisObject = uncheckedDowncast<JSModuleEnvironment>(cell);
     AbstractModuleRecord::Resolution resolution = thisObject->moduleRecord()->resolveImport(globalObject, Identifier::fromUid(vm, propertyName.uid()));
     RETURN_IF_EXCEPTION(scope, false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolution.type == AbstractModuleRecord::Resolution::Type::Pending) [[unlikely]] {
+        // The record that exports the binding has not evaluated (an import cycle): the binding has no value yet.
+        slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, jsUndefined());
+        return true;
+    }
+#endif
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!resolution.moduleRecord->moduleEnvironmentMayBeNull()) [[unlikely]] {
+            // The namespace object of a record that hasPendingExports(), which has no environment to keep it in yet.
+            ASSERT(resolution.localName == vm.propertyNames->starNamespacePrivateName);
+            JSValue value = resolution.moduleRecord->getModuleNamespace(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);
+            return true;
+        }
+#endif
         // When resolveImport resolves the resolution, the imported module environment must have the binding.
         JSModuleEnvironment* importedModuleEnvironment = resolution.moduleRecord->moduleEnvironment();
         PropertySlot redirectSlot(importedModuleEnvironment, PropertySlot::InternalMethodType::Get);
@@ -179,7 +197,11 @@ bool JSModuleEnvironment::put(JSCell* cell, JSGlobalObject* globalObject, Proper
     // All imported bindings are immutable.
     AbstractModuleRecord::Resolution resolution = thisObject->moduleRecord()->resolveImport(globalObject, Identifier::fromUid(vm, propertyName.uid()));
     RETURN_IF_EXCEPTION(scope, false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved || resolution.type == AbstractModuleRecord::Resolution::Type::Pending) {
+#else
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
+#endif
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return false;
     }
@@ -197,6 +219,10 @@ bool JSModuleEnvironment::deleteProperty(JSCell* cell, JSGlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, false);
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolution.type == AbstractModuleRecord::Resolution::Type::Pending)
+        return false;
+#endif
     return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 

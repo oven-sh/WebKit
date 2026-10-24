@@ -49,6 +49,11 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
     , m_moduleRecord(moduleRecord, WriteBarrierEarlyInit)
     , m_isDeferred(isDeferred)
 {
+    setExports(vm, WTF::move(resolutions));
+}
+
+void JSModuleNamespaceObject::setExports(VM& vm, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions)
+{
     // http://www.ecma-international.org/ecma-262/6.0/#sec-module-namespace-exotic-objects
     // Quoted from the spec:
     //     A List containing the String values of the exported names exposed as own properties of this object.
@@ -59,13 +64,37 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
         return StringView(resolution.first.impl());
     });
 
+    ExportMap exports;
     for (const auto& pair : resolutions) {
-        m_exports.add(pair.first.impl(), ExportEntry {
+        exports.add(pair.first.impl(), ExportEntry {
             pair.second.localName,
             WriteBarrier { pair.second.moduleRecord, WriteBarrierEarlyInit },
         });
     }
+    // The collector may be visiting the old map (visitChildren): an object made without its names gets them later.
+    {
+        Locker locker { cellLock() };
+        m_exports = WTF::move(exports);
+    }
+    vm.writeBarrier(this);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSModuleNamespaceObject::ensureExports(JSGlobalObject* globalObject)
+{
+    ASSERT(m_hasPendingExports);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>> resolutions;
+    bool collected = m_moduleRecord->tryCollectNamespaceResolutions(globalObject, resolutions);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!collected)
+        return;
+    setExports(vm, WTF::move(resolutions));
+    m_hasPendingExports = false;
+}
+#endif
 
 void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, bool shouldPreventExtensions)
 {
@@ -102,6 +131,7 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleRecord);
+    Locker locker { thisObject->cellLock() };
     for (auto& entry : thisObject->m_exports.values())
         visitor.appendHidden(entry.moduleRecord);
 }
@@ -169,6 +199,13 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, false);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_hasPendingExports && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
+        ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+#endif
+
     auto iterator = m_exports.find(propertyName.uid());
     if (iterator == m_exports.end()) {
 #if USE(BUN_JSC_ADDITIONS)
@@ -189,8 +226,18 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             // 10. If binding.[[BindingName]] is "*namespace*", then
             //     a. Return ? GetModuleNamespace(targetModule).
             // We call getModuleNamespace() to ensure materialization. And after that, looking up the value from the scope to encourage module namespace object IC.
+#if USE(BUN_JSC_ADDITIONS)
+            JSModuleNamespaceObject* exportedNamespace = exportEntry.moduleRecord->getModuleNamespace(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            // A record that hasPendingExports() has no environment to keep its namespace object in yet.
+            if (!exportEntry.moduleRecord->moduleEnvironmentMayBeNull()) [[unlikely]] {
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), exportedNamespace);
+                return true;
+            }
+#else
             exportEntry.moduleRecord->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
+#endif
         }
         JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
         ScopeOffset scopeOffset;
@@ -265,11 +312,14 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
 
 #if USE(BUN_JSC_ADDITIONS)
     auto* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
-    if (thisObject->m_isOverridingValue) {
+    if (thisObject->m_isOverridingValue)
         return true;
-    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
+    if (thisObject->m_hasPendingExports) [[unlikely]] {
+        thisObject->ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
     }
+    if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 #endif
 
     // http://www.ecma-international.org/ecma-262/6.0/#sec-module-namespace-exotic-objects-set-p-v-receiver
@@ -302,6 +352,13 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, false);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_hasPendingExports) [[unlikely]] {
+        thisObject->ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+#endif
+
     return !thisObject->m_exports.contains(propertyName.uid());
 }
 
@@ -314,6 +371,12 @@ bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_hasPendingExports) [[unlikely]] {
+        thisObject->ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+#endif
     return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
 }
 
@@ -328,6 +391,12 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_hasPendingExports) [[unlikely]] {
+        thisObject->ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+#endif
     for (const auto& name : thisObject->m_exports.keys()) {
         if (mode == DontEnumPropertiesMode::Exclude) {
             // Perform [[GetOwnProperty]] to throw ReferenceError if binding is uninitialized.
@@ -427,6 +496,11 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_hasPendingExports) [[unlikely]] {
+        ensureExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     for (auto& pair : m_exports) {
         JSValue value = jsUndefined();

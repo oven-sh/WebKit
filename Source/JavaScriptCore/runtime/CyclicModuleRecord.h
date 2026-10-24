@@ -26,6 +26,7 @@
 #pragma once
 
 #include <JavaScriptCore/AbstractModuleRecord.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -90,9 +91,43 @@ public:
     void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Link leaves an import entry or an indirect export whose resolution is Resolution::Type::Pending for later. What it
+    // waits for is known once the record that hasPendingExports() has evaluated. That is before this module's body
+    // runs, unless the two are in an import cycle: JSModuleRecord::execute calls this right before the body, and an
+    // entry that still waits then reads as undefined until it can be bound (JSModuleRecord::fillImportSlot).
+    void linkPendingImports(JSGlobalObject*);
+
+    // What code of this module that was linked while an import still waited embeds for that import: the scope offset in
+    // the environment that the import slot will hold. Every later link of the import uses the same offset.
+    struct EarlyImportLink {
+        AbstractModuleRecord* exporter { nullptr }; // The one record that could export the name, or null.
+        unsigned offset { 0 };
+    };
+#endif
+
 protected:
     CyclicModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
+
+    bool resolveIndirectExports(JSGlobalObject*);
+    bool linkImportEntry(JSGlobalObject*, JSModuleEnvironment*, const ImportEntry&, AbstractModuleRecord* importedModule);
+
+#if USE(BUN_JSC_ADDITIONS)
+    struct PendingImports {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(PendingImports);
+        Vector<ImportEntry> entries;
+        bool hasIndirectExports { false };
+        UncheckedKeyHashMap<unsigned, EarlyImportLink, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> earlyLinks; // by import slot
+    };
+    PendingImports& ensurePendingImports()
+    {
+        if (!m_pendingImports)
+            m_pendingImports = makeUnique<PendingImports>();
+        return *m_pendingImports;
+    }
+    std::unique_ptr<PendingImports> m_pendingImports;
+#endif
 
     WriteBarrier<Unknown> m_evaluationError;
     unsigned m_dfsAncestorIndex { 0 };

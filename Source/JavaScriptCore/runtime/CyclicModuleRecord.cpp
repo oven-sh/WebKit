@@ -46,6 +46,7 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WebAssemblyModuleRecord.h"
 #include <wtf/Scope.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -103,6 +104,247 @@ static bool validatePrelinkedResolution(JSGlobalObject* globalObject, PrelinkedM
 }
 #endif
 
+// InitializeEnvironment step 1. True if an indirect export waits for a record that hasPendingExports().
+bool CyclicModuleRecord::resolveIndirectExports(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasPending = false;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A prelinked record's indirect exports were resolved by the bundler; only the ones it could not prove resolvable go
+    // through ResolveExport (on the requested module, by name), which also produces the error below when that is the answer.
+    auto* jsModule = dynamicDowncast<JSModuleRecord>(this);
+    const bool prelinked = jsModule && isPrelinked();
+    if (prelinked) {
+        PrelinkedModuleGraph& graph = *prelinkedGraph();
+        for (const auto& e : graph.exports(prelinkedModule())) {
+            if (e.kind() == PrelinkedModuleGraph::ExportKind::Local || e.isNamespaceReexport())
+                continue;
+            auto resolutionKind = e.resolution();
+            if ((resolutionKind == PrelinkedModuleGraph::ResolutionKind::Binding || resolutionKind == PrelinkedModuleGraph::ResolutionKind::Namespace) && !Options::validatePrelinkedModuleInfo()) [[likely]]
+                continue;
+            Identifier exportName = graph.identifier(e.exportSid);
+            std::optional<Resolution> resolution;
+            if (!Options::validatePrelinkedModuleInfo()) {
+                resolution = tryResolveExportPrelinked(globalObject, e);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (!resolution) {
+                resolution = resolveExportByName(globalObject, exportName);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            switch (resolution->type) {
+            case Resolution::Type::NotFound:
+                if (m_isTypeScript)
+                    break;
+                throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(exportName.impl()), "' not found in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
+                return false;
+            case Resolution::Type::Ambiguous:
+                throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(exportName.impl()), "' multiple times in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
+                return false;
+            case Resolution::Type::Error:
+                throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+                return false;
+            case Resolution::Type::Pending:
+                hasPending = true;
+                break;
+            case Resolution::Type::Resolved:
+                if (Options::validatePrelinkedModuleInfo()) [[unlikely]]
+                    RELEASE_ASSERT(validatePrelinkedResolution(globalObject, graph, resolutionKind, e.resolvedModule, e.resolvedLocalSid, *resolution), e.exportSid, e.resolvedModule);
+                break;
+            }
+        }
+    } else
+#endif
+    // 1. For each ExportEntry Record e of module.[[IndirectExportEntries]], do
+    for (const auto& [key, e] : exportEntries()) {
+        if (e.type != ExportEntry::Type::Indirect)
+            continue;
+        // 1.a. Assert: e.[[ExportName]] is not null.
+        ASSERT(!e.exportName.isNull());
+        // 1.b. Let resolution be module.ResolveExport(e.[[ExportName]]).
+        Resolution resolution = resolveExport(globalObject, e.exportName);
+        RETURN_IF_EXCEPTION(scope, false);
+        // 1.c. If resolution is either null or AMBIGUOUS, throw a SyntaxError exception.
+        switch (resolution.type) {
+        case Resolution::Type::NotFound:
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_isTypeScript) break;
+            throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
+#else
+            throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' is not found."_s));
+#endif
+            return false;
+
+        case Resolution::Type::Ambiguous:
+#if USE(BUN_JSC_ADDITIONS)
+            throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
+#else
+            throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
+#endif
+            return false;
+
+        case Resolution::Type::Error:
+#if USE(BUN_JSC_ADDITIONS)
+            throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
+#else
+            throwSyntaxError(globalObject, scope, "Indirectly exported binding name 'default' cannot be resolved by star export entries."_s);
+#endif
+            return false;
+
+#if USE(BUN_JSC_ADDITIONS)
+        case Resolution::Type::Pending:
+            hasPending = true;
+            break;
+#endif
+
+        default:
+            // 1.d. Assert: resolution is a ResolvedBinding Record.
+            ASSERT(resolution.type == Resolution::Type::Resolved);
+        }
+    }
+    return hasPending;
+}
+
+// InitializeEnvironment steps 7.b onward for one entry; the caller checks for an exception. True if the entry waits
+// for a record that hasPendingExports(): nothing is linked for it yet.
+bool CyclicModuleRecord::linkImportEntry(JSGlobalObject* globalObject, JSModuleEnvironment* env, const ImportEntry& in, AbstractModuleRecord* importedModule)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
+    if (in.type == ImportEntryType::Namespace) {
+        // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
+        JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, in.phase);
+        RETURN_IF_EXCEPTION(scope, false);
+        // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
+        // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
+        bool putResult = false;
+        symbolTablePutTouchWatchpointSet(env, globalObject, in.localName, ns, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+        RETURN_IF_EXCEPTION(scope, false);
+    // 7.c. Else,
+    } else {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(in.type == ImportEntryType::Single || in.type == ImportEntryType::SingleTypeScript);
+#else
+        ASSERT(in.type == ImportEntryType::Single);
+#endif
+        // 7.c.i. Let resolution be importedModule.ResolveExport(in.[[ImportName]]).
+        Resolution resolution = importedModule->resolveExport(globalObject, in.importName);
+        RETURN_IF_EXCEPTION(scope, false);
+        switch (resolution.type) {
+        // 7.c.ii. If resolution is either null or AMBIGUOUS, throw a SyntaxError exception.
+        case Resolution::Type::NotFound:
+#if USE(BUN_JSC_ADDITIONS)
+            if (in.type == ImportEntryType::SingleTypeScript)
+                break;
+            if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {
+                Resolution otherResolution = importedModule->resolveExport(globalObject, vm.propertyNames->defaultKeyword);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (otherResolution.type == Resolution::Type::Resolved && otherResolution.localName == in.localName) {
+                    throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s));
+                    return false;
+                }
+            }
+            throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
+#else
+            throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
+#endif
+            return false;
+
+        case Resolution::Type::Ambiguous:
+#if USE(BUN_JSC_ADDITIONS)
+            throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
+#else
+            throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
+#endif
+            return false;
+
+        case Resolution::Type::Error:
+#if USE(BUN_JSC_ADDITIONS)
+            if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {
+                Resolution otherResolution = importedModule->resolveExport(globalObject, in.localName);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (otherResolution.type == Resolution::Type::Resolved) {
+                    throwSyntaxError(globalObject, scope, makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s));
+                    return false;
+                }
+            }
+            throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
+#else
+            throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
+#endif
+            return false;
+
+#if USE(BUN_JSC_ADDITIONS)
+        case Resolution::Type::Pending:
+            return true;
+#endif
+
+        case Resolution::Type::Resolved:
+            // 7.c.iii. If resolution.[[BindingName]] is NAMESPACE, then
+            if (vm.propertyNames->starNamespacePrivateName == resolution.localName) {
+                // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
+                JSModuleNamespaceObject* ns = resolution.moduleRecord->getModuleNamespace(globalObject); // Force module namespace object materialization.
+                RETURN_IF_EXCEPTION(scope, false);
+                // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
+                // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
+                bool putResult = false;
+                symbolTablePutTouchWatchpointSet(env, globalObject, in.localName, ns, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+                RETURN_IF_EXCEPTION(scope, false);
+            // 7.c.iv. Else,
+            } else {
+                // 7.c.iv.1. Perform CreateImportBinding(env, in.[[LocalName]], resolution.[[Module]], resolution.[[BindingName]]).
+                // (Already handled through lazy resolution.)
+#if USE(BUN_JSC_ADDITIONS)
+                // Reads of the import binding go straight to the exporting environment's slot, so a lazy export of a
+                // SyntheticModuleRecord has to be given its value now, while this module is being linked to it.
+                SyntheticModuleRecord::materializeLazyExport(globalObject, resolution.moduleRecord, resolution.localName);
+                RETURN_IF_EXCEPTION(scope, false);
+#endif
+            }
+            break;
+        }
+    }
+    return false;
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CyclicModuleRecord::PendingImports);
+
+void CyclicModuleRecord::linkPendingImports(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!m_pendingImports)
+        return;
+    auto& pending = *m_pendingImports;
+
+    if (pending.hasIndirectExports) {
+        bool stillPending = resolveIndirectExports(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        pending.hasIndirectExports = stillPending;
+    }
+
+    JSModuleEnvironment* environment = moduleEnvironment();
+    Vector<ImportEntry> entries = std::exchange(pending.entries, { });
+    for (auto& in : entries) {
+        AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, in.moduleRequest, in.moduleRequestType);
+        RETURN_IF_EXCEPTION(scope, void());
+        bool stillPending = linkImportEntry(globalObject, environment, in, importedModule);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (stillPending)
+            pending.entries.append(WTF::move(in));
+    }
+
+    if (!pending.hasIndirectExports && pending.entries.isEmpty() && pending.earlyLinks.isEmpty())
+        m_pendingImports = nullptr;
+}
+#endif
+
 void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
 {
     // InitializeEnvironment
@@ -125,88 +367,17 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     JSModuleEnvironment* env = nullptr;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // A prelinked record's indirect exports were resolved by the bundler; only the ones it could not prove resolvable go
-    // through ResolveExport (on the requested module, by name), which also produces the error below when that is the answer.
     const bool prelinked = jsModule && isPrelinked();
-    if (prelinked) {
-        PrelinkedModuleGraph& graph = *prelinkedGraph();
-        for (const auto& e : graph.exports(prelinkedModule())) {
-            if (e.kind() == PrelinkedModuleGraph::ExportKind::Local || e.isNamespaceReexport())
-                continue;
-            auto resolutionKind = e.resolution();
-            if ((resolutionKind == PrelinkedModuleGraph::ResolutionKind::Binding || resolutionKind == PrelinkedModuleGraph::ResolutionKind::Namespace) && !Options::validatePrelinkedModuleInfo()) [[likely]]
-                continue;
-            Identifier exportName = graph.identifier(e.exportSid);
-            std::optional<Resolution> resolution;
-            if (!Options::validatePrelinkedModuleInfo()) {
-                resolution = tryResolveExportPrelinked(globalObject, e);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-            if (!resolution) {
-                resolution = resolveExportByName(globalObject, exportName);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-            switch (resolution->type) {
-            case Resolution::Type::NotFound:
-                if (m_isTypeScript)
-                    break;
-                throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(exportName.impl()), "' not found in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
-                return;
-            case Resolution::Type::Ambiguous:
-                throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(exportName.impl()), "' multiple times in '"_s, StringView(requestedModules()[e.request()].m_specifier.impl()), "'"_s));
-                return;
-            case Resolution::Type::Error:
-                throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
-                return;
-            case Resolution::Type::Resolved:
-                if (Options::validatePrelinkedModuleInfo()) [[unlikely]]
-                    RELEASE_ASSERT(validatePrelinkedResolution(globalObject, graph, resolutionKind, e.resolvedModule, e.resolvedLocalSid, *resolution), e.exportSid, e.resolvedModule);
-                break;
-            }
-        }
-    } else
 #endif
     // 1. For each ExportEntry Record e of module.[[IndirectExportEntries]], do
-    for (const auto& [key, e] : exportEntries()) {
-        if (e.type != ExportEntry::Type::Indirect)
-            continue;
-        // 1.a. Assert: e.[[ExportName]] is not null.
-        ASSERT(!e.exportName.isNull());
-        // 1.b. Let resolution be module.ResolveExport(e.[[ExportName]]).
-        Resolution resolution = resolveExport(globalObject, e.exportName);
-        RETURN_IF_EXCEPTION(scope, void());
-        // 1.c. If resolution is either null or AMBIGUOUS, throw a SyntaxError exception.
-        switch (resolution.type) {
-        case Resolution::Type::NotFound:
+    bool hasPendingIndirectExports = resolveIndirectExports(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 #if USE(BUN_JSC_ADDITIONS)
-            if (m_isTypeScript) break;
-            throwSyntaxError(globalObject, scope, makeString("export '"_s, StringView(e.exportName.impl()), "' not found in '"_s, StringView(e.moduleName.impl()), "'"_s));
+    if (hasPendingIndirectExports) [[unlikely]]
+        ensurePendingImports().hasIndirectExports = true;
 #else
-            throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' is not found."_s));
+    ASSERT_UNUSED(hasPendingIndirectExports, !hasPendingIndirectExports);
 #endif
-            return;
-
-        case Resolution::Type::Ambiguous:
-#if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, makeString("Cannot export '"_s, StringView(e.exportName.impl()), "' multiple times in '"_s, StringView(e.moduleName.impl()), "'"_s));
-#else
-            throwSyntaxError(globalObject, scope, makeString("Indirectly exported binding name '"_s, StringView(e.exportName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
-#endif
-            return;
-
-        case Resolution::Type::Error:
-#if USE(BUN_JSC_ADDITIONS)
-            throwSyntaxError(globalObject, scope, "export default cannot be used with export *"_s);
-#else
-            throwSyntaxError(globalObject, scope, "Indirectly exported binding name 'default' cannot be resolved by star export entries."_s);
-#endif
-            return;
-
-        default:
-            // 1.d. Assert: resolution is a ResolvedBinding Record.
-            ASSERT(resolution.type == Resolution::Type::Resolved);
-        }
-    }
     // 2. Assert: All named exports from module are resolvable.
 #if ASSERT_ENABLED
 #if USE(BUN_JSC_ADDITIONS)
@@ -235,102 +406,24 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     }
 
     auto cleanup = WTF::makeScopeExit([&] {
-        if (!m_initialized)
+        if (!m_initialized) {
             m_moduleEnvironment.clear();
+#if USE(BUN_JSC_ADDITIONS)
+            m_pendingImports = nullptr;
+#endif
+        }
     });
 
     // 7. For each ImportEntry Record in of module.[[ImportEntries]], do
-    // Steps 7.b onward for one entry; the caller checks for an exception.
     auto linkImportEntry = [&](const ImportEntry& in, AbstractModuleRecord* importedModule) {
-        // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
-        if (in.type == ImportEntryType::Namespace) {
-            // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
-            JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, in.phase);
-            RETURN_IF_EXCEPTION(scope, void());
-            // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
-            // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
-            bool putResult = false;
-            symbolTablePutTouchWatchpointSet(env, globalObject, in.localName, ns, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
-            RETURN_IF_EXCEPTION(scope, void());
-        // 7.c. Else,
-        } else {
+        bool isPending = this->linkImportEntry(globalObject, env, in, importedModule);
+        RETURN_IF_EXCEPTION(scope, void());
 #if USE(BUN_JSC_ADDITIONS)
-            ASSERT(in.type == ImportEntryType::Single || in.type == ImportEntryType::SingleTypeScript);
+        if (isPending) [[unlikely]]
+            ensurePendingImports().entries.append(in);
 #else
-            ASSERT(in.type == ImportEntryType::Single);
+        ASSERT_UNUSED(isPending, !isPending);
 #endif
-            // 7.c.i. Let resolution be importedModule.ResolveExport(in.[[ImportName]]).
-            Resolution resolution = importedModule->resolveExport(globalObject, in.importName);
-            RETURN_IF_EXCEPTION(scope, void());
-            switch (resolution.type) {
-            // 7.c.ii. If resolution is either null or AMBIGUOUS, throw a SyntaxError exception.
-            case Resolution::Type::NotFound:
-#if USE(BUN_JSC_ADDITIONS)
-                if (in.type == ImportEntryType::SingleTypeScript)
-                    break;
-                if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {
-                    Resolution otherResolution = importedModule->resolveExport(globalObject, vm.propertyNames->defaultKeyword);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    if (otherResolution.type == Resolution::Type::Resolved && otherResolution.localName == in.localName) {
-                        throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'. Did you mean to import default?"_s));
-                        return;
-                    }
-                }
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
-#else
-                throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
-#endif
-                return;
-
-            case Resolution::Type::Ambiguous:
-#if USE(BUN_JSC_ADDITIONS)
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
-#else
-                throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
-#endif
-                return;
-
-            case Resolution::Type::Error:
-#if USE(BUN_JSC_ADDITIONS)
-                if (!(in.localName.isNull() || in.localName.isPrivateName() || in.localName.isSymbol())) {
-                    Resolution otherResolution = importedModule->resolveExport(globalObject, in.localName);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    if (otherResolution.type == Resolution::Type::Resolved) {
-                        throwSyntaxError(globalObject, scope, makeString("module '"_s, importedModule->moduleKey().string(), "' does not have an export named 'default'. Did you mean '"_s, String(in.localName.impl()), "'?"_s));
-                        return;
-                    }
-                }
-                throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
-#else
-                throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
-#endif
-                return;
-
-            case Resolution::Type::Resolved:
-                // 7.c.iii. If resolution.[[BindingName]] is NAMESPACE, then
-                if (vm.propertyNames->starNamespacePrivateName == resolution.localName) {
-                    // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
-                    JSModuleNamespaceObject* ns = resolution.moduleRecord->getModuleNamespace(globalObject); // Force module namespace object materialization.
-                    RETURN_IF_EXCEPTION(scope, void());
-                    // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
-                    // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
-                    bool putResult = false;
-                    symbolTablePutTouchWatchpointSet(env, globalObject, in.localName, ns, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
-                    RETURN_IF_EXCEPTION(scope, void());
-                // 7.c.iv. Else,
-                } else {
-                    // 7.c.iv.1. Perform CreateImportBinding(env, in.[[LocalName]], resolution.[[Module]], resolution.[[BindingName]]).
-                    // (Already handled through lazy resolution.)
-#if USE(BUN_JSC_ADDITIONS)
-                    // Reads of the import binding go straight to the exporting environment's slot, so a lazy export of a
-                    // SyntheticModuleRecord has to be given its value now, while this module is being linked to it.
-                    SyntheticModuleRecord::materializeLazyExport(globalObject, resolution.moduleRecord, resolution.localName);
-                    RETURN_IF_EXCEPTION(scope, void());
-#endif
-                }
-                break;
-            }
-        }
     };
     if (jsModule) {
 #if USE(BUN_JSC_ADDITIONS)
@@ -714,6 +807,68 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, void());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// ECMA-262 has no job that runs while a module graph is evaluated. A host can run one from a module body (a
+// microtask checkpoint, a synchronous require() of an ES module). Such a job can finish a module with a top-level
+// await while the modules that wait for it are on the stack of InnerModuleEvaluation, or while
+// AsyncModuleExecutionFulfilled runs the body of another module that they wait for.
+//
+// GatherAvailableAncestors counts a module without a top-level await as done when it appends the module to
+// execList, before the body of that module runs. A job that the body runs could then finish the last other
+// dependency of an ancestor, and the ancestor would run before that body ended. So this gathers one level: the
+// modules for which `record`, which has finished, was the last pending dependency. asyncExecutionFulfilled() calls
+// it again for a module without a top-level await when the body of that module has run. A module gets its
+// [[AsyncEvaluationOrder]] after each module that it waits for, so the modules run in the order of the
+// specification's sorted execList.
+struct AvailableModule {
+    int64_t order;
+    CyclicModuleRecord* module;
+};
+
+static void gatherAvailableParents(CyclicModuleRecord* record, Vector<AvailableModule, 8>& available)
+{
+    auto append = [&](CyclicModuleRecord* m) {
+        available.append({ m->asyncEvaluationOrder().order(), m });
+        std::ranges::push_heap(available, std::ranges::greater(), &AvailableModule::order);
+    };
+
+    for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules()) {
+        auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
+        // m is on the stack of an InnerModuleEvaluation that the job runs inside, and has no cycle root yet.
+        if (m->status() == CyclicModuleRecord::Status::Evaluating) {
+            // The walk throws the error of m (asyncExecutionRejected). When a dependency of m failed, that dependency
+            // never gets here. An embedder can reject m itself and then finish the dependency: Bun's node:vm does,
+            // for a module that the timeout of a run stopped.
+            if (m->evaluationError())
+                continue;
+            int remaining = m->pendingAsyncDependencies().value() - 1;
+            m->setPendingAsyncDependencies(remaining);
+            // m has not reached step 12 of its InnerModuleEvaluation, which reads the count.
+            if (m->asyncEvaluationOrder().isUnset())
+                continue;
+            // m is past that step and waits on the stack for a cycle that is not closed. Nothing in the walk reads
+            // its count again, so it runs like any other module whose last dependency finished.
+            if (!remaining)
+                append(m);
+            continue;
+        }
+        // GatherAvailableAncestors 1.a: m.[[CycleRoot]].[[EvaluationError]] is empty.
+        // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
+        ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
+        CyclicModuleRecord* root = m->cycleRoot();
+        if (!root || root->evaluationError() != nullptr)
+            continue;
+        ASSERT(m->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+        ASSERT(m->evaluationError() == nullptr);
+        ASSERT(m->asyncEvaluationOrder().hasOrder());
+        ASSERT(m->pendingAsyncDependencies().value() > 0);
+        int remaining = m->pendingAsyncDependencies().value() - 1;
+        m->setPendingAsyncDependencies(remaining);
+        if (!remaining)
+            append(m);
+    }
+}
+#else
 static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList)
 {
     // GatherAvailableAncestors(module, execList)
@@ -768,6 +923,7 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
     }
     // 2. Return UNUSED.
 }
+#endif
 
 void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JSValue error)
 {
@@ -789,6 +945,19 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
             // 1.b. Return UNUSED.
             continue;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // A job that ran inside a walk (see gatherAvailableParents) rejected a module that is on the stack of that
+        // walk, or one that such a module waits for. The module keeps its status and remembers the first error: the
+        // walk throws it where it next looks at the module, and Evaluate() then gives it to every module on the stack.
+        if (module->status() == CyclicModuleRecord::Status::Evaluating) {
+            if (module->evaluationError())
+                continue;
+            module->setEvaluationError(vm, error);
+            for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
+                stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
+            continue;
+        }
+#endif
         // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
         ASSERT(module->status() == CyclicModuleRecord::Status::EvaluatingAsync);
         // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
@@ -832,8 +1001,15 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
         // 1.b. Return UNUSED.
         RELEASE_AND_RETURN(scope, void());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // A member of a cycle that is not closed can finish its async body in a job that runs inside the walk (see
+    // gatherAvailableParents). It stays EVALUATING: the walk sets its status when it pops the cycle.
+    bool isOnStack = status() == CyclicModuleRecord::Status::Evaluating;
+#else
+    constexpr bool isOnStack = false;
+#endif
     // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
-    ASSERT(status() == CyclicModuleRecord::Status::EvaluatingAsync);
+    ASSERT(isOnStack || status() == CyclicModuleRecord::Status::EvaluatingAsync);
     // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
     ASSERT(asyncEvaluationOrder().hasOrder());
     // 4. Assert: module.[[EvaluationError]] is EMPTY.
@@ -841,14 +1017,70 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // 5. Set module.[[AsyncEvaluationOrder]] to DONE.
     setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
     // 6. Set module.[[Status]] to EVALUATED.
-    setStatus(CyclicModuleRecord::Status::Evaluated);
+    if (!isOnStack)
+        setStatus(CyclicModuleRecord::Status::Evaluated);
     // 7. If module.[[TopLevelCapability]] is not EMPTY, then
-    if (auto* capability = topLevelCapability()) {
+    // A module on the stack has one only when a job called Evaluate() on it. Its cycle has not run, so this does not
+    // settle that promise.
+    if (auto* capability = isOnStack ? nullptr : topLevelCapability()) {
         // 7.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
         ASSERT(cycleRoot() == this);
         // 7.b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
         capability->fulfill(vm, jsUndefined());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // Steps 8 to 12, with gatherAvailableParents() in the place of GatherAvailableAncestors: the modules that are
+    // available run in the order of their [[AsyncEvaluationOrder]], and a module without a top-level await makes
+    // the modules that wait for it available when its body has run.
+    // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
+    Vector<AvailableModule, 8> available;
+    gatherAvailableParents(this, available);
+    while (!available.isEmpty()) {
+        std::ranges::pop_heap(available, std::ranges::greater(), &AvailableModule::order);
+        CyclicModuleRecord* m = available.takeLast().module;
+        // Every module that m waited for has finished, so nothing has rejected m since it became available.
+        ASSERT(m->evaluationError() == nullptr);
+        ASSERT(m->pendingAsyncDependencies() && !*m->pendingAsyncDependencies());
+        // On the stack of the walk that this job runs inside (see gatherAvailableParents).
+        bool mIsOnStack = m->status() == CyclicModuleRecord::Status::Evaluating;
+        ASSERT(mIsOnStack || m->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+        // 12.b. If m.[[HasTLA]] is true, then
+        if (m->hasTLA()) {
+            // 12.b.i. Perform ExecuteAsyncModule(m).
+            m->executeAsync(globalObject);
+            if (Exception* exception = scope.exception()) {
+                JSValue error = exception->value();
+                TRY_CLEAR_EXCEPTION(scope, void());
+                m->asyncExecutionRejected(globalObject, error);
+            }
+            continue;
+        }
+        // 12.c.i. Let result be m.ExecuteModule().
+        m->execute(globalObject);
+        // 12.c.ii. If result is an abrupt completion, then
+        if (Exception* exception = scope.exception()) {
+            JSValue error = exception->value();
+            TRY_CLEAR_EXCEPTION(scope, void());
+            // 12.c.ii.1. Perform AsyncModuleExecutionRejected(m, result.[[Value]]).
+            m->asyncExecutionRejected(globalObject, error);
+            continue;
+        }
+        // 12.c.iii.1. Set m.[[AsyncEvaluationOrder]] to DONE.
+        m->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+        // 12.c.iii.2. Set m.[[Status]] to EVALUATED.
+        if (!mIsOnStack)
+            m->setStatus(CyclicModuleRecord::Status::Evaluated);
+        // 12.c.iii.3. If m.[[TopLevelCapability]] is not EMPTY, then
+        // Not for a module on the stack, as in step 7.
+        if (auto* capability = mIsOnStack ? nullptr : m->topLevelCapability()) {
+            // 12.c.iii.3.a. Assert: m.[[CycleRoot]] and m are the same Module Record.
+            ASSERT(m->cycleRoot() == m);
+            // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
+            capability->fulfill(vm, jsUndefined());
+        }
+        gatherAvailableParents(m, available);
+    }
+#else
     // 8. Let execList be a new empty List.
     // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
     Vector<CyclicModuleRecord*, 8> execList;
@@ -907,6 +1139,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
             }
         }
     }
+#endif
     // 13. Return UNUSED.
 }
 

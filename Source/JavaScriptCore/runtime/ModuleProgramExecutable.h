@@ -33,6 +33,8 @@
 
 namespace JSC {
 
+class SyntheticModuleRecord;
+
 class FunctionExecutable;
 class JSModuleRecord;
 class SymbolTable;
@@ -61,6 +63,11 @@ public:
         RefPtr<UniquedStringImpl> exporterLocalName;
         unsigned offset { 0 };
         unsigned importSlot { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+        // Only while records are compared (JSModuleRecord::resolvesImportsLike): the exporter hasPendingExports(), so
+        // `offset` is not known yet. Not part of the comparison.
+        SyntheticModuleRecord* pendingExporter { nullptr };
+#endif
         bool operator==(const ImportedBinding&) const;
     };
     using ImportedBindings = Vector<ImportedBinding>;

@@ -778,7 +778,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 // we're abstractly "read"ing from a JSScope.
                 ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), localScopeDepth, scope, ident, Get, bytecode.m_resolveType, InitializationMode::NotInitialization);
 
-                if (op.type == ClosureVar || op.type == ModuleVar)
+                // (An import that is linked before it has its binding has no exporting environment yet: JSScope::abstractResolve.)
+                if ((op.type == ClosureVar || op.type == ModuleVar) && op.lexicalEnvironment)
                     symbolTable = op.lexicalEnvironment->symbolTable();
                 else if (op.type == GlobalVar)
                     symbolTable = m_globalObject.get()->symbolTable();
