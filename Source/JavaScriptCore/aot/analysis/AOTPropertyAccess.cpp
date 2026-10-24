@@ -538,8 +538,9 @@ static void setReceiverTest(const PropertyAccessQuery& query, PropertyAccessPlan
 static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberPartition& partition)
 {
     // Whoever names a member expects to find it: the receivers that lack it come last, however many they are.
+    // `ledger.shelf.get(index)`: what the type of the receiver names comes first, however many records with a field of that name the analysis has seen on the way as well.
     PropertyAccessPlan heaviest;
-    std::tuple<bool, size_t, bool> weightOfHeaviest { false, 0, false };
+    std::tuple<bool, bool, size_t, bool> weightOfHeaviest { false, false, 0, false };
     for (const MemberArm& arm : partition.arms) {
         PropertyAccessPlan plan = planMemberArm(context, query, arm);
         if (!plan.isResolved())
@@ -547,7 +548,10 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
         bool hasLayoutOfModule = query.module && std::ranges::any_of(plan.receivers, [&](LayoutID layout) {
             return context.program.at(layout).module == query.module;
         });
-        std::tuple<bool, size_t, bool> weight { arm.answer.kind != MemberKind::Absent, plan.receivers.size(), hasLayoutOfModule };
+        bool hasLayoutOfExpectedType = std::ranges::any_of(plan.receivers, [&](LayoutID layout) {
+            return query.receivers.ofExpectedType.contains(layout);
+        });
+        std::tuple<bool, bool, size_t, bool> weight { arm.answer.kind != MemberKind::Absent, hasLayoutOfExpectedType, plan.receivers.size(), hasLayoutOfModule };
         if (weight <= weightOfHeaviest)
             continue;
         heaviest = WTF::move(plan);

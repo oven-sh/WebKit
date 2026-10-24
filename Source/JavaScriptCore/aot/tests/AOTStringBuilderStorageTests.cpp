@@ -1187,6 +1187,30 @@ static void testCaseConversionOfTheSameStringIsRemembered(LoadedProgram& program
     AOT_TEST_CHECK(keys.tryFindCaseConversion(source.get(), LetterCase::Lower) == lower.get() && keys.tryFindCaseConversion(source.get(), LetterCase::Upper) == upper.get());
 }
 
+// Where strings lie decides which of them share a hash. As many as a hash has places for are all remembered, however often they take turns.
+static void testCaseConversionsOfStringsWithOneHashAreRemembered(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StringKeyCache& keys = program.state().propertyCaches->stringKeys();
+    using LetterCase = StringKeyCache::LetterCase;
+    auto hashOf = [&](JSString* string) { return StringKeyCache::indexOfCaseConversion(MarkedBlockCage::encode(keys.cageBase(), string), LetterCase::Lower); };
+    Vector<Strong<JSString>> sources;
+    sources.append(Strong<JSString>(vm, jsNontrivialString(vm, "X-Request-Id"_s)));
+    Vector<Strong<JSString>> others;
+    constexpr size_t numberOfSources = 4;
+    static_assert(numberOfSources <= StringKeyCache::waysOfCaseConversions);
+    while (sources.size() < numberOfSources) {
+        Strong<JSString> string(vm, jsNontrivialString(vm, "X-Request-Id"_s));
+        (hashOf(string.get()) == hashOf(sources[0].get()) ? sources : others).append(WTF::move(string));
+    }
+    for (unsigned turn = 0; turn < 3; ++turn) {
+        for (auto& source : sources) {
+            AOT_TEST_CHECK(!!keys.tryFindCaseConversion(source.get(), LetterCase::Lower) == !!turn);
+            AOT_TEST_CHECK(textOf(program, toLowerCase(program, source.get())) == "x-request-id"_s);
+        }
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withInstance)() = runNativeTestWithLoadedProgram<stringBuilderStorageTests, programText, body>;
 
@@ -1195,6 +1219,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
     static constexpr NativeTest tests[] = {
         { "string-builder-storage/append-latin1"_s, withInstance<testAppendLatin1> },
         { "string-builder-storage/case-conversion-of-the-same-string-is-remembered"_s, withInstance<testCaseConversionOfTheSameStringIsRemembered> },
+        { "string-builder-storage/case-conversions-of-strings-with-one-hash-are-remembered"_s, withInstance<testCaseConversionsOfStringsWithOneHashAreRemembered> },
         { "string-builder-storage/limit-is-room"_s, withInstance<testLimitIsRoom> },
         { "string-builder-storage/length-is-two-words"_s, withInstance<testLengthIsTwoWords> },
         { "string-builder-storage/first-string-comes-back"_s, withInstance<testFirstStringComesBack> },

@@ -200,6 +200,8 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
     Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
     const Value& lastCall = function.at(chain.lastCall);
     call.setIsDemotedTailCall(!originInBuiltin && FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
+    // A step that is called calls each callback by value, and costs more than the methods that it stands for.
+    call.setIsAlwaysInlined(true);
     ValueID fused = insert(WTF::move(call));
     ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
     builder.applyInsertions();

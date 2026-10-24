@@ -170,13 +170,19 @@ static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize
 #endif
 
 #if !defined(BUN_HARDENED)
+// The memory can be executed from the start and is filled through a second mapping of its pages: no mapping becomes executable later, which the process may have given up. perf takes shared anonymous memory for anonymous.
 static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code, size_t executableSize)
 {
-    void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_EXEC, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (copy == MAP_FAILED)
         return nullptr;
-    memcpySpan(std::span { static_cast<uint8_t*>(copy), code.size() }, code);
-    if (mprotect(copy, code.size(), PROT_READ) || mprotect(copy, executableSize, PROT_READ | PROT_EXEC)) {
+    void* window = mremap(copy, 0, code.size(), MREMAP_MAYMOVE);
+    bool isFilled = window != MAP_FAILED && !mprotect(window, code.size(), PROT_READ | PROT_WRITE);
+    if (isFilled)
+        memcpySpan(std::span { static_cast<uint8_t*>(window), code.size() }, code);
+    if (window != MAP_FAILED)
+        munmap(window, code.size());
+    if (!isFilled || mprotect(static_cast<uint8_t*>(copy) + executableSize, code.size() - executableSize, PROT_READ)) {
         munmap(copy, code.size());
         return nullptr;
     }

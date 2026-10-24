@@ -190,6 +190,9 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
     // A parameter of a block inside the function names either of several arrays, and the store tests the storage of the one that it finds.
     if (array.opcode == Opcode::Parameter && analyses().useLists().blockOf(arrayID) != entryBlock)
         return;
+    // In cold code the allocation may stand in a body of its own.
+    if (array.opcode == Opcode::CallDirect && m_program.at(array.function()).role == FunctionRole::OutlinedBody)
+        return;
     bool isUnderConstruction = array.opcode == Opcode::NewArrayLike || array.opcode == Opcode::NewArrayWithCapacity;
     if (!isUnderConstruction || array.arrayStorage() != value.arrayStorage())
         fail(InternalErrorKind::PayloadOutOfRange, block, id);

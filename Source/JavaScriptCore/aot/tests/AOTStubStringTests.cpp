@@ -441,7 +441,7 @@ public:
     }
 
     // What the conversion of a string has given is found by the address of the string, for that conversion alone.
-    void checkRemembered(const CaseConversion& conversion, const CaseConversion& otherConversion)
+    void checkRemembered(const CaseConversion& conversion, const CaseConversion& otherConversion, size_t way)
     {
         constexpr uint32_t converted = 0x1234;
         std::array<uint64_t, StringKeyCache::numberOfCaseConversions> remembered { };
@@ -451,7 +451,7 @@ public:
         const uint64_t string = m_string.address();
         const uintptr_t cageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(string)));
         const uint32_t source = static_cast<uint32_t>((string - cageBase) >> MarkedBlockCage::shift);
-        uint64_t& entry = remembered[StringKeyCache::indexOfCaseConversion(source, conversion.letterCase)];
+        uint64_t& entry = remembered[StringKeyCache::indexOfCaseConversion(source, conversion.letterCase, way)];
         auto isRemembered = [&] {
             m_runner.recordCallsOf(conversion.operation);
             StubRun run = m_runner.runOperationCall(conversion.call(), { string });
@@ -469,7 +469,7 @@ public:
         entry = static_cast<uint64_t>(source + 1) << 32 | converted;
         AOT_TEST_CHECK(!isRemembered());
         entry = 0;
-        remembered[StringKeyCache::indexOfCaseConversion(source, otherConversion.letterCase)] = static_cast<uint64_t>(source) << 32 | converted;
+        remembered[StringKeyCache::indexOfCaseConversion(source, otherConversion.letterCase, way)] = static_cast<uint64_t>(source) << 32 | converted;
         AOT_TEST_CHECK(!isRemembered());
 
         // A string outside the cage whose address ends like that of a string inside.
@@ -542,8 +542,10 @@ static void testCaseConversionOfRopes()
 static void testCaseConversionsRemembered()
 {
     CaseConversionCalls calls;
-    calls.checkRemembered(caseConversions[0], caseConversions[1]);
-    calls.checkRemembered(caseConversions[1], caseConversions[0]);
+    for (size_t way = 0; way < StringKeyCache::waysOfCaseConversions; ++way) {
+        calls.checkRemembered(caseConversions[0], caseConversions[1], way);
+        calls.checkRemembered(caseConversions[1], caseConversions[0], way);
+    }
 }
 
 namespace {

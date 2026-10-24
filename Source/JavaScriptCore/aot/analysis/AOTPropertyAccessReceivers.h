@@ -65,6 +65,8 @@ struct ReceiverCandidates {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     LayoutList proven;
     LayoutList predicted;
+    // Of the predicted ones: those that the expected type lists.
+    LayoutList ofExpectedType;
     bool hasOtherParts { false };
     bool mayBeNullish { false };
 

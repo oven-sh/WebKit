@@ -13,6 +13,7 @@
 #include "AOTHeat.h"
 #include "AOTResolveCallsCallees.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 
@@ -31,7 +32,7 @@ private:
     using Links = Vector<ArrayMethodCall, ChainShape::maxNumberOfLinks>;
 
     void tryChain(BlockID, const ArrayMethodCall& last);
-    bool isWorthFusingIn(BlockID);
+    bool isWorthFusingIn(const ArrayChain&);
     bool paysAlone(const ArrayMethodCall&) const;
     bool takeEnd(ArrayChain&, const ArrayMethodCall& last);
     bool takeRange(ArrayChain&, const ArrayMethodCall& slice);
@@ -74,9 +75,19 @@ Vector<ArrayChain> ArrayChainFinder::run()
     return WTF::move(m_chains);
 }
 
-bool ArrayChainFinder::isWorthFusingIn(BlockID block)
+// The loop of the traversal runs once for each element, however seldom the chain itself is reached. In cold code it pays where each callback goes into the loop.
+bool ArrayChainFinder::isWorthFusingIn(const ArrayChain& chain)
 {
-    return m_analyses.blockFrequencies().classOf(block) != BlockFrequency::Rare && !m_context.runsAtMostOnce(block) && !isCold(heatClassOf(m_context, block));
+    if (m_analyses.blockFrequencies().classOf(chain.block) == BlockFrequency::Rare || m_context.runsAtMostOnce(chain.block))
+        return false;
+    if (!isCold(heatClassOf(m_context, chain.block)))
+        return true;
+    // Outside the loop the text is put together by calls, which cost what `join` costs and more.
+    if (m_context.inputs.heat.isCompact(m_context.program, m_context.id) || chain.shape.end == ChainEndKind::Join)
+        return false;
+    return !chain.callbacks.isEmpty() && std::ranges::all_of(chain.callbacks, [](const ChainCallback& callback) {
+        return !!callback.callee;
+    });
 }
 
 void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
@@ -105,8 +116,6 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     size_t numberOfLinks = linksFromLast.size();
     if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2 && !paysAlone(last))
         return;
-    if (!isWorthFusingIn(block))
-        return;
 
     for (size_t i = 0; i < numberOfLinks; ++i) {
         const ArrayMethodCall& link = linksFromLast[i];
@@ -114,6 +123,8 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
             return;
         chain.shape.links[numberOfLinks - 1 - i] = link.method->link;
     }
+    if (!isWorthFusingIn(chain))
+        return;
 
     m_isInChain.set(chain.lastCall.index());
     if (chain.rangeCall)

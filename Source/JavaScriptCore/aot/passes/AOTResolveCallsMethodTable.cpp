@@ -127,6 +127,7 @@ void CallResolver::rewriteTableCall(const CallSite& site, const TableCallPlan& p
         tableCall.setReceivers(plan.receivers);
         tableCall.setEntrypoints(entrypoints.span());
         tableCall.setAccessSite(m_expansion.original().accessSite());
+        tableCall.setCallees(m_expansion.original().callees());
         m_expansion.finishArm(m_expansion.append(WTF::move(tableCall)));
     };
 

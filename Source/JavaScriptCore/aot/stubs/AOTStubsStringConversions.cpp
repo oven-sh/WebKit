@@ -107,29 +107,34 @@ void generateIntegerToString(StubAssembler& jit)
 }
 
 // StringKeyCache::tryFindCaseConversion(): what the conversion of this very string gave the last time.
-static void returnRememberedCaseConversion(StubAssembler& jit, StringKeyCache::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg entry)
+static void returnRememberedCaseConversion(StubAssembler& jit, StringKeyCache::LetterCase letterCase, GPRReg string, GPRReg source, GPRReg index, GPRReg table, GPRReg entry, GPRReg sourceOfEntry)
 {
-    RELEASE_ASSERT(noOverlap(string, source, index, entry, instanceGPR, cellCageBaseGPR));
+    RELEASE_ASSERT(noOverlap(string, source, index, table, entry, sourceOfEntry, instanceGPR, cellCageBaseGPR));
     if (jit.options().useWideReferences)
         return;
-    JumpList isNotRemembered;
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.caseConversions)), entry);
-    isNotRemembered.append(jit.branchTestPtr(CCallHelpers::Zero, entry));
+    JumpList isRemembered;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.caseConversions)), table);
+    Jump hasNoTable = jit.branchTestPtr(CCallHelpers::Zero, table);
     // Of a string outside the cage this has more than 32 bits, and equals the upper half of no entry.
     jit.move(string, source);
     jit.sub64(cellCageBaseGPR, source);
     jit.urshift64(TrustedImm32(cell32Shift), source);
     jit.mul32(TrustedImm32(static_cast<int32_t>(StringKeyCache::caseConversionMultiplier)), source, index);
     jit.urshift32(TrustedImm32(StringKeyCache::caseConversionShift), index);
-    jit.lshift32(TrustedImm32(1), index);
-    jit.load64(BaseIndex(entry, index, CCallHelpers::TimesEight, static_cast<int32_t>(static_cast<size_t>(letterCase) * sizeof(uint64_t))), entry);
-    jit.move(entry, index);
-    jit.urshift64(TrustedImm32(32), index);
-    isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, index, source));
+    jit.lshift32(TrustedImm32(StringKeyCache::caseConversionSetShift), index);
+    for (size_t way = 0; way < StringKeyCache::waysOfCaseConversions; ++way) {
+        jit.load64(BaseIndex(table, index, CCallHelpers::TimesEight, static_cast<int32_t>(StringKeyCache::indexOfCaseConversion(0, letterCase, way) * sizeof(uint64_t))), entry);
+        jit.urshift64(entry, TrustedImm32(32), sourceOfEntry);
+        isRemembered.append(jit.branch64(CCallHelpers::Equal, sourceOfEntry, source));
+    }
+    Jump isNotRemembered = jit.jump();
+
+    isRemembered.link(&jit);
     jit.zeroExtend32ToWord(entry, entry);
     decodeCell32(jit, entry, jit.result());
     jit.returnToCaller();
 
+    hasNoTable.link(&jit);
     isNotRemembered.link(&jit);
 }
 
@@ -165,7 +170,7 @@ static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, StringKeyCache::
     jit.returnToCaller();
 
     mayChange.link(&jit);
-    returnRememberedCaseConversion(jit, letterCase, string, scanned.size, scanned.word, scanned.bytes);
+    returnRememberedCaseConversion(jit, letterCase, string, scanned.size, scanned.word, scanned.bytes, scanned.atLeastFirst, scanned.addendForFirst);
     return PreludeExit::CallsOperation;
 }
 

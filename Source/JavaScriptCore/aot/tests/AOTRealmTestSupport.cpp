@@ -78,6 +78,7 @@ static constexpr ModuleHost testModuleHost {
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = failOnModuleHostCall,
     .createEmptyJSONBodyError = nullptr,
+    .createLoadError = nullptr,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)

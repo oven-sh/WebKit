@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTForwardedCalls.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <atomic>
@@ -94,6 +95,54 @@ static bool isEvaluatedAtMostOnce(ModuleKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static const ValueFlowStatement* findCallAt(const ValueFlowResultInputs& inputs, const FlowApplication& application, const FlowIndirectCall& call)
+{
+    if (!call.site)
+        return nullptr;
+    ValueID site = application.accessSites.valueOfSite[call.site.index()];
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(call.caller.index())) {
+        if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call && statement.site == site)
+            return &statement;
+    }
+    return nullptr;
+}
+
+// `f.call(t)`, `f.apply(t, list)`, `Reflect.apply(f, t, list)`: the callee is what the built-in itself calls, once, then and there.
+// A built-in or a bound function that arrives where `f` stands is handed the other operands and calls them as often as it likes, and the list of indirect calls does not tell the two apart.
+static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& inputs, const FlowApplication& application, ValueSetMaker& maker, const FlowIndirectCall& call)
+{
+    const ValueFlowStatement* statement = findCallAt(inputs, application, call);
+    if (!statement)
+        return false;
+    const FlowCallStamp* stamp = findByValue(application.bodies[call.caller.index()].calls.span(), statement->site, &FlowCallStamp::value);
+    if (!stamp)
+        return false;
+
+    static_assert(!OperandIndex::Call::callee && OperandIndex::Call::thisValue == 1);
+    constexpr size_t firstArgument = 2;
+    std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(*statement);
+    const CalleeSet& callees = inputs.program.at(stamp->callees);
+    ValueSetID called = ValueSets::nothing;
+    for (BuiltinID builtin : callees.builtins) {
+        for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
+            std::optional<BuiltinOperand> operand = operandCalledBy(overload);
+            if (!operand)
+                return false;
+            size_t index = operand->isReceiver() ? OperandIndex::Call::thisValue : firstArgument + operand->argumentIndex();
+            if (index >= operands.size())
+                return false;
+            called = maker.unite(called, inputs.valueOf(maker, operands[index]));
+        }
+    }
+
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueSets& sets = inputs.sets();
+    if (ValueSets::isComplement(called) || !sets.contains(called, universe.closureOf(call.callee)))
+        return false;
+    bool holdsPlaceholder = sets.contains(called, ValueFlowUniverse::unknownObject()) || sets.contains(called, ValueFlowUniverse::untrackedObject());
+    return !holdsPlaceholder && !sets.meet(called, universe.builtinFunctions()) && !sets.meet(called, universe.otherCallables());
+}
+
 void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -101,6 +150,12 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
     Vector<FunctionFlow>& flows = tables.functions.functions;
     Vector<uint32_t> numberOfEnteringOperations = countEnteringOperations(inputs, tables, application);
     BitVector modulesWithBodiesThatOnlyLoaderEnters = findModulesWithBodiesThatOnlyLoaderEnters(inputs, calls, numberOfEnteringOperations);
+    std::span<const FlowIndirectCall> indirectCalls = tables.functions.indirectCalls.span();
+    Vector<uint32_t> numberOfIndirectCalls(FillWith { }, program.functions.size(), 0u);
+    for (const FlowIndirectCall& call : indirectCalls)
+        ++numberOfIndirectCalls[call.callee.index()];
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
 
     Vector<FunctionID> worklist;
     auto runsAtMostOnce = [&](FunctionID function) {
@@ -131,6 +186,19 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
                         runsAtMostOnce(callee);
                 });
             }
+        }
+        // `(function () { .. }).call(this)` enters the function as a call operation does.
+        for (const FlowIndirectCall& call : std::ranges::equal_range(indirectCalls, caller, { }, &FlowIndirectCall::caller)) {
+            if (call.kind != FlowIndirectCallKind::BuiltinCallback || call.times != BuiltinCallbackTimes::Once || call.isInCycle)
+                continue;
+            FunctionID callee = call.callee;
+            ValueFlowObjectID closure = inputs.universe().closureOf(callee);
+            const FunctionFlow& flow = flows[callee.index()];
+            bool isOnlyEntry = !numberOfEnteringOperations[callee.index()] && numberOfIndirectCalls[callee.index()] == 1 && !calls.functionsEnteredWithoutRecord.get(callee.index());
+            if (!isOnlyEntry || inputs.hasEscaped(closure) || inputs.isLost(closure) || flow.callers != CallerState::AllKnown || flow.executions != ExecutionCount::Unknown)
+                continue;
+            if (isCalledByForwardingBuiltinItself(inputs, application, maker, call))
+                runsAtMostOnce(callee);
         }
     }
 }

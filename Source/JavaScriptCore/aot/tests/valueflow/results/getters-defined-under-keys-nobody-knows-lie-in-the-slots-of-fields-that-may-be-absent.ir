@@ -1,0 +1,32 @@
+# type Flags = { first?: boolean; second?: boolean; size: number }
+# const flags = { size: 1 } as Flags; second = ..   for (const name of names()) Object.defineProperty(flags, name, { get: one, enumerable: true, configurable: true })   flags.first
+# Whatever the names are, each of them is an accessor of that form. The type of the object has the names: a field that may be absent, and that no operation of the program gives a value, is absent or such
+# an accessor, so the getter lies in its slot and a read is a load and a call. A field that the literal lists holds a value, and so does one that a store names.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Flags" fields=[{key="first" declared={type=undefined|boolean} flags=[IsEnforced] form=[IsAccessor] {{*}}slotType=f1}, {key="second" declared={type=undefined|true} flags=[IsEnforced] flow={{*}}, {key="size" declared={{*}} flags=[IsRequired, IsEnforced] flow=
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Flags" fields=[{key="first" declared={type=undefined|boolean}}, {key="second" declared={type=undefined|boolean}}, {key="size" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[2]
+    v2 = Boolean boolean=true
+    PropSet v1, v2 key="second" mode=Strict
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="name" [isFreeName]
+    v6 = Call v5
+    v7 = NewClosure function=f1
+    v8 = NewObject -, v7, v2, v2 layout=L1 fields=[0, 1, 2]
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Call v9, -, v1, v6, v8
+    v11 = PropGet v1 key="first"
+    Return v11
+}
+function f1 name="one" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}

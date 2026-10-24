@@ -836,7 +836,7 @@ static void testExcludedFunctionSourceIsRecorded()
     AOT_TEST_CHECK(!readWords({ }).recorded.omitsFunctionSource);
     AOT_TEST_CHECK(!readWords({ "exclude=EvaluatedText"_s }).recorded.omitsFunctionSource && readWords({ "exclude=EvaluatedText"_s }).excludesEvaluatedText());
     CompileOptions withoutSource = readWords({ "exclude=FunctionSource"_s });
-    AOT_TEST_CHECK(withoutSource.recorded.omitsFunctionSource && !withoutSource.excludesEvaluatedText() && !withoutSource.excludesCodeOutsideImage());
+    AOT_TEST_CHECK(withoutSource.recorded.omitsFunctionSource && !withoutSource.excludesEvaluatedText() && withoutSource.excludesCodeOutsideImage() == runsOnlyCodeOfImage);
     AOT_TEST_CHECK(readWords({ }).excludesCodeOutsideImage() == runsOnlyCodeOfImage && readWords({ "exclude=CodeOutsideImage"_s }).excludesCodeOutsideImage());
 }
 

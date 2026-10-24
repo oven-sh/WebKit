@@ -567,7 +567,7 @@ private:
             description.addOwn(Effects::unknownCode());
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
-            CalleeList callees = calleesOfCall(program, value);
+            CalleeList callees = calleesThatBoundEffectsOf(program, value);
             if (callees.isComplete && callees.builtins.isEmpty() && runsOnlyCallees(description, callees)) {
                 summarizeCall(block, value, callees, description);
                 return;

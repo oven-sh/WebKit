@@ -377,10 +377,23 @@ void MakerCopier::copyForCallsIn(FunctionID callerID, unsigned depth)
 
 BitVector MakerCopier::run()
 {
+    // The reader notes which functions name Object.create only where nothing asks for the program as it was read. A build that verifies the program makes the same copies: there every function is looked at.
+    Vector<FunctionID> found;
     const Program::BodiesAsRead* bodies = m_program.bodiesAsRead();
-    if (!bodies || bodies->functionsThatNameObjectCreate.isEmpty())
+    if (!bodies) {
+        const BuiltinTable& builtins = m_program.builtins();
+        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+            bool namesObjectCreate = std::ranges::any_of(m_program.functions[index].values, [&](const Value& value) {
+                return value.opcode == Opcode::Builtin && builtins.canonicalID(value.builtin()) == Builtins::ObjectCreate;
+            });
+            if (namesObjectCreate)
+                found.append(FunctionID(index));
+        }
+    }
+    std::span<const FunctionID> functionsThatNameObjectCreate = bodies ? bodies->functionsThatNameObjectCreate.span() : found.span();
+    if (functionsThatNameObjectCreate.empty())
         return { };
-    findMakers(bodies->functionsThatNameObjectCreate.span());
+    findMakers(functionsThatNameObjectCreate);
     for (FunctionID body : m_bodies)
         copyForCallsIn(body, 0);
     return WTF::move(m_copies);

@@ -77,7 +77,13 @@ void StringKeyCache::cacheCaseConversion(VM& vm, const JSString* source, LetterC
     if (!vm.heap.cage().contains(source) || !vm.heap.cage().contains(converted))
         return;
     uint32_t encoded = MarkedBlockCage::encode(m_cageBase, source);
+    size_t way = 0;
+    while (way < waysOfCaseConversions - 1 && m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)])
+        ++way;
+    for (; way; --way)
+        m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)] = m_caseConversions[indexOfCaseConversion(encoded, letterCase, way - 1)];
     m_caseConversions[indexOfCaseConversion(encoded, letterCase)] = static_cast<uint64_t>(encoded) << 32 | MarkedBlockCage::encode(m_cageBase, converted);
+    m_hashesWithCaseConversions.set(indexOfCaseConversion(encoded, letterCase) >> caseConversionSetShift);
     m_writtenSinceCollection.recordAll();
 }
 
@@ -205,14 +211,21 @@ size_t StringKeyCache::removeDeadKeysByParts(VM& vm)
 size_t StringKeyCache::removeDeadCaseConversions(VM& vm)
 {
     size_t removedCount = 0;
-    for (uint64_t& entry : m_caseConversions) {
-        if (!entry)
-            continue;
-        if (vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry >> 32))) && vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry))))
-            continue;
-        entry = 0;
-        ++removedCount;
-    }
+    m_hashesWithCaseConversions.forEachSetBit([&](size_t hash) {
+        bool hasEntries = false;
+        for (uint64_t& entry : std::span { m_caseConversions }.subspan(hash << caseConversionSetShift, size_t { 1 } << caseConversionSetShift)) {
+            if (!entry)
+                continue;
+            if (vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry >> 32))) && vm.heap.isMarked(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)))) {
+                hasEntries = true;
+                continue;
+            }
+            entry = 0;
+            ++removedCount;
+        }
+        if (!hasEntries)
+            m_hashesWithCaseConversions.clear(hash);
+    });
     return removedCount;
 }
 

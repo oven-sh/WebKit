@@ -172,6 +172,7 @@ ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, co
     }
 
     result.predicted = WTF::move(members.predicted.isEmpty() ? members.proven : members.predicted);
+    result.ofExpectedType = WTF::move(members.ofExpectedType);
     if (!result.predicted.isEmpty())
         result.level = KnowledgeLevel::Expected;
     return result;

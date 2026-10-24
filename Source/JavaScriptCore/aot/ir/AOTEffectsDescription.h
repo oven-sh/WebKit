@@ -75,6 +75,8 @@ void describeOverload(const Program&, BuiltinOverloadID, const Type& argument, E
 void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, EffectDescription&);
 
 CalleeList calleesOfCall(const Program&, const Value& call);
+// The lookup and the entrypoints of a table call run what the receiver finds under the name. Where the call lists that, the list stands for them.
+CalleeList calleesThatBoundEffectsOf(const Program&, const Value& call);
 
 } } } // namespace JSC::AOT::Typed
 

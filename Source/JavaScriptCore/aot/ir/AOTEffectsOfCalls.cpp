@@ -98,6 +98,26 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
     return CalleeList::unknown();
 }
 
+static bool listsWhatReceiverFinds(const Program& program, const Value& call)
+{
+    return call.opcode == Opcode::CallTable && call.callees() && calleesOf(program, call.callees()).isComplete;
+}
+
+static Effects effectsOfFindingCallee()
+{
+    Effects effects = Effects::unknownCode();
+    effects.writes = { };
+    effects.mayCallUnknownCode = false;
+    return effects;
+}
+
+CalleeList calleesThatBoundEffectsOf(const Program& program, const Value& call)
+{
+    if (listsWhatReceiverFinds(program, call))
+        return calleesOf(program, call.callees());
+    return calleesOfCall(program, call);
+}
+
 // A call by value reaches the body through the entrypoint of the callee, which refuses a call of the wrong kind and collects the rest arguments.
 static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
 {
@@ -238,7 +258,14 @@ void describeCall(const Program& program, const Function& function, const Value&
     }
 
     BuiltinCallMode mode = callModeOf(value.opcode);
-    CalleeList callees = calleesOfCall(program, value);
+    CalleeList callees = calleesThatBoundEffectsOf(program, value);
+    if (listsWhatReceiverFinds(program, value)) {
+        description.addOwn(effectsOfFindingCallee());
+        forEachFunctionReference(value, [&](FunctionID entered, FunctionReferenceKind kind) {
+            if (isCall(kind))
+                description.addSlowPathFunction(entered);
+        });
+    }
     if (callsThatCopyArgumentsOfAnyNumber.contains(value.opcode))
         description.addThrow();
     if (Value::opcodesWithCallees.contains(value.opcode)) {

@@ -69,6 +69,8 @@ struct ModuleHost {
     JSObject* (*createAsyncModuleRequiredError)(JSGlobalObject*, const String& path);
     // Null in a host without bodies to read.
     JSObject* (*createEmptyJSONBodyError)(JSGlobalObject*);
+    // What loading the file as code throws before any of it runs. Empty where the host finds nothing wrong with the file. Null in a host that reads no code at run time.
+    JSValue (*createLoadError)(JSGlobalObject*, const String& path);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

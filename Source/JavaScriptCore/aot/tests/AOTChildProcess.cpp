@@ -38,7 +38,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
+// Shorter than the five minutes that Bun's runner gives a file, so that a test that never ends is named.
+#if ASAN_ENABLED || ASSERT_ENABLED
 static constexpr Seconds silenceLimit = 300_s;
+#else
+static constexpr Seconds silenceLimit = 100_s;
+#endif
 
 static Lock spawnLock;
 

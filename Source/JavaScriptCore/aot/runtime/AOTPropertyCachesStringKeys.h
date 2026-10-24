@@ -19,6 +19,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/RapidHash.h>
@@ -212,15 +213,22 @@ public:
         if (distance >= MarkedBlockCage::maxSize)
             return nullptr;
         uint32_t encoded = static_cast<uint32_t>(distance >> MarkedBlockCage::shift);
-        uint64_t entry = m_caseConversions[indexOfCaseConversion(encoded, letterCase)];
-        return entry >> 32 == encoded ? uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry))) : nullptr;
+        for (size_t way = 0; way < waysOfCaseConversions; ++way) {
+            uint64_t entry = m_caseConversions[indexOfCaseConversion(encoded, letterCase, way)];
+            if (entry >> 32 == encoded)
+                return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
+        }
+        return nullptr;
     }
     void cacheCaseConversion(VM&, const JSString* source, LetterCase, JSString* converted);
-    // The two conversions of one string lie side by side.
+    // Where a string lies decides its hash, so the strings of one hash have four places, the one that came last in front. The two conversions of one string lie side by side.
     static constexpr uint32_t caseConversionMultiplier = 0x9e3779b1u;
     static constexpr unsigned caseConversionShift = 25;
-    static constexpr size_t indexOfCaseConversion(uint32_t source, LetterCase letterCase) { return (source * caseConversionMultiplier >> caseConversionShift) << 1 | static_cast<size_t>(letterCase); }
-    static constexpr size_t numberOfCaseConversions = 2u << (32 - caseConversionShift);
+    AOT_CLASS_THRESHOLD(size_t, waysOfCaseConversions, 4);
+    static constexpr unsigned caseConversionSetShift = 3;
+    static constexpr size_t indexOfCaseConversion(uint32_t source, LetterCase letterCase, size_t way = 0) { return (source * caseConversionMultiplier >> caseConversionShift) << caseConversionSetShift | way << 1 | static_cast<size_t>(letterCase); }
+    static constexpr size_t numberOfCaseConversions = size_t { 1 } << (32 - caseConversionShift + caseConversionSetShift);
+    static_assert(2 * waysOfCaseConversions == 1u << caseConversionSetShift);
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
@@ -293,6 +301,7 @@ private:
     size_t m_keysByPartsEvictionCount { 0 };
     std::array<uint64_t, 256> m_caseConvertedStrings { };
     std::array<uint64_t, numberOfCaseConversions> m_caseConversions { };
+    WTF::BitSet<(numberOfCaseConversions >> caseConversionSetShift)> m_hashesWithCaseConversions;
     RememberedSlotSet m_writtenSinceCollection;
 };
 

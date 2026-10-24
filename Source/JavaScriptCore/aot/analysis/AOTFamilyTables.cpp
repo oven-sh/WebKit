@@ -152,6 +152,7 @@ struct FamilyTables::Cache {
         LayoutSetID stamp;
         const Family* receiverFamily { nullptr };
         LayoutList predicted;
+        LayoutList ofExpectedType;
     };
 
     struct SubsetEntry {
@@ -389,11 +390,15 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
     auto predictedMembers = [&](const LayoutList& proven, const LayoutList& expectedMembers) {
         return computePredictedMembers(receiver ? &proven : nullptr, expected ? &expectedMembers : nullptr, stamp ? &m_program.at(stamp) : nullptr);
     };
+    auto membersOfExpectedType = [&](const LayoutList& expectedMembers) {
+        return receiver || !expected ? LayoutList() : expectedMembers;
+    };
 
     if (std::max({ listedMembers(receiver).size(), listedMembers(expected).size(), listedMembers(stamp).size() }) < minCachedSetSize) {
         LayoutList proven = computeAllocatedMembers(listedMembers(receiver));
-        LayoutList predicted = predictedMembers(proven, computeAllocatedMembers(listedMembers(expected)));
-        return { WTF::move(proven), WTF::move(predicted) };
+        LayoutList expectedMembers = computeAllocatedMembers(listedMembers(expected));
+        LayoutList predicted = predictedMembers(proven, expectedMembers);
+        return { WTF::move(proven), WTF::move(predicted), membersOfExpectedType(expectedMembers) };
     }
 
     Cache& cache = this->cache();
@@ -404,9 +409,10 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
     const Cache::CandidatesEntry* entry = cache.candidates.find(hash, matches);
     if (!entry) {
         const Family& receiverFamily = familyOf(cache, receiver);
-        entry = &cache.candidates.add(hash, { receiver, expected, stamp, &receiverFamily, predictedMembers(receiverFamily.allocatedMembers, familyOf(cache, expected).allocatedMembers) }, matches);
+        const LayoutList& expectedMembers = familyOf(cache, expected).allocatedMembers;
+        entry = &cache.candidates.add(hash, { receiver, expected, stamp, &receiverFamily, predictedMembers(receiverFamily.allocatedMembers, expectedMembers), membersOfExpectedType(expectedMembers) }, matches);
     }
-    return { entry->receiverFamily->allocatedMembers, entry->predicted };
+    return { entry->receiverFamily->allocatedMembers, entry->predicted, entry->ofExpectedType };
 }
 
 bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const

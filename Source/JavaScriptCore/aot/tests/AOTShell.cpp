@@ -539,6 +539,7 @@ constinit const ModuleHost moduleHost {
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = createAsyncModuleRequiredError,
     .createEmptyJSONBodyError = nullptr,
+    .createLoadError = nullptr,
 };
 
 } // namespace JSC::AOT::Shell

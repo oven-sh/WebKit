@@ -56,6 +56,8 @@ public:
     struct Candidates {
         LayoutList proven;
         LayoutList predicted;
+        // Of the predicted ones, where nothing is proven: those that the expected type lists.
+        LayoutList ofExpectedType;
     };
 
     explicit FamilyTables(const Program&);

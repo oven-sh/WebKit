@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeSites.h"
+#include "AOTCompileOptions.h"
 #include "AOTProgramFile.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
@@ -63,6 +64,7 @@ private:
         bool requiresUnsanitizedCode { false };
         bool requiresOtherThanWindows { false };
         bool requiresFaultingLoopPolls { false };
+        bool requiresCodeOutsideImage { false };
     };
 
     void collectDirectiveLines();
@@ -397,6 +399,8 @@ static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
 static constexpr ASCIILiteral notWindows = "not-windows"_s;
 // A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;
+// A hardened engine runs only the code of the image, whatever the options say.
+static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
 #if OS(WINDOWS)
 static constexpr bool isForWindows = true;
 #else
@@ -418,12 +422,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == faultingLoopPolls)
+        if (word == unsanitizedCode || word == notWindows || word == faultingLoopPolls || word == codeOutsideImage)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -640,7 +644,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

@@ -295,6 +295,23 @@ static uint64_t computeKnownCalleeBenefit(FunctionPassContext& context, ValueID 
     return bytes;
 }
 
+// A loop of the library calls the function that is written at the call once for each element, however seldom the call itself is reached.
+static bool handsOwnClosureToLoopOfLibrary(FunctionPassContext& context, ValueID callID, const InliningSummary& summary)
+{
+    const Value& call = context.function.at(callID);
+    if (context.inputs.heat.isCompact(context.program, context.id))
+        return false;
+    if (context.program.at(call.function()).role != FunctionRole::Library)
+        return false;
+    for (size_t entryParameter : summary.parametersCalledInCycles) {
+        ValueID argument = argumentAt(call, entryParameter);
+        // Behind the tests of the receiver each arm hands on the one closure.
+        if (argument && context.program.typeOf(context.function, argument).singleFunction() && context.function.at(sameObjectThroughCasts(context.function, argument)).opcode == Opcode::NewClosure)
+            return true;
+    }
+    return false;
+}
+
 static bool hasKnownLayout(const Program& program, const Function& caller, ValueID argument)
 {
     if (program.typeOf(caller, argument).layouts)
@@ -505,11 +522,12 @@ static bool isAmongMostEnteredFunctions(const FunctionPassContext& context, Func
     return context.inputs.heat.percentileOf(context.program, function) >= InlineModel::percentileOfMostEnteredFunctions;
 }
 
-static uint32_t budgetAt(const FunctionPassContext& context, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
+static uint32_t budgetAt(const FunctionPassContext& context, const InliningSummary& summary, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
 {
     uint32_t budget = inlineBudgetBytes(context, heat, depth);
     // What a call costs, a loop around it pays at every turn, and what the loop knows of the arguments stops at the call. Of a function with one call site there is one copy at most.
-    if (isRepeatedByCaller && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
+    // A callee with a loop of its own spends its time there, and the call costs it little.
+    if (isRepeatedByCaller && !summary.hasCycle && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
         return std::max(budget, clampTo<uint32_t>(context.limit(LimitID::InlineBudgetOnlyCallBytes) >> std::min(depth, 31u)));
     if (isHot(heat) || isCold(heat) || !isAmongMostEnteredFunctions(context, call.function()))
         return budget;
@@ -555,6 +573,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
         heat = HeatClass::Cold;
+    else if (heat == HeatClass::Cold && caller.at(block).frequency == BlockFrequency::Normal && handsOwnClosureToLoopOfLibrary(context, call, summary))
+        heat = HeatClass::Warm;
     // In a loop of the caller the call runs more often than the caller. A caller that runs once repeats it often only in a loop within a loop.
     double leastFrequencyOfHotCall = context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce ? frequencyConstants.iterationsPerLoop : HeatModel::minWeightOfCallInLoop;
     if (heat == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot() && context.analyses.blockFrequencies().frequencyOf(block) >= leastFrequencyOfHotCall)
@@ -564,14 +584,12 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
-    // In a loop of the caller what counts is what the loop runs.
-    uint32_t bodyBytes = isRepeatedByCaller ? std::min(summary.codeBytes, summary.likelyCodeBytes) : summary.codeBytes;
-    uint32_t cost = bodyBytes > removedBytes ? bodyBytes - removedBytes : 0;
+    uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, value, heat, depth, isRepeatedByCaller);
+    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, summary, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {

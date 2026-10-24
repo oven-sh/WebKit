@@ -1563,7 +1563,11 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
     const ValueSets& sets = m_inputs.sets();
     // What is defined under a key nobody knows speaks for the key only in an object that is born empty: see getsAccessorsUnderKeysNobodyKnows(). It speaks against the key in any.
-    ValueSetID getters = m_inputs.program.at(layout).fields.isEmpty() ? stores.gettersUnderUnknownKey : ValueSets::nothing;
+    // `const flags = {} as Flags`: so is an object born whose type has the names. There it speaks for a field that may be absent, which is an accessor unless an operation gives it a value.
+    const Layout& declaring = m_inputs.program.at(layout);
+    std::optional<uint32_t> field = declaring.findField(key);
+    bool mayBeDefinedUnderUnknownKey = declaring.fields.isEmpty() || (field && !declaring.fields[*field].flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted }));
+    ValueSetID getters = mayBeDefinedUnderUnknownKey ? stores.gettersUnderUnknownKey : ValueSets::nothing;
     ValueSetID setters = ValueSets::nothing;
     ValueSetID values = stores.valueFromOperationsUnderUnknownKey;
     uint8_t forms = stores.formsOfAccessorsUnderUnknownKey;

@@ -166,7 +166,7 @@ static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, 
 
 static EffectsOnEdges callEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& call, const EffectsOnEdges& effects)
 {
-    CalleeList callees = calleesOfCall(context.program, call);
+    CalleeList callees = calleesThatBoundEffectsOf(context.program, call);
     if (!callees.isComplete || !callees.builtins.isEmpty())
         return effects;
     EffectDescription description = describeEffects(context.program, function, call);

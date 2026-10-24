@@ -73,3 +73,15 @@ function f8 name="goodThroughBlockParameter" parameters=[{type=boolean}, {type=i
     v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
     Return
 }
+function f9 name="allocates" role=OutlinedBody parameters=[{type=int[0, 100]}] results=[{type=Array}] {
+  b0(v0: int[0, 100]):
+    v1 = NewArrayWithCapacity v0 arrayStorage=Double
+    Return v1
+}
+function f10 name="goodThroughOutlinedBody" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: number):
+    v2 = CallDirect v0 function=f9
+    v3 = Integer integer=0
+    v4 = TryPutByValDirect v2, v3, v1 arrayStorage=Double
+    Return
+}

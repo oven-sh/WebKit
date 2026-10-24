@@ -658,11 +658,20 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
         throwException(globalObject, scope, createExportNotFoundError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer)));
         return;
     }
+    Identifier key;
     {
         DisallowVMEntry disallowVMEntry(vm);
-        loader()->resolve(globalObject, m_state.strings->string(vm, specifier), pathString(importer), nullptr, true);
+        key = loader()->resolve(globalObject, m_state.strings->string(vm, specifier), pathString(importer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, void());
+    if (host().createLoadError) {
+        JSValue error = host().createLoadError(globalObject, key.string());
+        RETURN_IF_EXCEPTION(scope, void());
+        if (error) {
+            throwException(globalObject, scope, error);
+            return;
+        }
+    }
     throwException(globalObject, scope, createModuleMissingAtBuildError(globalObject, ProgramStrings::text(m_table.programTables(), specifier), m_table.pathText(importer), isForRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s));
 }
 
