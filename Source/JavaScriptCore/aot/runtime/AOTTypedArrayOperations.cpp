@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
