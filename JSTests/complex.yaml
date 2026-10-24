@@ -120,3 +120,14 @@
 
 - path: complex/date-parse-with-narrow-no-break-space.js
   cmd: runComplexTest [], [], "TZ=America/Los_Angeles"
+
+- path: complex/stack-bounds-large-environment.js
+  cmd: |
+      if ($hostOS == "linux")
+          # The kernel caps one string at 128 KB.
+          environment = (0...7).map { |i| "STACK_BOUNDS_PADDING_#{i}=" + "x" * 100000 }
+          underStackLimit = ["sh", "-c", "ulimit -S -s 8192; exec \"$0\" \"$@\""]
+          addRunCommand("complex", underStackLimit + vmCommand + BASE_OPTIONS + $testSpecificRequiredOptions + [$benchmark.to_s], noisyOutputHandler, simpleErrorHandler, *environment)
+      else
+          skip
+      end
