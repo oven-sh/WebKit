@@ -8444,6 +8444,7 @@ class YarrGenerator final : public YarrJITInfo {
         AlternativeGuards guards;
         if (failureIsExpected && !dispatch && !term->parentheses.isStringList) {
             bool minimumSizeIsClaimed = parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && term->quantityType == QuantifierType::FixedCount;
+            ASSERT(minimumSizeIsClaimed == (term->quantityType == QuantifierType::FixedCount && term->quantityMaxCount == 1)); // As m_checkAdjust below has it.
             guards = prepareAlternativeGuards(*term->parentheses.disjunction, term->inputPosition - (minimumSizeIsClaimed ? term->parentheses.disjunction->m_minimumSize : 0));
         }
 
@@ -10218,6 +10219,12 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
     FirstCharacterSet computeFirstCharacterSet(const PatternAlternative& alternative)
     {
+#if !defined(YARR_FOR_IMAGE)
+        // Every enclosing group that is analyzed asks again for the alternatives nested in it.
+        if (auto iterator = m_firstCharacterSetsOfNestingAlternatives.find(&alternative); iterator != m_firstCharacterSetsOfNestingAlternatives.end())
+            return iterator->value;
+
+#endif
         FirstCharacterSet set;
 #if !defined(YARR_FOR_IMAGE)
         if (!isSafeToRecurse()) [[unlikely]] {
@@ -10229,7 +10236,9 @@ class YarrGenerator final : public YarrJITInfo {
             return set;
         }
 #if !defined(YARR_FOR_IMAGE)
+        bool hasNestedAlternatives = false;
         for (auto& term : alternative.m_terms) {
+            hasNestedAlternatives |= term.type == PatternTerm::Type::ParenthesesSubpattern;
             if (addFirstCharactersOfTerm(term, set)) {
                 set.consumed = true;
                 break;
@@ -10243,6 +10252,8 @@ class YarrGenerator final : public YarrJITInfo {
         // at any character (its "first character" is whatever follows).
         if (!set.consumed)
             set.any = true;
+        if (hasNestedAlternatives)
+            m_firstCharacterSetsOfNestingAlternatives.add(&alternative, set);
 #else
         for (auto [begin, end] : firstCharacters->ranges)
             set.addRange(begin, end);
@@ -12901,6 +12912,8 @@ private:
     // First-character dispatch state for nested disjunctions (see DispatchInfo).
     Vector<UniqueRef<DispatchInfo>, 2> m_dispatchInfos;
 #if !defined(YARR_FOR_IMAGE)
+    // See computeFirstCharacterSet.
+    UncheckedKeyHashMap<const PatternAlternative*, FirstCharacterSet> m_firstCharacterSetsOfNestingAlternatives;
     // First-character guards of runs of nested alternatives (see AlternativeGuard), and their tables.
     Vector<UniqueRef<AlternativeGuard>, 2> m_alternativeGuards;
     Vector<std::pair<WTF::BitSet<256>, const uint8_t*>, 2> m_alternativeGuardTables;

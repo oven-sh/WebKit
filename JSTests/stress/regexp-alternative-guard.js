@@ -223,3 +223,17 @@ test(/(?<!a1|b2|c3|d4)z/, "d4zz", [3, "z"]);
 test(/(?<=(?!a1|b2|c3|d4)..)z/, "a1z", null);
 test(/(?<=(?!a1|b2|c3|d4)..)z/, "a2z", [2, "z"]);
 test(/(?<=(?!a1|b2|c3|d4)..)z/, "xxd4z", null);
+
+// Groups nested many levels deep: each level needs the first characters of every level below it.
+{
+    let letters = "bcdefghijklmnopqrstuvwxy";
+    let source = "a0|a1|a2";
+    for (let depth = 0; depth < 500; ++depth)
+        source = `(?:${source})|${letters[depth % letters.length]}1|${letters[depth % letters.length]}2`;
+    test(new RegExp(`(?:${source})+`), "zzzza2y1b0", [4, "a2y1"]);
+    test(new RegExp(`(?:${source})+`), "a3b3y3z1", null);
+    test(new RegExp(`(?:${source})z`), "a2b1y2z", [4, "y2z"]);
+    test(new RegExp(`^(?:(?!${source})..)*$`), "a3b3y3z1", [0, "a3b3y3z1"]);
+    test(new RegExp(`^(?:(?!${source})..)*$`), "a3b3y3a0", null);
+    test(new RegExp(`^(?:(?!${source})..)*$`, "i"), "a3b3Y2", null);
+}
