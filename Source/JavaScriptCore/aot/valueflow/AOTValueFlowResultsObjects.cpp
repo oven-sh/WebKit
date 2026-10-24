@@ -644,25 +644,27 @@ public:
             AOT::sort(objects);
             objects.shrink(std::ranges::unique(objects).begin() - objects.begin());
             ValueSetID remaining = maker.intersect(maker.of(objects.span()), solver.valueOf(markNode));
-            Vector<ValueFlowNodeID> predecessors;
+            // In the order of the program: the numbers of the nodes follow the order of the solve.
+            Vector<std::pair<Witness, ValueFlowNodeID>> marks;
             solver.graph().forEachPredecessor(markNode, [&](ValueFlowNodeID predecessor) {
-                predecessors.append(predecessor);
-            });
-            AOT::sort(predecessors);
-            for (ValueFlowNodeID predecessor : predecessors) {
-                if (remaining == ValueSets::nothing)
-                    break;
                 ValueFlowStatementID id = solver.statementThatLogged({ predecessor, markNode });
                 if (!id)
-                    continue;
+                    return;
                 const ValueFlowStatement& statement = solver.statementAt(id);
                 if (!statement.function || statement.function.index() >= m_inputs.program.functions.size() || !statement.site)
-                    continue;
+                    return;
+                marks.append({ witnessAt(m_inputs.program, statement.function, statement.site), predecessor });
+            });
+            AOT::sort(marks, [](const auto& first, const auto& second) {
+                return std::tie(first.first.function, first.first.value) < std::tie(second.first.function, second.first.value);
+            });
+            for (const auto& [witness, predecessor] : marks) {
+                if (remaining == ValueSets::nothing)
+                    break;
                 ValueSetID brought = maker.intersect(solver.valueOf(predecessor), remaining);
                 if (brought == ValueSets::nothing)
                     continue;
-                Witness witness = witnessAt(m_inputs.program, statement.function, statement.site);
-                m_inputs.sets().forEachMember(brought, [&](ValueFlowObjectID object) {
+                m_inputs.sets().forEachMember(brought, [&, witness = witness](ValueFlowObjectID object) {
                     m_witnesses.add(keyOf(object, static_cast<ObjectMutation>(mutation)), witness);
                 });
                 remaining = maker.intersect(remaining, ValueSets::complement(brought));

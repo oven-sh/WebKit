@@ -1684,6 +1684,15 @@ struct ValuesWithoutProof {
 
 } // anonymous namespace
 
+static bool hasCheck(const Terminator& terminator)
+{
+    for (TailCast cast : terminator.casts()) {
+        if (cast.resolution == CastResolution::Check)
+            return true;
+    }
+    return false;
+}
+
 static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, const FlowApplication& application, ValuesWithoutProof* valuesWithoutProof, ValueFlowPositionCounts& counts, FlowBodyUpdate& update)
 {
     const Program& program = inputs.program;
@@ -1793,6 +1802,34 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     }
     AOT::sort(update.proofs, { }, &FlowValueProof::value);
     AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);
+
+    // A test behind a call ends the tail call, so the call stays one where whatever it answers passes every check.
+    Vector<std::pair<ValueID, BlockID>, 2> checkedTailCalls;
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        const Terminator& terminator = function.blocks[index].terminator;
+        if (terminator.kind == TerminatorKind::ReturnCall && hasCheck(terminator))
+            checkedTailCalls.append({ terminator.callOperand(), BlockID(index) });
+    }
+    if (checkedTailCalls.isEmpty() || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()))
+        return;
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || !statement.result)
+            continue;
+        size_t found = checkedTailCalls.findIf([&](const auto& entry) {
+            return entry.first == statement.site;
+        });
+        if (found == notFound)
+            continue;
+        ValueSetID held = inputs.solver().valueOf(statement.result);
+        if (inputs.sets().isEmpty(held))
+            continue;
+        bool passesEveryCheck = true;
+        for (TailCast cast : function.at(checkedTailCalls[found].second).terminator.casts())
+            passesEveryCheck &= cast.resolution != CastResolution::Check || positions.isSurelyInside(held, cast.declared.type);
+        if (passesEveryCheck)
+            update.tailCalls.append(FlowTailCallUpdate { .call = statement.site, .claimsAreRedundant = true });
+    }
+    AOT::sort(update.tailCalls, { }, &FlowTailCallUpdate::call);
 }
 
 // Such a read has the type of its location, which holds `absent` for the sake of other reads.

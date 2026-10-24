@@ -320,6 +320,7 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     const GPRReg shape = registers.type;
     const FPRReg number = registers.number;
 
+    JumpList isAbsent;
     loadExtraPropertiesOfCompiledObject(jit, registers, slow);
     jit.load8(Address(storage, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IndexingShapeMask), shape);
@@ -328,16 +329,25 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ContiguousShape));
     slow.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
     isContiguous.link(&jit);
-    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    isAbsent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     jit.load64(BaseIndex(storage, index, CCallHelpers::TimesEight), storage);
-    slow.append(jit.branchTest64(CCallHelpers::Zero, storage));
+    isAbsent.append(jit.branchTest64(CCallHelpers::Zero, storage));
     jit.move(storage, jit.result());
     jit.returnToCaller();
 
     isDouble.link(&jit);
-    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
+    isAbsent.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     jit.loadDouble(BaseIndex(storage, index, CCallHelpers::TimesEight), number);
-    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, slow), numberScratch);
+    returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, isAbsent), numberScratch);
+
+    // Right above the object is the Object.prototype of its realm, which has no elements and takes none. A negative key is a name.
+    isAbsent.link(&jit);
+    slow.append(jit.branch32(CCallHelpers::LessThan, registers.key, TrustedImm32(0)));
+    loadStructure(jit, registers.base, storage);
+    jit.load64(Address(storage, Structure::prototypeOffset()), storage);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, storage, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
+    jit.returnToCaller();
 }
 
 void generateGetByVal(StubAssembler& jit)

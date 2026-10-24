@@ -313,6 +313,7 @@ void StoresByLayout::followCopiedProperties()
                     unite(stored.value, value);
                     stored.uniteNumbers(numbers);
                     stored.isStoredAfterCreation = true;
+                    stored.isNamedByOperation = true;
                 }
             }
             hasChanged = true;

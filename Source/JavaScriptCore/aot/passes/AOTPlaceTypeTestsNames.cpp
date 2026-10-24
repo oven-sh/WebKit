@@ -784,9 +784,12 @@ static bool expectValues(FunctionPassContext& context, std::span<const ExpectedV
         DeclaredType* declared = narrowed ? findUncheckedEntryParameter(function, expected.value) : nullptr;
         if (!declared)
             continue;
-        declared->type = narrowed;
-        declared->flags.add(PositionFlags::IsExpected);
-        changedParameters.append(expected.value);
+        bool isDeclaredAlready = declared->type == narrowed && declared->flags.contains(PositionFlags::IsExpected);
+        if (!isDeclaredAlready) {
+            declared->type = narrowed;
+            declared->flags.add(PositionFlags::IsExpected);
+            changedParameters.append(expected.value);
+        }
         if (context.types.at(narrowed).layouts)
             expectations.didGuessFromNames(expected.value);
     }

@@ -33,7 +33,7 @@ export default b.declarations(
     "%PrivateGlobals%.inherits",
     "%PrivateGlobals%.toClass",
     "%UndeclaredNativeCode%",
-    "native:NewRustFunction:ffi.rs:Bun__FFI__cc",
+    "native:Bindgen:ffi.bind.ts:cc",
   ),
   b.hostRoles(
     "%ImportMeta%",

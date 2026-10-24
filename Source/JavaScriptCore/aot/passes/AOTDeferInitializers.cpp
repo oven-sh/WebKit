@@ -23,7 +23,6 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
-#include "AOTInductionVariables.h"
 #include "AOTInterningPhases.h"
 #include "AOTPass.h"
 #include "AOTPassRunner.h"
@@ -80,10 +79,6 @@ struct VariableFacts {
     BitVector isStoredSomething;
     // Nothing but compiled reads finds it.
     Vector<Emptiness> emptiness;
-    // Layout and field, ascending: the fields that an operation stores to by name.
-    Vector<uint64_t> fieldsStoredByName;
-
-    bool isStoredByName(LayoutID layout, uint32_t field) const { return std::ranges::binary_search(fieldsStoredByName, static_cast<uint64_t>(layout.index()) << 32 | field); }
 };
 
 struct InitializerScanContext {
@@ -145,8 +140,6 @@ struct InitializerCalleeAnswer {
 
 // What is known of the values of a function while an initializer runs.
 struct Knowledge {
-    bool mayReadFrom(ValueID id) const { return made.get(id.index()) || unchanging.get(id.index()); }
-
     // An object that was made since the initializer began. Nothing outside has it yet.
     BitVector made;
     // An object that never changes once it is made: what is read out of it is the same whenever it is read.
@@ -174,7 +167,7 @@ public:
 
     Knowledge findKnowledge(FunctionAnalyses&, const CallContext&, const BitVector* countAsMadeElsewhere = nullptr);
     bool isMadeGiven(FunctionAnalyses&, const Knowledge&, const Value&);
-    // The blocks of loops of which nothing says that they end.
+    // Nothing says of a loop that it ends.
     BitVector findBlocksThatMayRunForever(FunctionAnalyses&);
     bool terminatorMayMove(FunctionAnalyses&, BlockID);
     bool mayMove(FunctionAnalyses&, const Knowledge&, ValueID);
@@ -198,27 +191,18 @@ private:
     bool isText(PropertyKeyID, ASCIILiteral) const;
     bool isMadeOrNoReference(const Function&, const Knowledge&, ValueID) const;
     bool isPrimitiveKey(const Function&, ValueID) const;
-    bool becomesStringWithoutCode(const Function&, ValueID) const;
     void narrowElementsThatAreThere(FunctionID, Function&);
     bool hasOnlyPlainObjects(const Type&) const;
     bool isDictionaryFilledHere(FunctionAnalyses&, const Knowledge&, ValueID) const;
-    bool keepsOperandsInResultOrWhatWasMade(const Function&, const Knowledge&, const BuiltinOverload&, const BuiltinCall&) const;
     bool hasOnlyFunctions(const Type&) const;
     bool hasOnlyFunctionsWithoutClass(const Type&) const;
     bool hasOnlyClassesAndBuiltins(const Type&) const;
     bool hasOnlyPristineArrays(const Type&) const;
     bool hasOnlyInstancesOf(const Type&, BuiltinClassID) const;
     bool isPristineArray(const Function&, const Knowledge&, ValueID) const;
-    std::optional<bool> knownCondition(const Function&, ValueID) const;
-    bool dependsOnOperandsAlone(const BuiltinOverload&) const;
-    bool isCollectionAsMade(const Function&, const Knowledge&, ValueID) const;
-    bool matchMayMove(const Function&, const Knowledge&, const BuiltinOverload&, const BuiltinCall&) const;
-    bool freezeMayMove(FunctionAnalyses&, const Knowledge&, ValueID call, ValueID frozen) const;
-    bool holdsWhatLiteralLists(FunctionAnalyses&, ValueID list, ValueID reader) const;
-    bool throwsOnlyForOperandsOfOtherTypes(const Function&, const Knowledge&, const BuiltinOverload&, const BuiltinCall&) const;
+    bool isDefinedByDescriptor(FunctionAnalyses&, ValueID object) const;
     bool hasOnlyObjectsThatNeverChange(const Type&) const;
     bool isKnownToStayPlain(const Type&) const;
-    bool findsFieldThatHoldsOneValue(const Type&, PropertyKeyID) const;
     bool isOnlyFilledHere(FunctionAnalyses&, ValueID object) const;
     ValueID allocationOf(const Function&, ValueID) const;
     TypeID withConstantsWidened(TypeID) const;
@@ -231,9 +215,7 @@ private:
     InitializerCalleeAnswer answerForBody(FunctionID, const Function&, const CallContext&);
 
     bool storeMayMove(FunctionAnalyses&, const Knowledge&, const Value&);
-    bool readMayMove(FunctionAnalyses&, const Knowledge&, const Value&);
     bool definitionByDescriptorMayMove(FunctionAnalyses&, const Knowledge&, const Value&);
-    bool builtinCallMayMove(FunctionAnalyses&, const Knowledge&, ValueID);
     bool mayMoveByEffects(FunctionAnalyses&, const Knowledge&, ValueID);
 
     const InitializerScanContext& m_context;
@@ -440,24 +422,6 @@ static VariableFacts collectVariableFacts(const Program& program, const FlowResu
             }
         });
     });
-    Vector<uint64_t> fieldsStoredByName = collectInParallel<uint64_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint64_t>& found) {
-        const Function& function = program.functions[index];
-        forEachListedValue(program, FunctionID(index), { Opcode::PropSet, Opcode::PropDefine, Opcode::PutSlot, Opcode::PutSlotOrAdd }, [&](BlockID, uint32_t, ValueID, const Value& value) {
-            auto note = [&](LayoutID layout) {
-                if (std::optional<uint32_t> field = program.at(layout).findField(value.key()))
-                    found.append(static_cast<uint64_t>(layout.index()) << 32 | *field);
-            };
-            if (value.receivers()) {
-                for (LayoutID layout : program.at(value.receivers()).members)
-                    note(layout);
-            }
-            for (LayoutID layout : membersOf(program, program.typeOf(function, value.objectOperand())))
-                note(layout);
-        });
-    });
-    AOT::sort(fieldsStoredByName);
-    removeRepeatedElements(fieldsStoredByName);
-
     Vector<uint8_t> numberOfStores;
     numberOfStores.fill(0, program.variables.size());
     for (VariableID variable : stores)
@@ -467,7 +431,6 @@ static VariableFacts collectVariableFacts(const Program& program, const FlowResu
     BitVector isNamedByRecord = findVariablesDescribedToRunTime(program, flow);
 
     VariableFacts facts;
-    facts.fieldsStoredByName = WTF::move(fieldsStoredByName);
     facts.isStoredOnce.ensureSize(program.variables.size());
     facts.holdsOneValue.ensureSize(program.variables.size());
     facts.holdsUnchangingObject.ensureSize(program.variables.size());
@@ -531,13 +494,6 @@ bool MovableCode::isPrimitiveKey(const Function& function, ValueID id) const
 {
     const Type& type = typeOf(function, id);
     return !type.hasObjects() && type.isJavaScriptValue();
-}
-
-// Neither an object, whose conversion runs code, nor a symbol, whose conversion throws. What is left to throw is a string too long for memory.
-bool MovableCode::becomesStringWithoutCode(const Function& function, ValueID id) const
-{
-    const Type& type = typeOf(function, id);
-    return !type.hasObjects() && type.isJavaScriptValue() && !(type.primitives & (Primitive::AnySymbol | Primitive::Absent));
 }
 
 static bool isClassConstructorFunction(const Function& function)
@@ -607,39 +563,6 @@ bool MovableCode::isPristineArray(const Function& function, const Knowledge& kno
     return hasOnlyPristineArrays(type) || (known.made.get(id.index()) && hasOnlyInstancesOf(type, BuiltinClasses::Array));
 }
 
-// A Set or a Map whose iteration runs the built-in iterators, which cannot be replaced.
-bool MovableCode::isCollectionAsMade(const Function& function, const Knowledge& known, ValueID id) const
-{
-    const Type& type = typeOf(function, id);
-    if (!hasOnlyInstancesOf(type, BuiltinClasses::Set) && !hasOnlyInstancesOf(type, BuiltinClasses::Map))
-        return false;
-    return known.made.get(id.index()) || std::ranges::all_of(type.classes, [](const ClassPart& part) {
-        return part.provenPristine.containsAll({ PristineAspects::Storage, PristineAspects::Names });
-    });
-}
-
-std::optional<bool> MovableCode::knownCondition(const Function& function, ValueID id) const
-{
-    const Value& value = function.at(definitionThroughUpcasts(function, id));
-    // The engine's own code counts elements that it has stored, and memory ends long before 2 ** 53 - 1 of them.
-    if (value.opcode == Opcode::GreaterEq && function.role == FunctionRole::Library) {
-        const Value& limit = function.at(definitionThroughUpcasts(function, value.operand(1)));
-        if (limit.opcode == Opcode::Integer && limit.integer() == (int64_t { 1 } << 53) - 1 && typeOf(function, value.operand(0)).isNumberWithoutFraction())
-            return false;
-    }
-    if (value.opcode != Opcode::CallBuiltin)
-        return std::nullopt;
-    BuiltinCall call = builtinCallOf(m_program, value);
-    if (m_program.builtins().at(call.overload).builtin != Builtins::ArrayIsArray || call.arguments.size() != 1)
-        return std::nullopt;
-    const Type& type = typeOf(function, call.arguments[0]);
-    if (hasOnlyInstancesOf(type, BuiltinClasses::Array))
-        return true;
-    if (!type.hasObjects())
-        return false;
-    return std::nullopt;
-}
-
 bool MovableCode::hasOnlyObjectsThatNeverChange(const Type& type) const
 {
     if (!type.hasObjects() || type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty() || !type.hasOnlyLayouts(m_program))
@@ -658,26 +581,6 @@ bool MovableCode::isKnownToStayPlain(const Type& type) const
         return layout.flow.impossibleMutations.containsAll(mutations) && layout.flow.ownAccessorsAreComplete && layout.flow.ownAccessors.isEmpty() && std::ranges::none_of(layout.fields, [](const Field& field) {
             return field.form.containsAny({ FieldForm::IsAccessor, FieldForm::IsReadOnly, FieldForm::IsNotConfigurable });
         });
-    });
-}
-
-// Every object of the type has the field, which is stored once, in front of every read, and is neither deleted nor redefined.
-bool MovableCode::findsFieldThatHoldsOneValue(const Type& type, PropertyKeyID key) const
-{
-    if (!type.isObject() || type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty() || !type.hasOnlyLayouts(m_program))
-        return false;
-    return std::ranges::all_of(membersOf(m_program, type), [&](LayoutID id) {
-        const Layout& layout = m_program.at(id);
-        auto field = std::ranges::find(layout.fields, key, &Field::key);
-        if (field == layout.fields.end() || field->form.contains(FieldForm::IsAccessor))
-            return false;
-        const LocationFlow& location = field->flow.location;
-        if (location.writers != WriterState::AllKnown || !field->flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined }))
-            return false;
-        if (location.stores != StoreCount::Unknown && location.initialization != InitializationState::Unknown)
-            return true;
-        // Every store names the field, and no operation does: it holds what the object was made with.
-        return location.storeNaming == StoreNaming::EveryStoreNamesLocation && !m_context.variables.isStoredByName(id, field - layout.fields.begin());
     });
 }
 
@@ -751,7 +654,7 @@ std::optional<ValueID> MovableCode::operandReturnedBy(const Function&, const Val
     if (call.form != BuiltinCallForm::Whole || call.arguments.empty())
         return std::nullopt;
     BuiltinID builtin = m_program.builtins().at(call.overload).builtin;
-    if (builtin == Builtins::ObjectDefineProperty || builtin == Builtins::ObjectFreeze)
+    if (builtin == Builtins::ObjectDefineProperty)
         return call.arguments[0];
     return std::nullopt;
 }
@@ -841,64 +744,15 @@ std::optional<InitializerCalleeAnswer> MovableCode::answerForCall(const Function
     return result;
 }
 
-// Every round passes a test of a number that each round moves by the same step toward a bound. The bound may change from round to round: its type says how far it can go.
-static bool isCountedAndEnds(FunctionAnalyses& analyses, const NaturalLoop& loop)
-{
-    const Program& program = analyses.program();
-    const Function& function = analyses.function();
-    CFG& cfg = analyses.cfg();
-    Dominators& dominators = analyses.dominators();
-    NaturalLoops& loops = analyses.naturalLoops();
-    for (const InductionVariable& variable : analyses.inductionVariables().of(loop).variables) {
-        if (variable.step.kind != InductionStepKind::Constant || !variable.step.constant || !program.typeOf(function, variable.parameter).isNumberWithoutFraction())
-            continue;
-        for (const InductionTest& test : variable.tests) {
-            if (test.exits == LoopExits::Unknown || !isBoundingRelation(test.relation, variable.direction))
-                continue;
-            // One more than a whole number below 2 ** 53 is another number.
-            const Type& bound = program.typeOf(function, test.bound);
-            if (!bound.isInteger() || !bound.integers.isSubsetOf(Range { -(int64_t { 1 } << 53), int64_t { 1 } << 53 }))
-                continue;
-            bool isPassedByEveryRound = std::ranges::all_of(cfg.predecessors(loop.header()), [&](BlockID predecessor) {
-                return !loops.belongsTo(predecessor, loop) || dominators.dominates(test.block, predecessor);
-            });
-            if (isPassedByEveryRound)
-                return true;
-        }
-    }
-    return false;
-}
-
 BitVector MovableCode::findBlocksThatMayRunForever(FunctionAnalyses& analyses)
 {
-    const Function& function = analyses.function();
-    BitVector result(function.blocks.size());
+    BitVector result(analyses.function().blocks.size());
     CFG& cfg = analyses.cfg();
     if (!cfg.hasCycle())
         return result;
-
-    Dominators& dominators = analyses.dominators();
-    bool hasOnlyNaturalCycles = true;
-    for (BlockID from : cfg.reversePostOrder()) {
-        for (BlockID to : cfg.successors(from)) {
-            if (cfg.reversePostOrderIndex(to) <= cfg.reversePostOrderIndex(from) && !dominators.dominates(to, from))
-                hasOnlyNaturalCycles = false;
-        }
-    }
-    if (!hasOnlyNaturalCycles) {
-        for (BlockID block : cfg.reversePostOrder()) {
-            if (analyses.isInCycle(block))
-                result.quickSet(block.index());
-        }
-        return result;
-    }
-    NaturalLoops& loops = analyses.naturalLoops();
-    for (unsigned index = 0; index < loops.numLoops(); ++index) {
-        const NaturalLoop& loop = loops.loop(index);
-        if (isCountedAndEnds(analyses, loop))
-            continue;
-        for (unsigned member = 0; member < loop.size(); ++member)
-            result.quickSet(loop.at(member).index());
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (analyses.isInCycle(block))
+            result.quickSet(block.index());
     }
     return result;
 }
@@ -906,8 +760,6 @@ BitVector MovableCode::findBlocksThatMayRunForever(FunctionAnalyses& analyses)
 bool MovableCode::terminatorMayMove(FunctionAnalyses& analyses, BlockID block)
 {
     const Terminator& terminator = analyses.function().at(block).terminator;
-    if (terminator.kind == TerminatorKind::SwitchString && isPrimitiveKey(analyses.function(), terminator.operand(0)))
-        return true;
     Effects effects = analyses.effectsOfTerminator(block).onAnyEdge();
     return !effects.mayRunOtherCode() && !effects.mayThrowByRule() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsNobodyObserves | heapsWhoseWritesNobodySees);
 }
@@ -1180,10 +1032,7 @@ InitializerCalleeAnswer MovableCode::answerForBody(FunctionID id, const Function
     isReached.quickSet(entryBlock.index());
     while (!worklist.isEmpty()) {
         const Block& block = function.at(worklist.takeLast());
-        std::optional<bool> condition = block.terminator.kind == TerminatorKind::Branch ? knownCondition(function, block.terminator.conditionOperand()) : std::nullopt;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
-            if (condition && index == (*condition ? 1u : 0u))
-                continue;
             BlockID target = block.terminator.targets[index].block;
             if (!isReached.quickSet(target.index()))
                 worklist.append(target);
@@ -1284,7 +1133,7 @@ bool MovableCode::storeMayMove(FunctionAnalyses& analyses, const Knowledge& know
         bool isRefusedAbove = hasName && !defines && (m_program.at(value.key()).kind == PropertyKeyKind::WellKnownSymbol || (isText(value.key(), "constructor"_s) && std::ranges::any_of(type.functions, [&](FunctionID id) {
             return m_program.at(id).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
         })));
-        if (isRefusedAbove)
+        if (isRefusedAbove || isDefinedByDescriptor(analyses, object))
             return false;
         bool isPrototypeOfPlainFunction = hasName && !defines && isText(value.key(), "prototype"_s) && std::ranges::all_of(type.functions, [&](FunctionID id) {
             return m_program.at(id).kind == FunctionKind::Plain && !m_program.at(id).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
@@ -1311,26 +1160,6 @@ bool MovableCode::storeMayMove(FunctionAnalyses& analyses, const Knowledge& know
     if (!stored.hasObjects() && !(stored.primitives & Primitive::Null))
         return true;
     if (hasName ? isText(value.key(), "__proto__"_s) : !typeOf(function, value.propertyOperand()).isNumber())
-        return false;
-    return true;
-}
-
-bool MovableCode::readMayMove(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
-{
-    const Function& function = analyses.function();
-    ValueID object = value.objectOperand();
-    if (value.opcode == Opcode::PropGet && findsFieldThatHoldsOneValue(typeOf(function, object), value.key()))
-        return true;
-    if (!known.mayReadFrom(object))
-        return false;
-    const Type& type = typeOf(function, object);
-    bool hasName = value.opcode == Opcode::PropGet || value.opcode == Opcode::PropHas;
-    if (!hasName && !isPrimitiveKey(function, value.propertyOperand()))
-        return false;
-    if (isPristineArray(function, known, object) && (hasName ? isText(value.key(), "length"_s) : typeOf(function, value.propertyOperand()).isNumber()))
-        return true;
-    ProvenAccess proven = provenAccessOf(m_program, function, value);
-    if (!proven.isComplete || !proven.accessors.isEmpty() || !proven.methods.isEmpty() || type.mayBeUndefinedOrNull())
         return false;
     return true;
 }
@@ -1400,310 +1229,23 @@ bool MovableCode::definitionByDescriptorMayMove(FunctionAnalyses& analyses, cons
     return true;
 }
 
-// What the records say of the memory that a built-in touches does not tell the clock, the random numbers or the stack of calls from bookkeeping.
-bool MovableCode::dependsOnOperandsAlone(const BuiltinOverload& overload) const
+// What Object.defineProperty makes of a property may refuse a store.
+bool MovableCode::isDefinedByDescriptor(FunctionAnalyses& analyses, ValueID object) const
 {
-    static constexpr NamedBuiltin builtins[] = {
-        Builtins::ObjectKeys, Builtins::ObjectValues, Builtins::ObjectEntries, Builtins::ObjectAssign, Builtins::ObjectHasOwn, Builtins::ObjectIs, Builtins::ObjectGetOwnPropertyNames,
-        Builtins::ObjectPrototypeHasOwnProperty,
-        Builtins::ArrayIsArray, Builtins::ArrayOf, Builtins::ArrayPrototypeLength, Builtins::ArrayPrototypeJoin, Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat,
-        Builtins::ArrayPrototypeIndexOf, Builtins::ArrayPrototypeLastIndexOf, Builtins::ArrayPrototypeIncludes, Builtins::ArrayPrototypeAt, Builtins::ArrayPrototypePush,
-        Builtins::ArrayPrototypePop, Builtins::ArrayPrototypeShift, Builtins::ArrayPrototypeUnshift, Builtins::ArrayPrototypeReverse, Builtins::ArrayPrototypeSort, Builtins::ArrayPrototypeFill,
-        Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSorted, Builtins::ArrayPrototypeWith,
-        Builtins::Map, Builtins::MapPrototypeSet, Builtins::MapPrototypeGet, Builtins::MapPrototypeHas, Builtins::MapPrototypeDelete, Builtins::MapPrototypeClear, Builtins::MapPrototypeSize,
-        Builtins::Set, Builtins::SetPrototypeAdd, Builtins::SetPrototypeHas, Builtins::SetPrototypeDelete, Builtins::SetPrototypeClear, Builtins::SetPrototypeSize,
-        Builtins::StringPrototypeSplit, Builtins::StringPrototypeLength, Builtins::String, Builtins::Symbol, Builtins::SymbolFor, Builtins::WeakMap, Builtins::WeakSet,
-    };
-    return m_program.builtins().at(overload.builtin).flags.contains(BuiltinFlag::IsDeterministic) || std::ranges::contains(builtins, overload.builtin);
-}
-
-// The steps of these that throw are the tests of the receiver and the conversions of the arguments.
-bool MovableCode::throwsOnlyForOperandsOfOtherTypes(const Function& function, const Knowledge& known, const BuiltinOverload& overload, const BuiltinCall& call) const
-{
-    if (call.form != BuiltinCallForm::Whole)
-        return false;
-    BuiltinID builtin = overload.builtin;
-    auto hasOnlyArgumentsThat = [&](NOESCAPE const Invocable<bool(const Type&)> auto& predicate) {
-        return std::ranges::all_of(call.arguments, [&](ValueID argument) {
-            return !argument || predicate(typeOf(function, argument));
-        });
-    };
-    // A description and a key of the registry are converted to strings.
-    if ((builtin == Builtins::Symbol || builtin == Builtins::SymbolFor) && overload.mode == BuiltinCallMode::Call)
-        return hasOnlyArgumentsThat([](const Type& type) { return type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined | Primitive::Number); });
-    if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Call)
-        return hasOnlyArgumentsThat([](const Type& type) { return !type.hasObjects() && type.isJavaScriptValue(); });
-    if ((builtin == Builtins::WeakMap || builtin == Builtins::WeakSet || builtin == Builtins::Map || builtin == Builtins::Set) && overload.mode == BuiltinCallMode::Construct)
-        return hasOnlyArgumentsThat([](const Type& type) { return type.hasOnlyPrimitives(Primitive::UndefinedOrNull); });
-    if (overload.mode != BuiltinCallMode::Call || !call.receiver)
-        return false;
-    const Type& receiver = typeOf(function, call.receiver);
-    auto isOneOf = [&](std::initializer_list<BuiltinID> list) {
-        return std::ranges::contains(list, builtin);
-    };
-    auto argumentsAre = [&](NOESCAPE const Invocable<bool(const Type&)> auto& predicate) {
-        return std::ranges::all_of(call.arguments, [&](ValueID argument) {
-            return !argument || predicate(typeOf(function, argument));
-        });
-    };
-    if (isOneOf({ Builtins::MapPrototypeSet, Builtins::MapPrototypeGet, Builtins::MapPrototypeHas, Builtins::MapPrototypeDelete, Builtins::MapPrototypeClear, Builtins::MapPrototypeSize }))
-        return hasOnlyInstancesOf(receiver, BuiltinClasses::Map);
-    if (isOneOf({ Builtins::SetPrototypeAdd, Builtins::SetPrototypeHas, Builtins::SetPrototypeDelete, Builtins::SetPrototypeClear, Builtins::SetPrototypeSize }))
-        return hasOnlyInstancesOf(receiver, BuiltinClasses::Set);
-
-    auto isStringOrUndefined = [](const Type& type) {
-        return type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined);
-    };
-    auto isNumberOrUndefined = [](const Type& type) {
-        return type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
-    };
-    if (receiver.isAnyString()) {
-        if (isOneOf({ Builtins::StringPrototypeSplit, Builtins::StringPrototypeIndexOf, Builtins::StringPrototypeLastIndexOf, Builtins::StringPrototypeStartsWith, Builtins::StringPrototypeEndsWith,
-            Builtins::StringPrototypeIncludes, Builtins::StringPrototypeConcat, Builtins::StringPrototypeReplace, Builtins::StringPrototypeReplaceAll }))
-            return argumentsAre([&](const Type& type) { return isStringOrUndefined(type) || isNumberOrUndefined(type); });
-        if (isOneOf({ Builtins::StringPrototypeSlice, Builtins::StringPrototypeSubstring, Builtins::StringPrototypeCharAt, Builtins::StringPrototypeCharCodeAt, Builtins::StringPrototypeCodePointAt,
-            Builtins::StringPrototypeAt, Builtins::StringPrototypeToLowerCase, Builtins::StringPrototypeToUpperCase, Builtins::StringPrototypePadStart, Builtins::StringPrototypePadEnd }))
-            return argumentsAre([&](const Type& type) { return isStringOrUndefined(type) || isNumberOrUndefined(type); });
-        return false;
-    }
-
-    if (!isPristineArray(function, known, call.receiver))
-        return false;
-    bool holdsWhatBecomesString = std::ranges::all_of(receiver.classes, [&](const ClassPart& part) {
-        return part.contentsAreProven && std::ranges::all_of(part.contents, [&](TypeID contents) {
-            const Type& type = m_arenas.types.at(contents);
-            return !type.hasObjects() && !(type.primitives & Primitive::AnySymbol);
-        });
-    });
-    if (builtin == Builtins::ArrayPrototypeJoin)
-        return holdsWhatBecomesString && argumentsAre(isStringOrUndefined);
-    if (isOneOf({ Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeAt }))
-        return argumentsAre(isNumberOrUndefined);
-    if (isOneOf({ Builtins::ArrayPrototypeIndexOf, Builtins::ArrayPrototypeLastIndexOf, Builtins::ArrayPrototypeIncludes, Builtins::ArrayPrototypePush, Builtins::ArrayPrototypePop, Builtins::ArrayPrototypeReverse }))
-        return true;
-    if (builtin == Builtins::ArrayPrototypeSort)
-        return holdsWhatBecomesString && argumentsAre([](const Type& type) { return type.hasOnlyPrimitives(Primitive::Undefined); });
-    if (builtin == Builtins::ArrayPrototypeConcat) {
-        return std::ranges::all_of(call.arguments, [&](ValueID argument) {
-            return !typeOf(function, argument).hasObjects() || isPristineArray(function, known, argument);
-        });
+    const Function& function = analyses.function();
+    Vector<ValueID, 4> names { allocationOf(function, object) };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : analyses.useLists().usesOf(names[index])) {
+            if (use.kind != Use::Kind::Operand)
+                continue;
+            const Value& user = function.at(use.user);
+            if (isOtherNameOfFirstOperand(function, user) && user.operand(0) == names[index])
+                names.append(use.user);
+            else if (user.opcode == Opcode::CallBuiltin && m_program.builtins().at(builtinCallOf(m_program, user).overload).builtin == Builtins::ObjectDefineProperty)
+                return true;
+        }
     }
     return false;
-}
-
-bool MovableCode::keepsOperandsInResultOrWhatWasMade(const Function&, const Knowledge& known, const BuiltinOverload& overload, const BuiltinCall& call) const
-{
-    auto isMade = [&](BuiltinOperand operand) {
-        if (operand.isReceiver())
-            return call.receiver && known.made.get(call.receiver.index());
-        for (unsigned index = 0; index < call.arguments.size(); ++index) {
-            if (operand.coversArgument(index) && call.arguments[index] && !known.made.get(call.arguments[index].index()))
-                return false;
-        }
-        return true;
-    };
-    return std::ranges::all_of(overload.flow.transfers, [&](const BuiltinTransfer& transfer) {
-        switch (transfer.to.kind) {
-        case BuiltinPlaceKind::Result:
-        case BuiltinPlaceKind::ResultSlot:
-        case BuiltinPlaceKind::ResultField:
-            return true;
-        case BuiltinPlaceKind::Operand:
-        case BuiltinPlaceKind::Slot:
-        case BuiltinPlaceKind::IteratedValues:
-        case BuiltinPlaceKind::OwnValues:
-            return transfer.to.operand && isMade(*transfer.to.operand);
-        case BuiltinPlaceKind::None:
-        case BuiltinPlaceKind::NewValue:
-        case BuiltinPlaceKind::NativeMemory:
-        case BuiltinPlaceKind::Prototype:
-        case BuiltinPlaceKind::Member:
-        case BuiltinPlaceKind::NativeCell:
-            return false;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    });
-}
-
-// A match reads the pattern and the flags, reads and writes lastIndex, and notes the match for RegExp.$1 and its kin. RegExp.prototype cannot be changed.
-bool MovableCode::matchMayMove(const Function& function, const Knowledge& known, const BuiltinOverload& overload, const BuiltinCall& call) const
-{
-    static constexpr NamedBuiltin ofStrings[] = { Builtins::StringPrototypeReplace, Builtins::StringPrototypeReplaceAll, Builtins::StringPrototypeSplit, Builtins::StringPrototypeMatch, Builtins::StringPrototypeSearch };
-    static constexpr NamedBuiltin ofRegExps[] = { Builtins::RegExpPrototypeTest, Builtins::RegExpPrototypeExec };
-    if (call.form != BuiltinCallForm::Whole || overload.mode != BuiltinCallMode::Call || !call.receiver || call.arguments.empty() || !call.arguments[0] || m_context.flow.mayReadLegacyRegExpStatics())
-        return false;
-    bool isOfString = std::ranges::contains(ofStrings, overload.builtin);
-    if (!isOfString && !std::ranges::contains(ofRegExps, overload.builtin))
-        return false;
-    ValueID regExp = isOfString ? call.arguments[0] : call.receiver;
-    ValueID text = isOfString ? call.receiver : call.arguments[0];
-    const Value& literal = function.at(allocationOf(function, regExp));
-    if (!known.made.get(regExp.index()) || literal.opcode != Opcode::NewRegExp || !hasOnlyInstancesOf(typeOf(function, regExp), BuiltinClasses::RegExp) || !typeOf(function, text).isAnyString())
-        return false;
-    if (overload.builtin == Builtins::StringPrototypeReplaceAll && !literal.regExpFlags().contains(RegExpFlags::Global))
-        return false;
-    return std::ranges::all_of(call.arguments.subspan(1), [&](ValueID argument) {
-        return !argument || typeOf(function, argument).hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined | Primitive::Number);
-    });
-}
-
-// Nothing stores to the object behind the call, so nothing finds out by a store that it is frozen.
-bool MovableCode::freezeMayMove(FunctionAnalyses& analyses, const Knowledge& known, ValueID call, ValueID frozen) const
-{
-    const Function& function = analyses.function();
-    const UseLists& useLists = analyses.useLists();
-    if (!known.made.get(frozen.index()))
-        return false;
-    const Type& type = typeOf(function, frozen);
-    if (!hasOnlyPlainObjects(type) && !hasOnlyInstancesOf(type, BuiltinClasses::Array))
-        return false;
-    ValueLocation callLocation = useLists.locationOf(call);
-    Vector<ValueID, 4> names { allocationOf(function, frozen) };
-    for (size_t index = 0; index < names.size(); ++index) {
-        for (const Use& use : useLists.usesOf(names[index])) {
-            if (use.kind != Use::Kind::Operand)
-                continue;
-            const Value& user = function.at(use.user);
-            if (isCast(user.opcode) || operandReturnedBy(function, user) == names[index]) {
-                names.append(use.user);
-                continue;
-            }
-            OperandSummary summary = summarizeOperand(analyses.effectContext(), function, user, use.operandIndex);
-            bool mayStore = summary.uses.containsAny(operandWritingUses | unconfinedUses | callingUses) || isWrittenOperand(user.opcode, std::min(use.operandIndex, numberOfNamedOperandsOf(user.opcode))) || interpretedOf(user.opcode) == Interpretation::Store;
-            if (!mayStore || use.user == call)
-                continue;
-            ValueLocation location = useLists.locationOf(use.user);
-            if (location.block != callLocation.block || location.index > callLocation.index)
-                return false;
-        }
-    }
-    return true;
-}
-
-// No operation of the function but the reader writes to the list.
-bool MovableCode::holdsWhatLiteralLists(FunctionAnalyses& analyses, ValueID list, ValueID reader) const
-{
-    const Function& function = analyses.function();
-    const UseLists& useLists = analyses.useLists();
-    Vector<ValueID, 4> names { allocationOf(function, list) };
-    for (size_t index = 0; index < names.size(); ++index) {
-        for (const Use& use : useLists.usesOf(names[index])) {
-            if (use.kind != Use::Kind::Operand)
-                return false;
-            if (use.user == reader)
-                continue;
-            const Value& user = function.at(use.user);
-            if (isCast(user.opcode)) {
-                names.append(use.user);
-                continue;
-            }
-            OperandSummary summary = summarizeOperand(analyses.effectContext(), function, user, use.operandIndex);
-            if (summary.uses.containsAny(operandWritingUses | unconfinedUses | callingUses) || isWrittenOperand(user.opcode, std::min(use.operandIndex, numberOfNamedOperandsOf(user.opcode))))
-                return false;
-        }
-    }
-    return true;
-}
-
-// A built-in touches what it is handed and what that leads to. It may write to what the initializer has made and read from what does not change.
-bool MovableCode::builtinCallMayMove(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
-{
-    const Function& function = analyses.function();
-    const Value& value = function.at(id);
-    BuiltinCall call = builtinCallOf(m_program, value);
-    const BuiltinOverload& overload = m_program.builtins().at(call.overload);
-    if (overload.builtin == Builtins::ObjectDefineProperty && definitionByDescriptorMayMove(analyses, known, value))
-        return true;
-    if (matchMayMove(function, known, overload, call))
-        return true;
-    if (overload.builtin == Builtins::ObjectFreeze && call.form == BuiltinCallForm::Whole && call.arguments.size() == 1 && freezeMayMove(analyses, known, id, call.arguments[0]))
-        return true;
-
-    auto holdsNoObjects = [&](ValueID array) {
-        return std::ranges::all_of(typeOf(function, array).classes, [&](const ClassPart& part) {
-            return std::ranges::none_of(part.contents, [&](TypeID contents) {
-                return m_arenas.types.at(contents).hasObjects();
-            });
-        });
-    };
-    // The iterators of arrays and the methods that add an entry cannot be replaced.
-    bool makesCollection = overload.mode == BuiltinCallMode::Construct && (overload.builtin == Builtins::Set || overload.builtin == Builtins::Map) && call.form == BuiltinCallForm::Whole && call.arguments.size() == 1;
-    if (makesCollection) {
-        ValueID entries = call.arguments[0];
-        // Neither looks at undefined or null. A string hands out its characters, which a Set takes; no other primitive can be iterated.
-        if (typeOf(function, entries).hasOnlyPrimitives(Primitive::UndefinedOrNull | (overload.builtin == Builtins::Set ? Primitive::AnyString : 0)))
-            return true;
-        if (known.mayReadFrom(entries) && isCollectionAsMade(function, known, entries) && (overload.builtin == Builtins::Set || hasOnlyInstancesOf(typeOf(function, entries), BuiltinClasses::Map)))
-            return true;
-        if (known.mayReadFrom(entries) && isPristineArray(function, known, entries)) {
-            if (overload.builtin == Builtins::Set)
-                return true;
-            const Value& literal = function.at(allocationOf(function, entries));
-            bool holdsPairs = literal.opcode == Opcode::NewArray && literal.holes().empty() && holdsWhatLiteralLists(analyses, entries, id) && std::ranges::all_of(literal.elementsOperands(), [&](ValueID pair) {
-                return pair && known.mayReadFrom(pair) && isPristineArray(function, known, pair);
-            });
-            if (holdsPairs)
-                return true;
-        }
-    }
-
-    if (!dependsOnOperandsAlone(overload))
-        return false;
-    Effects effects = analyses.effectsOf(id).onAnyEdge();
-    if (effects.mayRunOtherCode() || effects.mayBeTerminated)
-        return false;
-    bool throwsForOtherTypesOnly = throwsOnlyForOperandsOfOtherTypes(function, known, overload, call);
-    if (effects.mayThrowByRule() && !overload.onlyPropagatesErrors() && !throwsForOtherTypesOnly)
-        return false;
-    constexpr AbstractHeapSet heapsOfOperands = heapsNobodyObserves | perObjectHeaps;
-    if (!effects.writes.containsOnly(heapsOfOperands) || !effects.reads.containsOnly(heapsOfOperands))
-        return false;
-
-    if (call.form != BuiltinCallForm::Whole)
-        return false;
-    bool keepsInResultOrWhatWasMade = keepsOperandsInResultOrWhatWasMade(function, known, overload, call);
-    auto operandMayMove = [&](ValueID operand, BuiltinOperand position) {
-        if (!operand)
-            return true;
-        if (!mayBeReference(typeOf(function, operand))) {
-            // An entry that only passes errors on still raises its own over a primitive that it does not take, and over a receiver that is no object and becomes none.
-            const BuiltinParameter* parameter = overload.onlyPropagatesErrors() && !throwsForOtherTypesOnly ? m_program.builtins().parameterFor(overload, position) : nullptr;
-            if (!parameter)
-                return true;
-            const Type& type = typeOf(function, operand);
-            return !mayFailOnOperand(m_program, *parameter, type) && !(position.isReceiver() && type.mayBeUndefinedOrNull());
-        }
-        OperandBehavior behavior = declaredBehaviorOf(overload, position);
-        constexpr OperandUses usesThatAreNotFollowed = callingUses | OperandUses { OperandUse::PassesToUserCode, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::ChangesIntegrity, OperandUse::DefinesName, OperandUse::TakesDescriptor };
-        if (behavior.uses.containsAny(usesThatAreNotFollowed))
-            return false;
-        if (behavior.uses.containsAny({ OperandUse::Retains, OperandUse::RetainsContents }) && !keepsInResultOrWhatWasMade)
-            return false;
-        if (behavior.uses.containsAny(operandWritingUses) && !known.made.get(operand.index()))
-            return false;
-        // It keeps the object, or looks at which object it is. What a built-in reads of objects it may read of any operand that it looks at: the length of an array is no use of its own.
-        bool namesNoMember = behavior.protocols.isEmpty() && behavior.namedMembers.empty() && behavior.calledMembers.empty();
-        if (namesNoMember && usesOfObjectsMadeElsewhere.containsAll(behavior.uses) && (!behavior.uses.contains(OperandUse::Inspects) || !effects.reads.containsAny(perObjectHeaps)))
-            return true;
-        if (!known.mayReadFrom(operand))
-            return false;
-        // What it does to the operand it does to what the operand holds.
-        if (behavior.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents }) && !(isPristineArray(function, known, operand) && holdsNoObjects(operand)))
-            return false;
-        // No step on a pristine array, a plain object without accessors, a Map or a Set runs code of the program or is refused.
-        const Type& type = typeOf(function, operand);
-        bool isPlain = hasOnlyPlainObjects(type) && (isKnownToStayPlain(type) || isOnlyFilledHere(analyses, operand));
-        if (!isPristineArray(function, known, operand) && !isPlain && !hasOnlyInstancesOf(type, BuiltinClasses::Map) && !hasOnlyInstancesOf(type, BuiltinClasses::Set))
-            return false;
-        return true;
-    };
-    if (!operandMayMove(call.receiver, BuiltinOperand::receiver()))
-        return false;
-    for (unsigned index = 0; index < call.arguments.size(); ++index) {
-        if (!operandMayMove(call.arguments[index], BuiltinOperand::argument(index)))
-            return false;
-    }
-    return true;
 }
 
 bool MovableCode::mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
@@ -1779,26 +1321,12 @@ bool MovableCode::mayMove(FunctionAnalyses& analyses, const Knowledge& known, Va
     case Opcode::LoopHint:
         // The caller has looked at the loop.
         return true;
-    case Opcode::NativeBinding:
-        // It hands out a function or an object of native code, the same one each time.
-        return true;
     case Opcode::GetModuleVariable:
         if (!m_context.variables.holdsOneValue.quickGet(value.variable().index()) && m_context.variables.isSetWhenItsModuleHasRun.quickGet(value.variable().index())) {
             m_variablesTakenToBeSet.append(value.variable());
             return true;
         }
         return m_context.variables.holdsOneValue.quickGet(value.variable().index());
-    case Opcode::CheckInitialized: {
-        if (!(typeOf(function, value.valueOperand()).primitives & Primitive::Absent))
-            return true;
-        // The read has noted what it takes for granted.
-        const Value& tested = function.at(definitionThroughUpcasts(function, value.valueOperand()));
-        if (tested.opcode == Opcode::GetModuleVariable && m_context.variables.isSetWhenItsModuleHasRun.quickGet(tested.variable().index()))
-            return true;
-        break;
-    }
-    case Opcode::Check:
-        return typeOf(function, value.valueOperand()).isSubsetOf(m_program.at(value.castType()), m_program);
     case Opcode::PropDefine:
     case Opcode::ElemDefine:
     case Opcode::PropSet:
@@ -1806,92 +1334,19 @@ bool MovableCode::mayMove(FunctionAnalyses& analyses, const Knowledge& known, Va
         if (storeMayMove(analyses, known, value))
             return true;
         break;
-    case Opcode::PropGet:
-    case Opcode::PropHas:
-    case Opcode::ElemGet:
-    case Opcode::ElemHas:
-        if (readMayMove(analyses, known, value))
-            return true;
-        break;
-    case Opcode::Add: {
-        // A BigInt and a number do not add up.
-        auto isFine = [&](ValueID operand) {
-            return becomesStringWithoutCode(function, operand) && !(typeOf(function, operand).primitives & Primitive::BigInt);
-        };
-        if (isFine(value.operand(0)) && isFine(value.operand(1)))
-            return true;
-        break;
-    }
-    case Opcode::Strcat:
-    case Opcode::ToString:
-    case Opcode::ToPropertyKey: {
-        bool isFine = true;
-        value.forEachOperand([&](ValueID operand, uint32_t) {
-            isFine &= becomesStringWithoutCode(function, operand) || (value.opcode == Opcode::ToPropertyKey && isPrimitiveKey(function, operand));
-        });
-        if (isFine)
-            return true;
-        break;
-    }
-    case Opcode::GetEnvironmentField: {
-        const LocationFlow& location = m_program.at(value.layout()).fields[value.field()].flow.location;
-        if (location.writers == WriterState::AllKnown && location.stores != StoreCount::Unknown && location.initialization != InitializationState::Unknown)
-            return true;
-        break;
-    }
-    case Opcode::ToObject:
-        if (typeOf(function, value.operand(0)).isObject())
-            return true;
-        break;
-    case Opcode::ArraySpeciesCreate:
-        // The constructor of a pristine array is Array, whose species cannot be replaced.
-        if (hasOnlyPristineArrays(typeOf(function, value.operand(1))) && typeOf(function, value.operand(0)).isInteger() && typeOf(function, value.operand(0)).integers.isSubsetOf(Range { 0, UINT32_MAX }))
-            return true;
-        break;
-    case Opcode::NewArrayLike:
-    case Opcode::NewContiguousArray:
-        // No length of an array is refused as the length of another.
-        if (typeOf(function, value.operand(0)).isInteger() && typeOf(function, value.operand(0)).integers.isSubsetOf(Range { 0, UINT32_MAX }))
-            return true;
-        break;
-    case Opcode::AppendElement:
-    case Opcode::AppendHole:
-        return known.made.get(value.operand(0).index());
-    case Opcode::AppendSpread:
-    case Opcode::AppendElements:
-        if (known.made.get(value.operand(0).index()) && known.mayReadFrom(value.operand(1)) && (isPristineArray(function, known, value.operand(1)) || isCollectionAsMade(function, known, value.operand(1))))
-            return true;
-        break;
-    case Opcode::CopyDataProperties: {
-        ValueID target = value.operand(0);
-        ValueID source = value.operand(1);
-        const Type& sourceType = typeOf(function, source);
-        auto isPlain = [&](ValueID object) {
-            return hasOnlyPlainObjects(typeOf(function, object)) && (isKnownToStayPlain(typeOf(function, object)) || isOnlyFilledHere(analyses, object));
-        };
-        if (known.made.get(target.index()) && isPlain(target) && (!sourceType.hasObjects() || (known.mayReadFrom(source) && isPlain(source))) && value.numberOfOperands() == 2)
-            return true;
-        break;
-    }
     case Opcode::ResolveHeritage:
         if (hasOnlyClassesAndBuiltins(typeOf(function, value.heritageOperand())))
-            return true;
-        break;
-    case Opcode::GetConstructPrototype:
-        if (hasOnlyClassesAndBuiltins(typeOf(function, value.operand(0))) && !typeOf(function, value.operand(0)).primitives)
             return true;
         break;
     case Opcode::NewClass:
         return known.made.get(value.constructorOperand().index());
     case Opcode::DefineMethod:
+        // The prototype property of a class cannot be redefined.
+        if (!value.key() && value.side() == ClassSide::Static && (typeOf(function, value.computedKeyOperand()).primitives & Primitive::AnyString))
+            return false;
         return known.made.get(value.classObjectOperand().index()) && (value.key() || isPrimitiveKey(function, value.computedKeyOperand()));
     case Opcode::CallBuiltin:
-        if (knownCondition(function, id) || builtinCallMayMove(analyses, known, id))
-            return true;
-        return false;
-    case Opcode::StrictEq:
-        // It runs no code. What is left to throw is a rope too long for memory.
-        return true;
+        return m_program.builtins().at(builtinCallOf(m_program, value).overload).builtin == Builtins::ObjectDefineProperty && definitionByDescriptorMayMove(analyses, known, value);
     case Opcode::Call:
     case Opcode::Construct:
     case Opcode::CallDirect:

@@ -3478,16 +3478,29 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     constexpr size_t stepsAheadForSuccessors = 8;
     constexpr size_t stepsAheadForSources = 4;
     constexpr uint32_t mostSourcesAskedFor = 8;
+    // Of the sources that are nearest to a node it takes the lowest: the numbers of the nodes follow the order of the solve, and the answer must not.
+    BitVector isInNextLevel(numberOfNodes);
+    auto reach = [&](uint32_t from, uint32_t to) {
+        uint8_t& source = m_unknownSourceOfNode[to];
+        if (!source) {
+            source = m_unknownSourceOfNode[from];
+            isInNextLevel.quickSet(to);
+            found.append(to);
+        } else if (isInNextLevel.quickGet(to))
+            source = std::min(source, m_unknownSourceOfNode[from]);
+    };
     auto walk = [&] {
         for (size_t next = 0; next < numberOfConstantsFound; ++next) {
-            for (ValueFlowEdge edge : successorsOfConstantFound(found[next])) {
-                if (m_unknownSourceOfNode[edge.to.index()])
-                    continue;
-                m_unknownSourceOfNode[edge.to.index()] = m_unknownSourceOfNode[found[next]];
-                found.append(edge.to.index());
-            }
+            for (ValueFlowEdge edge : successorsOfConstantFound(found[next]))
+                reach(found[next], edge.to.index());
         }
+        size_t endOfLevel = numberOfConstantsFound;
         for (size_t next = numberOfConstantsFound; next < found.size(); ++next) {
+            if (next == endOfLevel) {
+                endOfLevel = found.size();
+                for (uint32_t node : found.subspan(next))
+                    isInNextLevel.quickClear(node);
+            }
             if (next + stepsAheadForRow < found.size())
                 __builtin_prefetch(&firstSuccessor[found[next + stepsAheadForRow]]);
             if (next + stepsAheadForSuccessors < found.size())
@@ -3498,12 +3511,8 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
                     __builtin_prefetch(&m_unknownSourceOfNode[successor]);
             }
             uint32_t node = found[next];
-            for (uint32_t successor : successors.subspan(firstSuccessor[node], firstSuccessor[node + 1] - firstSuccessor[node])) {
-                if (m_unknownSourceOfNode[successor])
-                    continue;
-                m_unknownSourceOfNode[successor] = m_unknownSourceOfNode[node];
-                found.append(successor);
-            }
+            for (uint32_t successor : successors.subspan(firstSuccessor[node], firstSuccessor[node + 1] - firstSuccessor[node]))
+                reach(node, successor);
         }
     };
     runTasksInParallel(m_loops, {

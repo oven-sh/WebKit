@@ -28,7 +28,7 @@ bool mayUseFFI(const Typed::PipelineOutput& pipeline)
     if (flagsForUnseenCode(pipeline).contains(ImageFlag::AdmitsUnknownJavaScript))
         return true;
     const Typed::FlowResults& flow = *pipeline.flow;
-    return !flow.usesOf(Builtins::BunFFI).isEmpty() || !flow.usesOf(Builtins::NativeNewRustFunctionFfiRsBun__FFI__cc).isEmpty();
+    return !flow.usesOf(Builtins::BunFFI).isEmpty() || !flow.usesOf(Builtins::NativeBindgenFfiBindTsCc).isEmpty();
 }
 
 #if FFI_STUBS_SUPPORTED

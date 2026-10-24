@@ -250,13 +250,24 @@ ValueFlowBirthsOfUnknownObject::ValueFlowBirthsOfUnknownObject(const ValueFlowRe
             successors[nextSuccessor[from]++] = to;
     });
 
+    // Of the births that are nearest to a node it takes the lowest: the numbers of the nodes follow the order of the solve, and the answer must not.
+    BitVector isInNextLevel(numberOfNodes);
+    size_t endOfLevel = 0;
     for (size_t next = 0; next < found.size(); ++next) {
+        if (next == endOfLevel) {
+            endOfLevel = found.size();
+            for (uint32_t node : found.subspan(next))
+                isInNextLevel.quickClear(node);
+        }
         uint32_t node = found[next];
         for (uint32_t successor : successors.subspan(firstSuccessor[node], firstSuccessor[node + 1] - firstSuccessor[node])) {
-            if (m_birthOfNode[successor] != none)
-                continue;
-            m_birthOfNode[successor] = m_birthOfNode[node];
-            found.append(successor);
+            uint32_t& birth = m_birthOfNode[successor];
+            if (birth == none) {
+                birth = m_birthOfNode[node];
+                isInNextLevel.quickSet(successor);
+                found.append(successor);
+            } else if (isInNextLevel.quickGet(successor) && isLowerWitness(m_witnesses[m_birthOfNode[node]], m_witnesses[birth]))
+                birth = m_birthOfNode[node];
         }
     }
 }

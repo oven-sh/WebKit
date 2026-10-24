@@ -87,11 +87,6 @@ static ExtraPropertyLookup lookUpExtraProperty(VM& vm, const CompiledStructure& 
     return lookup;
 }
 
-static bool mayHaveExtraPropertyNamed(VM& vm, const CompiledStructure& structure, UniquedStringImpl* uid, ChainWalkMode mode)
-{
-    return lookUpExtraProperty(vm, structure, uid, mode).result != ExtraPropertyLookupResult::Absent;
-}
-
 static bool canCacheAccess(VM& vm, Object& object, UniquedStringImpl* uid)
 {
     return !isNeverCachedName(vm, uid) && isCompiledObject(&object);
@@ -219,6 +214,17 @@ PropertyAnswer classifyCompiledObjectRead(const ReadQuery& query, Object& object
     return classifyExtraPropertyRead(query, object);
 }
 
+static PropertyAnswer classifyExtraPropertyReplacement(SlotAccess access, const ExtraPropertyLookup& lookup)
+{
+    unsigned attributes = lookup.attributes;
+    bool canReplaceValue = access == SlotAccess::Define ? !attributes : !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue));
+    if (canReplaceValue)
+        return extraPropertyAnswer(PropertyAnswerKind::ExtraProperty, access, lookup);
+    if (access == SlotAccess::Store && (attributes & PropertyAttribute::Accessor))
+        return extraPropertyAnswer(PropertyAnswerKind::ExtraAccessor, access, lookup);
+    return PropertyAnswer::uncacheable(access);
+}
+
 static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object, const FieldData& field)
 {
     SlotAccess access = accessFor(query.mode);
@@ -234,7 +240,11 @@ static PropertyAnswer classifyFieldStore(const StoreQuery& query, Object& object
     answer.undefinedNeedsNoStorage = field.flags & fieldMayExistWithoutStorage && object.state().objects->layouts.slotAdmits(field, jsUndefined());
     if (!field.canLeaveSlot() || before->mayBePrototype())
         return answer;
-    if (mayHaveExtraPropertyNamed(query.globalObject->vm(), *before, query.uid, ChainWalkMode::MayAllocate))
+    // A property is in its slot or among the extra properties, never in both.
+    ExtraPropertyLookup amongExtraProperties = lookUpExtraProperty(query.globalObject->vm(), *before, query.uid, ChainWalkMode::MayAllocate);
+    if (amongExtraProperties.result == ExtraPropertyLookupResult::Found && object.structure() == before)
+        return classifyExtraPropertyReplacement(access, amongExtraProperties);
+    if (amongExtraProperties.result != ExtraPropertyLookupResult::Absent)
         return answer;
     if (access == SlotAccess::Define) {
         answer.kind = PropertyAnswerKind::FieldCreation;
@@ -286,17 +296,6 @@ static OutOfLineStorageChange storageChangeOfExtraPropertyAddition(const Compile
     if (isInlineOffset(offset))
         return OutOfLineStorageChange::Stays;
     return outOfLineStorageChange(before.extraPropertiesStructure(), extraPropertiesAfter, offset);
-}
-
-static PropertyAnswer classifyExtraPropertyReplacement(SlotAccess access, const ExtraPropertyLookup& lookup)
-{
-    unsigned attributes = lookup.attributes;
-    bool canReplaceValue = access == SlotAccess::Define ? !attributes : !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue));
-    if (canReplaceValue)
-        return extraPropertyAnswer(PropertyAnswerKind::ExtraProperty, access, lookup);
-    if (access == SlotAccess::Store && (attributes & PropertyAttribute::Accessor))
-        return extraPropertyAnswer(PropertyAnswerKind::ExtraAccessor, access, lookup);
-    return PropertyAnswer::uncacheable(access);
 }
 
 static PropertyAnswer classifyExtraPropertyAddition(const StoreQuery& query, Object& object, const ExtraPropertyLookup& lookup)

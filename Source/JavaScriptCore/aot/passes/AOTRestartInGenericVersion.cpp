@@ -100,6 +100,20 @@ static BlockID emitCallOfGenericVersion(IRBuilder& builder, FunctionID genericVe
     return block;
 }
 
+static BlockID findCallOfGenericVersion(FunctionPassContext& pass, FunctionID genericVersion)
+{
+    const Function& function = pass.function;
+    for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        if (block.frequency != BlockFrequency::Rare || block.values.size() != 1 || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::ReturnCall)
+            continue;
+        const Value& call = function.at(block.values[0]);
+        if (call.opcode == Opcode::CallDirect && call.function() == genericVersion && call.isNeverInlined() && std::ranges::equal(call.variadicOperands(), function.at(entryBlock).parameters.span()))
+            return id;
+    }
+    return { };
+}
+
 static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pass, BlockID restart)
 {
     const Function& function = pass.function;
@@ -149,7 +163,7 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
 
     IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
     builder.setOrigin({ function.position, 0 });
-    BlockID restart;
+    BlockID restart = findCallOfGenericVersion(pass, genericVersion);
     size_t numberOfRestarts = 0;
     // Generic code that has gone no longer joins the code behind it, which may then stand in front of every effect too.
     for (;;) {

@@ -348,8 +348,7 @@ private:
     // In a locale that the call names, and without options, the text depends on the number and on the data of ICU.
     bool formatsNumberInNamedLocale(BuiltinID function, const Value& value) const
     {
-        static const bool isSwitchedOff = !!getenv("BUN_AOT_KEEP_LOCALE_CALLS");
-        if (function != Builtins::NumberPrototypeToLocaleString || targetOfThisBuild().platform == BuiltinPlatform::Darwin || isSwitchedOff)
+        if (function != Builtins::NumberPrototypeToLocaleString || targetOfThisBuild().platform == BuiltinPlatform::Darwin)
             return false;
         std::span<const ValueID> arguments = value.argumentsOperands();
         if (arguments.empty() || arguments.size() > 2 || knownValueOf(arguments[0]).kind() != KnownValue::Kind::String)
