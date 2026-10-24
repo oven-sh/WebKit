@@ -117,7 +117,6 @@ struct InliningSummary {
     Vector<SpreadOfParameter, 0> spreadsOfParameters;
     Vector<ReceiverParameter, 1> receiverParameters;
     bool neverReturns { false };
-    bool hasCycle { false };
     bool hasBareReturn { false };
     bool isWrapper { false };
     enum class Answer : uint8_t { NotAsked, No, Yes };

@@ -551,10 +551,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     if (!canInlineWholeBody && !summary.canInlineHead())
         return { .decision = InlineDecision::Barrier };
 
-    // A function that runs once is compiled as one. A loop runs more often wherever it stands, so a body with a loop stays a function of its own, which is compiled for what its loop does.
-    if (summary.hasCycle && !value.isAlwaysInlined() && context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce)
-        return { .decision = InlineDecision::CostExceedsBenefit };
-
     HeatClass heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))

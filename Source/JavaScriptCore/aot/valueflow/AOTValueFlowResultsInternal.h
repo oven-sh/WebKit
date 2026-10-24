@@ -513,8 +513,6 @@ struct ValueFlowStampedCalls {
     BitVector functionsInStamps;
     // The functions that something enters that lists them in no stamp: an accessor, a protocol, a built-in that calls an operand, a bound function, a call of a placeholder that covers their closure.
     BitVector functionsEnteredWithoutStamp;
-    // Those among them that something enters which the list of indirect calls does not name.
-    BitVector functionsEnteredWithoutRecord;
     // The functions that unsolved code calls or makes closures of, and those whose closures lie where it reads. Filled with the results about functions.
     BitVector functionsNamedByUnsolvedCode;
 };

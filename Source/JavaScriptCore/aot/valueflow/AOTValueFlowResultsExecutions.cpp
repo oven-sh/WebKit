@@ -102,11 +102,6 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
     Vector<uint32_t> numberOfEnteringOperations = countEnteringOperations(inputs, tables, application);
     BitVector modulesWithBodiesThatOnlyLoaderEnters = findModulesWithBodiesThatOnlyLoaderEnters(inputs, calls, numberOfEnteringOperations);
 
-    std::span<const FlowIndirectCall> indirectCalls = tables.functions.indirectCalls.span();
-    Vector<uint32_t> numberOfIndirectCalls(FillWith { }, program.functions.size(), 0u);
-    for (const FlowIndirectCall& call : indirectCalls)
-        ++numberOfIndirectCalls[call.callee.index()];
-
     Vector<FunctionID> worklist;
     auto runsAtMostOnce = [&](FunctionID function) {
         if (!inputs.build.isEnabled(FlowResultKind::ExecutionCounts, function.index()))
@@ -136,17 +131,6 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
                         runsAtMostOnce(callee);
                 });
             }
-        }
-        // `(function () { .. }).call(this)`. A built-in that calls its operand once, then and there, enters it as a call operation does.
-        for (const FlowIndirectCall& call : std::ranges::equal_range(indirectCalls, caller, { }, &FlowIndirectCall::caller)) {
-            if (call.kind != FlowIndirectCallKind::BuiltinCallback || call.times != BuiltinCallbackTimes::Once || call.isInCycle)
-                continue;
-            FunctionID callee = call.callee;
-            ValueFlowObjectID closure = inputs.universe().closureOf(callee);
-            const FunctionFlow& flow = flows[callee.index()];
-            bool isOnlyEntry = !numberOfEnteringOperations[callee.index()] && numberOfIndirectCalls[callee.index()] == 1 && !calls.functionsEnteredWithoutRecord.get(callee.index());
-            if (isOnlyEntry && !inputs.hasEscaped(closure) && !inputs.isLost(closure) && flow.callers == CallerState::AllKnown && flow.executions == ExecutionCount::Unknown)
-                runsAtMostOnce(callee);
         }
     }
 }

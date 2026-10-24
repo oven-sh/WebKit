@@ -247,7 +247,6 @@ public:
             return summary;
 
         summary.codeBytes = computeBlockBytes();
-        summary.hasCycle = m_analyses.cfg().hasCycle();
         summary.likelyCodeBytes = computeLikelyBytes();
         summary.isWrapper = isWrapperCreatedByEngine(m_function);
         if (isCold(heat))
