@@ -83,7 +83,8 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
 #if ENABLE(AOT)
 void RegExpCache::keepParsedPattern(RegExp* regExp)
 {
-    if (regExp->pattern().length() > maxStrongCacheablePatternLength)
+    size_t length = regExp->pattern().length();
+    if (length > maxParsedPatternCharactersKept)
         return;
 
     if (!m_parsedPatterns) {
@@ -92,7 +93,16 @@ void RegExpCache::keepParsedPattern(RegExp* regExp)
         WTF::storeStoreFence();
         m_parsedPatterns = WTF::move(patterns);
     }
+    auto forget = [&](unsigned index) {
+        if (RegExp* forgotten = std::exchange((*m_parsedPatterns)[index], nullptr))
+            m_parsedPatternCharacters -= forgotten->pattern().length();
+    };
+    forget(m_nextParsedPattern);
+    // The oldest stand behind the slot that is written next.
+    for (unsigned index = m_nextParsedPattern + 1; m_parsedPatternCharacters + length > maxParsedPatternCharactersKept; ++index)
+        forget(index % maxParsedPatternsKept);
     (*m_parsedPatterns)[m_nextParsedPattern] = regExp;
+    m_parsedPatternCharacters += length;
     m_nextParsedPattern = (m_nextParsedPattern + 1) % maxParsedPatternsKept;
 }
 #endif
@@ -149,6 +159,7 @@ void RegExpCache::deleteAllCode()
     if (m_parsedPatterns)
         m_parsedPatterns->fill(nullptr);
     m_nextParsedPattern = 0;
+    m_parsedPatternCharacters = 0;
 #endif
 
     Locker locker { m_lock };

@@ -270,7 +270,7 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
 // These run nobody's code when a property is defined. One that refuses is as it was, but for a list that is cut short, which refuses again where it stopped.
 static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
-    auto define = object->methodTable()->defineOwnProperty;
+    auto define = WTF::opaque(object)->methodTable()->defineOwnProperty;
     if (define == JSObject::defineOwnProperty || define == Object::info()->methodTable.defineOwnProperty)
         return true;
     if (define == JSArray::info()->methodTable.defineOwnProperty)

@@ -79,13 +79,15 @@ private:
 #if ENABLE(AOT)
     // A compiled program brings the metadata and the code of the patterns that its build knows. A pattern whose text is put together at run time is parsed when it is made, which is
     // the whole price of making it, and a program makes the same few hundred again and again: `new RegExp(escape(name))` in a function that runs for every line.
-    // The weak cache forgets them at every collection, and the ring below takes none that has not matched yet. Neither ring takes a long pattern: what a ring holds stays alive, with its text and its program.
+    // The weak cache forgets them at every collection, and the ring below takes neither a long pattern nor one that has not matched yet. What a ring holds stays alive, with its text and its program: this one holds no more characters of patterns than it would of short ones.
     static constexpr unsigned maxParsedPatternsKept = 1024;
+    static constexpr size_t maxParsedPatternCharactersKept = maxParsedPatternsKept * maxStrongCacheablePatternLength;
     using ParsedPatterns = std::array<RegExp*, maxParsedPatternsKept>;
     void keepParsedPattern(RegExp*);
 
     std::unique_ptr<ParsedPatterns> m_parsedPatterns;
     unsigned m_nextParsedPattern { 0 };
+    size_t m_parsedPatternCharacters { 0 };
 #endif
 
     unsigned m_nextEntryInStrongCache { 0 };
