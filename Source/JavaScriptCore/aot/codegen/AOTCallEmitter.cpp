@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTConvention.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfProtocols.h"
@@ -443,6 +444,8 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
 
 void CallEmitter::generateCall(const ValueContext& value)
 {
+    if (isCallThatRequiredPassRemoves(m_program, value.value()))
+        fail(value, InternalErrorKind::RequiredPassLeftOperation);
     ValueID callee = value->calleeOperand();
     // The stub that calls a value does not know what the program calls it. What is no object is never called, so the place throws by itself and says the name.
     if (const Type& type = typeOf(callee); value->calleeName() && !type.hasObjects() && type.isJavaScriptValue() && !type.isNever()) {

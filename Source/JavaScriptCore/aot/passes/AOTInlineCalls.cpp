@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayChains.h"
 #include "AOTBuildContext.h"
 #include "AOTCalleeVersions.h"
 #include "AOTCodeSizeEstimate.h"
@@ -112,6 +113,7 @@ public:
 
 private:
     Vector<InlineSite> findCandidates(uint32_t firstFrame) const;
+    void leaveArrayChains(Vector<InlineSite>&) const;
     bool handsWholeResultToFrequentCode(ValueID call) const;
     PassOutcome markNoReturnCallBlocks();
 
@@ -198,6 +200,30 @@ bool CallInliner::handsWholeResultToFrequentCode(ValueID call) const
     return false;
 }
 
+// FuseArrayChains comes in front of this pass and has not seen the calls of a body that this run has copied. What it would fuse waits for the next round.
+void CallInliner::leaveArrayChains(Vector<InlineSite>& sites) const
+{
+    bool hasArrayMethod = sites.containsIf([&](const InlineSite& site) {
+        return !!arrayMethodCallOf(m_program, m_caller, site.call);
+    });
+    if (!hasArrayMethod || m_caller.role == FunctionRole::ChainStep || m_caller.enclosingRuntimeFunction || !findChainTraversal(m_program))
+        return;
+
+    BitVector members;
+    for (const ArrayChain& chain : findArrayChains(m_context)) {
+        if (checkInterleaving(m_context, chain) != ArrayChainDeclineReason::None)
+            continue;
+        members.set(chain.lastCall.index());
+        if (chain.rangeCall)
+            members.set(chain.rangeCall.index());
+        for (const ChainCallback& callback : chain.callbacks)
+            members.set(callback.call.index());
+    }
+    sites.removeAllMatching([&](const InlineSite& site) {
+        return members.get(site.call.index());
+    });
+}
+
 Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
 {
     const CFG& cfg = m_context.analyses.cfg();
@@ -214,6 +240,8 @@ Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
+    if (firstFrame)
+        leaveArrayChains(sites);
     if (sites.isEmpty())
         return sites;
 

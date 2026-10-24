@@ -302,6 +302,16 @@ const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, Pr
     return findRecord(m_tables.builtins.locations, std::tuple(holder, key));
 }
 
+bool builtinHolderNeverGains(const FlowBuiltinTables& tables, BuiltinID holder, PropertyKeyID key)
+{
+    if (!tables.intactHolders.get(holder.index()))
+        return false;
+    const BuiltinUseRecord* uses = findRecord(tables.uses, holder.index());
+    if (uses && OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(uses->uses)).contains(BuiltinUse::Escaped))
+        return false;
+    return !findRecord(tables.locations, std::tuple(holder, key));
+}
+
 const AccessSite& FlowResults::at(AccessSiteID id) const
 {
     return recordAt(m_tables.sites.accessSites, id, m_unknown.accessSite);

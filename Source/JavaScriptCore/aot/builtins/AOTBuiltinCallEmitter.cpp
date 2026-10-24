@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAccessEmitter.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinLocationWatch.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCallEmitter.h"
@@ -103,6 +104,10 @@ BuiltinCallEmitter::BuiltinCallEmitter(CodeGenerator& generator)
 void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());
+    if (isCallThatRequiredPassRemoves(m_program, value.value())) {
+        failAndDefineZero(generator(), value, InternalErrorKind::RequiredPassLeftOperation);
+        return;
+    }
     BuiltinOverloadID id = value->overload();
     const BuiltinOverload& overload = m_builtins.at(id);
     ValueID receiver = value->receiverOperand();

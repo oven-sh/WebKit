@@ -111,7 +111,7 @@ struct ArrayMethodCall {
     ValueID argumentOrNull(unsigned index) const { return index < arguments.size() ? arguments[index] : ValueID(); }
 };
 
-// All but the read of a length. A chain has two members or more and the read of a length is the last one, so every chain has one of these.
+// All but the read of a length, which is the last member of a chain and never the only one: every chain has one of these.
 inline constexpr OpcodeSet arrayMethodCallOpcodes = builtinCallOpcodes | OpcodeSet { Opcode::CallDirect };
 
 std::optional<ArrayMethodCall> arrayMethodCallOf(const Program&, const Function&, ValueID);

@@ -1488,8 +1488,11 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         // DeferClosuresInFields may narrow the slot of a field that is given a closure to objects alone.
         bool slotStaysWide = slotTakesEveryValue(program, layout.fields[index]) && !inputs.sets().meet(stored, inputs.universe().closures());
         bool staysInSlot = flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined }) && (flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || slotStaysWide);
-        if (isEverFilled && flow.location.initialization == InitializationState::SetAtCreation && staysInSlot)
+        // No lookup goes on past a slot that is always filled, so nobody asks what lies above it.
+        if (isEverFilled && flow.location.initialization == InitializationState::SetAtCreation && staysInSlot) {
             flow.occupancy = Occupancy::AlwaysFilled;
+            flow.prototypeName = PrototypeNameState::Unknown;
+        }
         // No allocation lists the field, no operation stores under its name or under a key nobody knows, and no accessor takes its place.
         if (!isEverFilled && flow.stability == everyFlagOf<FieldStability>() && inputs.build.isEnabled(FlowResultKind::StoreCounts, id.index()))
             flow.location.stores = StoreCount::Never;

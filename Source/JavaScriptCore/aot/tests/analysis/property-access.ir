@@ -49,7 +49,7 @@ function f7 name="read-optional-may-have-moved-out" parameters=[{type=L0}] resul
     v1 = PropGet v0 key="w"
     Return v1
 }
-# CHECK-NEXT: F7 v1 PropGet [[w]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot] missPath member=(Field level=Proven holder=L0 field=3)
+# CHECK-NEXT: F7 v1 PropGet [[w]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] testsDeclaredType missPath member=(Field level=Proven holder=L0 field=3)
 function f8 name="read-filled-may-be-deleted" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="d"

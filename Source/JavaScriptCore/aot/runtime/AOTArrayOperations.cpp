@@ -48,6 +48,15 @@ static NEVER_INLINE bool appendBoxedDoubles(JSGlobalObject* globalObject, VM& vm
     return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, boxed.span());
 }
 
+// NaN stands for a hole in Double storage.
+static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> values)
+{
+    return std::ranges::all_of(values, [](EncodedJSValue encoded) {
+        JSValue value = JSValue::decode(encoded);
+        return value.isInt32() || (value.isDouble() && !std::isnan(value.asDouble()));
+    });
+}
+
 static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
 {
     IndexingType type = source->indexingType();
@@ -61,10 +70,11 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
         if (containsHole(source->butterfly()->contiguous().data(), length))
             return false;
         IndexingType targetType = target->indexingType();
-        if (hasInt32(type) && (hasContiguous(targetType) || hasDouble(targetType))) {
-            std::span<const EncodedJSValue> values { std::bit_cast<const EncodedJSValue*>(source->butterfly()->contiguous().data()), length };
+        std::span<const EncodedJSValue> values { std::bit_cast<const EncodedJSValue*>(source->butterfly()->contiguous().data()), length };
+        if (hasInt32(type) && (hasContiguous(targetType) || hasDouble(targetType)))
             return target->appendMemcpy(globalObject, vm, target->length(), hasDouble(targetType) ? ArrayWithDouble : ArrayWithContiguous, values);
-        }
+        if (hasContiguous(type) && hasDouble(targetType) && holdsOnlyNumbersForDoubleStorage(values))
+            return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithDouble, values);
     } else
         return false;
     return target->appendMemcpy(globalObject, vm, target->length(), source);
@@ -225,12 +235,29 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     lookedAtInVain -= std::min(lookedAtInVain, worthOfConversion);
 }
 
+// What a native function or general code has just made: an array of the realm with storage of its own.
+static bool tryConvertPlainInt32Array(JSGlobalObject* globalObject, VM& vm, JSArray* array)
+{
+    Structure* structure = array->structure();
+    if (structure != globalObject->originalArrayStructureForIndexingType(ArrayWithInt32) || array->indexingMode() != ArrayWithInt32 || structure->transitionWatchpointSetIsStillValid())
+        return false;
+    Butterfly* values = array->butterfly();
+    for (unsigned i = values->vectorLength(); i--;) {
+        JSValue value = values->contiguous().atUnsafe(i).get();
+        values->contiguousDouble().atUnsafe(i) = value.isInt32() ? value.asInt32() : PNaN;
+    }
+    array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
+    return true;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
     DeferTerminationForAWhile deferTermination(vm);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
     // An array that refuses stays as it was, and goes on failing the test for Double storage.
+    if (tryConvertPlainInt32Array(globalObject, vm, array))
+        return;
     if (hasInt32(array->indexingType()) || hasUndecided(array->indexingType()))
         array->tryMakeWritableDouble(vm);
     else if (hasContiguous(array->indexingType()))

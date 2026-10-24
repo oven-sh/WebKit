@@ -679,7 +679,7 @@ static void testCreatedFieldsRememberedAtTheirPlace()
     uint32_t& orderWord = object.at<uint32_t>(offsetOfOrderWord);
 
     auto stepOf = [&](uint32_t place) -> KeyOrderStepCache& {
-        return reinterpret_cast<KeyOrderStepCache*>(reinterpret_cast<uint8_t*>(&instance) + InstanceLayout::offsetOfKeyOrderSteps)[place % numberOfKeyOrderStepCaches];
+        return reinterpret_cast<KeyOrderStepCache*>(reinterpret_cast<uint8_t*>(&instance) + InstanceLayout::offsetOfKeyOrderSteps)[indexOfKeyOrderStepCache(place, shapeWordOf(9))];
     };
     auto create = [&](CreatedFieldsAtPlace fields, uint32_t place, uint32_t flags) {
         Entry operation = fields == CreatedFieldsAtPlace::One ? Entry::operationAOTDidCreateFieldAt : Entry::operationAOTDidCreateFieldsAt;

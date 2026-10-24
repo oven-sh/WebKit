@@ -230,7 +230,7 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, ValueID counter)
 }
 
 // `i < bytes.length; i++`. On this side of a bound that is an integer the counter is one, which ConvertCountersToIntegers finds out behind the rounds. A bound for which a rule in front of this one has just asked for tests may be an integer behind them. Below an int32 a test for int32 does no harm: it is proven then, and goes.
-static BoundedCounters findBoundedCounters(TestSiteReporter& reporter)
+static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, std::span<const ValueID> comparisonsWithTestedBound)
 {
     BoundedCounters counters;
     for (const LoopInduction& loop : reporter.analyses().inductionVariables().loops()) {
@@ -241,7 +241,7 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter)
             for (const InductionTest& test : variable.tests) {
                 if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
                     continue;
-                if (reporter.isClaimed(test.comparison)) {
+                if (std::ranges::contains(comparisonsWithTestedBound, test.comparison)) {
                     counters.append({ variable.parameter, test.comparison, test.stayingEdge });
                     continue;
                 }
@@ -259,13 +259,13 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter)
 }
 
 // An operator takes an integer as it is, so none of these needs a test. One for int32 that is placed here stays in the loop for good: a view may be longer than that, and nothing proves that this one is not.
-static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& value, const TestedOperands& isTested, std::optional<BoundedCounters>& boundedCounters)
+static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& value, const TestedOperands& isTested, std::optional<BoundedCounters>& boundedCounters, std::span<const ValueID> comparisonsWithTestedBound)
 {
     // Behind the rounds the counters that could be converted have been.
     if (reporter.context().isBehindRounds || !reporter.analyses().blockCycles().innermostCycleOf(reporter.point().block))
         return false;
     if (!boundedCounters)
-        boundedCounters = findBoundedCounters(reporter);
+        boundedCounters = findBoundedCounters(reporter, comparisonsWithTestedBound);
     return std::ranges::any_of(*boundedCounters, [&](const BoundedCounter& counter) {
         for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
             if (isTested[operandIndex] && reporter.analyses().identityOf(value.operand(operandIndex)) != counter.parameter)
@@ -392,6 +392,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
     OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Fast };
 
     std::optional<BoundedCounters> boundedCounters;
+    Vector<ValueID, 2> comparisonsWithTestedBound;
     reporter.forEachCandidate([&](const Value& value) {
         if (!hasOperatorForm(value.opcode) || reporter.takesAwaySitesInColdCode())
             return;
@@ -400,6 +401,8 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, value)) {
             reporter.report({ makeTypeTest(value.operand(*bound), TypeTable::int32) }, chooseOperatorForm(site, value).effects.normal);
+            comparisonsWithTestedBound.append(reporter.use());
+            boundedCounters = std::nullopt;
             return;
         }
 
@@ -420,7 +423,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
         std::optional<OperatorTests> found = findFewestTests(reporter, site, value, tested);
         if (!found)
             return;
-        if (testsOnlyBoundedCounter(reporter, value, found->isTested, boundedCounters)) {
+        if (testsOnlyBoundedCounter(reporter, value, found->isTested, boundedCounters, comparisonsWithTestedBound.span())) {
             reporter.putOffUse();
             return;
         }

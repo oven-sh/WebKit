@@ -39,10 +39,11 @@ ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& arr
     const Type& elements = program.at(array.contentsAt(program.builtins(), ContentsSlot::Element));
     if (elements.isAnything())
         return ArrayStorage::Other;
-    // A declared type lists undefined and null whether or not anybody stores them. Flow lists what it saw stored.
-    if (array.contentsAreProven && elements.primitives & Primitive::UndefinedOrNull)
+    ArrayStorage storage = arrayStorageHolding(elements);
+    // A declared type lists undefined and null whether or not anybody stores them. Flow lists what it saw stored beside the numbers.
+    if (storage != ArrayStorage::Other && array.contentsAreProven && elements.primitives & Primitive::UndefinedOrNull)
         return ArrayStorage::Contiguous;
-    return arrayStorageHolding(elements);
+    return storage;
 }
 
 ArrayStorage arrayStorageDeclaredBy(const Program& program, const Type& array)

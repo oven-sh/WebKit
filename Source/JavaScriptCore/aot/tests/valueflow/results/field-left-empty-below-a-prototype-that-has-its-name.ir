@@ -1,0 +1,28 @@
+# bare = { a: 1 }; Object.setPrototypeOf(bare, { late: 1 }); bare.late; other = { b: 1 }; Object.setPrototypeOf(other, { early: 1 }); other.late
+# One object of the first layout gets a prototype that has the name of the field that it leaves empty. The prototype that the object of the second layout gets has another name.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Options"
+# CHECK-NOT: AbsentOnPrototypes
+# CHECK: layout L1 name="Above"
+# CHECK: layout L2 name="Others" fields=[{key="b" {{*}}{key="late" {{*}}prototypeName=AbsentOnPrototypes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything}}]
+layout L1 name="Above" fields=[{key="late" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Others" fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything}}]
+layout L3 name="AboveOthers" fields=[{key="early" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=ObjectSetPrototypeOf
+    v4 = Call v3, -, v1, v2
+    v5 = PropGet v1 key="late"
+    v6 = NewObject -, v0 layout=L2 fields=[0]
+    v7 = NewObject -, v0 layout=L3 fields=[0]
+    v8 = Call v3, -, v6, v7
+    v9 = PropGet v6 key="late"
+    Return
+}

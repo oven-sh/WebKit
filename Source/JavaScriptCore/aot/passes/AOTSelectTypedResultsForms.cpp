@@ -265,6 +265,9 @@ void TypedResultExpander::expandValidatedCall(const TypedResultSite& site)
 
 ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, ValueID value)
 {
+    if (site.isValidatedByPlanAlone)
+        return emitGeneralValidation(site, value);
+
     NodeDecisionInputs decisionInputs { inputs().program, inputs().flow, inputs().build };
     ExpectedResultID expectedResult = site.root.expectedResult();
     for (size_t index : nodesReachableFrom(program(), expectedResult, site.root.part)) {

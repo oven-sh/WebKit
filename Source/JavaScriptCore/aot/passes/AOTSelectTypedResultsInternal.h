@@ -31,6 +31,8 @@ struct TypedResultSite {
     TypedResultForm form { TypedResultForm::None };
     ResultNodeRef root;
     LayoutID rowLayout;
+    // validateByPlan does the whole validation, and makes ordinary objects.
+    bool isValidatedByPlanAlone { false };
 };
 
 struct TypedResultChoice {

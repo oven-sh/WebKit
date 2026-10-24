@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 void ValueFlowUsesOfHeapDeleter::operator()(ValueFlowUsesOfHeap* usesOfHeap) const
@@ -317,6 +319,8 @@ public:
     ValueSetID objects() const { return m_objects; }
     // A value, an accessor or a member of a built-in object may lie under the key in an object that one of these inherits from.
     bool mayFindNameAbove(PropertyKeyID);
+    // Nor does anything come there while the program runs.
+    bool inheritsNothingUnder(PropertyKeyID);
     bool isObservedByStoresOfHeirs(PropertyKeyID);
     bool mayBeDeletedUnder(PropertyKeyID);
     bool mayBeRedefinedUnder(PropertyKeyID);
@@ -377,6 +381,24 @@ bool ObjectsOfLayoutInHeap::mayFindNameAbove(PropertyKeyID key)
         mayHoldMore |= !holdsOnlyWhatIsWrittenUnder(inputs, object, key);
     });
     return mayHoldMore;
+}
+
+// The analysis leaves the objects of the realm out of a write through an object nobody knows, so the results about the built-in holders answer for them.
+bool ObjectsOfLayoutInHeap::inheritsNothingUnder(PropertyKeyID key)
+{
+    const ValueFlowResultInputs& inputs = m_results.inputs;
+    const Program& program = inputs.program;
+    if (program.isIndexLike(key) || m_results.stores.hasObjectOfCodeWithoutSolve(m_id) || m_results.stores.getsCopiedProperties(m_id) || mayFindNameAbove(key))
+        return false;
+    bool mayGainName = false;
+    inputs.sets().forEachMember(m_maker.intersect(objectsAbove(), inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
+        BuiltinID holder = program.builtins().canonicalID(inputs.universe().builtinOf(object));
+        if (!listsEveryMemberUnder(program, holder, key))
+            mayGainName = true;
+        else if (!isClosedKey(program, holder, key))
+            mayGainName |= !builtinHolderNeverGains(m_results.tables.builtins, holder, key);
+    });
+    return !mayGainName;
 }
 
 // A store through an object that inherits from this one ends its walk at the field.
@@ -448,6 +470,7 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
         bool isStoredAfterCreation { false };
         bool isAskedForAccessor { false };
         bool isAskedForStoredValues { false };
+        bool mayInheritName { true };
         FlowAccessorField accessor;
         ValueSetID stored { ValueSets::nothing };
         ValueFlowNumbers storedNumbers;
@@ -481,6 +504,7 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
     Vector<BitVector> mayBeAccessed = hasObjects;
     Vector<BitVector> isStoredAfterCreation = hasObjects;
     Vector<BitVector> isAskedForAccessor = hasObjects;
+    Vector<BitVector> mayInheritName = hasObjects;
     noteFieldsMissingAtCreation(results, allocatingOperations, isMissingAtCreation);
     ValueSetMakers makers(inputs);
 
@@ -519,6 +543,9 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
             held.mayBeCalled = uses.mayBeCalledUnder(objects, field.key);
             held.mayBeAccessed = uses.mayBeAccessedUnder(objects, field.key);
             held.isStoredAfterCreation = stores.isStoredAfterCreation(id, field.key);
+            // No lookup goes on past a property that every object has from its creation on.
+            bool mayBeMissing = isMissingAtCreation[declaration.layout.index()].quickGet(declaration.field) || possibleForField.containsAny({ ObjectMutation::DeleteField, ObjectMutation::ReachUnknownJavaScript });
+            held.mayInheritName = !mayBeMissing || !build.isEnabled(FlowResultKind::OwnNames, declaration.layout.index()) || !inHeap.inheritsNothingUnder(field.key);
             if (!hasNodeOfItsOwn(field) && build.isEnabled(FlowResultKind::AppendedFields, declaration.layout.index())) {
                 held.isAskedForAccessor = true;
                 held.accessor = stores.accessorDefinedUnder(maker, id, field.key);
@@ -546,6 +573,7 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
             note(held.mayBeCalled, mayBeCalled);
             note(held.mayBeAccessed, mayBeAccessed);
             note(held.isStoredAfterCreation, isStoredAfterCreation);
+            note(held.mayInheritName, mayInheritName);
             possibleMutations[layout][field].add(held.possibleMutations);
             if (held.isAskedForAccessor)
                 uniteAccessors(application.layouts[layout].fields[field].accessor, WTF::move(held.accessor), !isAskedForAccessor[layout].quickSet(field));
@@ -580,6 +608,8 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
                 if (!possible.contains(ObjectMutation::RedefineProperty))
                     flow.stability.add(FieldStability::IsNeverRedefined);
             }
+            if (!mayInheritName[index].quickGet(field))
+                flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
             // Which allocations and constructors fill a field is read from them.
             if (!isMissingAtCreation[index].quickGet(field) && flow.location.writers == WriterState::AllKnown && build.isEnabled(FlowResultKind::Initialization, index))
                 flow.location.initialization = InitializationState::SetAtCreation;
@@ -975,6 +1005,7 @@ static void appendFields(const FieldResults& results, const ProvenHierarchy& hie
     BuildContext& build = results.inputs.build;
     const StoresByLayout& stores = results.stores;
     ValueSetMakers makers(results.inputs);
+    Vector<ObjectsOfLayoutInHeap::Chains> chainsOfWorker(results.inputs.loops().width());
     forEachIndexInParallel(results.inputs.loops(), keysByLayout.size(), [&](unsigned index, unsigned worker) {
         if (keysByLayout[index].isEmpty())
             return;
@@ -984,9 +1015,11 @@ static void appendFields(const FieldResults& results, const ProvenHierarchy& hie
             OptionSet<ObjectMutation> possible;
             ValueSetID stored = ValueSets::nothing;
             bool isStoredBeforeObjectsLeak = true;
+            bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
             hierarchy.forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
                 if (!results.hasObjects(below))
                     return;
+                inheritsNothing = inheritsNothing && ObjectsOfLayoutInHeap(results, maker, chainsOfWorker[worker], below).inheritsNothingUnder(key);
                 possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : results.possibleMutationsOf(below));
                 stored = maker.unite(stored, stores.storedUnder(maker, below, key));
                 isStoredBeforeObjectsLeak &= results.constructions.isFollowed(below) && results.constructions.isStoredBeforeObjectLeaks(below, key, { });
@@ -1009,6 +1042,8 @@ static void appendFields(const FieldResults& results, const ProvenHierarchy& hie
                 if (!possible.contains(ObjectMutation::RedefineProperty))
                     field.flow.stability.add(FieldStability::IsNeverRedefined);
             }
+            if (inheritsNothing)
+                field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
             update.appendedFields.append(WTF::move(field));
             contents.storedInAppendedFields[index].append(stored);
         }
@@ -1571,8 +1606,10 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                 // Which getters the slot of an accessor takes is a guess: a pair with another getter, or with a setter alone, is turned away and lies beside the slots.
                 if (inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !fields[field].accessor.isAccessor() && !takesDeclaredType)
                     flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
-                if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(contents.storedInAppendedFields[index][field]))
+                if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(contents.storedInAppendedFields[index][field])) {
                     flow.occupancy = Occupancy::AlwaysFilled;
+                    flow.prototypeName = PrototypeNameState::Unknown;
+                }
             }
         }
     }

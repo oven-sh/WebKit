@@ -25,7 +25,6 @@ struct KeyOrderStep {
 // The step that the place of the store remembers, and what it takes to remember another.
 struct RememberedKeyOrderStep {
     KeyOrderStep step;
-    ptrdiff_t offsetInInstance { 0 };
     Integer orderAndShapeWordsBefore;
     uint32_t placePlusOne { 0 };
 };

@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -188,6 +190,22 @@ static bool passesOneArray(const Program& program, const Function& function, con
     const Type& list = program.typeOf(function, call.arguments[0]);
     const ClassPart* part = list.isObject() ? list.singleBuiltinClass() : nullptr;
     return part && part->builtinClass == BuiltinClasses::Array;
+}
+
+bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
+{
+    if (call.opcode != Opcode::Call && call.opcode != Opcode::CallBuiltin)
+        return false;
+    if (ExpectedResultID expected = call.expectedResult(); expected && !program.at(expected).validation.isEmpty())
+        return true;
+    if (call.opcode == Opcode::Call)
+        return false;
+
+    const BuiltinTable& table = program.builtins();
+    const Builtin& entry = table.at(table.at(call.overload()).builtin);
+    if (!entry.flags.contains(BuiltinFlag::IsCompilerHelper) && entry.holder != Builtins::BunBundle)
+        return false;
+    return call.builtinCallForm() != BuiltinCallForm::Whole || !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
 }
 
 bool overloadHasForm(const BuiltinTable& table, BuiltinOverloadID id, BuiltinCallForm form)

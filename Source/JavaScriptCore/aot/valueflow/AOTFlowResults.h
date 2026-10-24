@@ -174,6 +174,9 @@ struct FlowBuiltinTables {
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
 };
 
+// The holder is intact, nobody has it in hand whom the analysis does not follow, and no record says that the program puts something under the key.
+bool builtinHolderNeverGains(const FlowBuiltinTables&, BuiltinID holder, PropertyKeyID);
+
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
     Vector<UnseenCodeRecord> unseenCode;
@@ -262,6 +265,7 @@ public:
     BuiltinLocationState builtinLocation(BuiltinID member) const;
     BuiltinHolderState builtinHolder(BuiltinID holder) const;
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
+    bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }

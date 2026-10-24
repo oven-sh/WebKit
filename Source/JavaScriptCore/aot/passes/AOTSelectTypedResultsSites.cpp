@@ -259,6 +259,14 @@ static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, Typ
     const Program& program = context.program;
     site.root = ResultNodeRef::forValidation(canonicalValidationOf(program, expected), 0);
 
+    // Flow allocated nothing at the call, so no object with a layout comes out of it, not even one with a layout that flow allocated at another call.
+    const FlowResults& flow = context.inputs.flow;
+    if (flow.hasResults() && !flow.typedResultType(context.function.at(site.call).accessSite())) {
+        site.isValidatedByPlanAlone = true;
+        if (site.form == TypedResultForm::ParsedText)
+            site.form = TypedResultForm::None;
+    }
+
     switch (site.form) {
     case TypedResultForm::ParsedText:
     case TypedResultForm::ValidatedValue:
@@ -275,7 +283,7 @@ static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, Typ
         site.form = TypedResultForm::None;
 
     context.exceeds(LimitID::MaxParserPlanNodes, program.at(expected).validation.size(), site.call);
-    return { .site = site };
+    return { .site = site, .declineReason = site.isValidatedByPlanAlone ? TypedResultDeclineReason::TargetIsNotModeledByFlow : TypedResultDeclineReason::None };
 }
 
 // Flow filled the objects it allocated at the call from the field types as read. Its own predictions have replaced those since, and they can name a layout that flow never put there.

@@ -316,20 +316,34 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
 {
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || description.kind != ValueFlowCallKind::Call)
         return;
-    if (!context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
-        return;
 
     const Program& program = context.program();
     ExpectedResultID expected = program.at(call.function).at(call.site).expectedResult();
     bool isValidated = expected && !program.at(expected).validation.isEmpty();
+    bool hasObjects = !!context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal);
     TypedResultForm form = overload.result.typedResultForm;
     bool parses = form == TypedResultForm::ParsedText || form == TypedResultForm::ParsedBody || form == TypedResultForm::Rows;
-    if (!isValidated && !parses)
+    if (!isValidated && !(hasObjects && parses))
         return;
 
     // What SelectTypedResults puts in the place of the call hands whatever the compiled code gives up on to helpers in the library.
     for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCopyOwnProperties })
         context.use(helper, BuiltinUse::Called);
+
+    auto letArgumentsEscape = [&] {
+        for (const ValueFlowOperand& argument : description.arguments)
+            context.connect(argument, ValueFlowProgramNodes::escaped());
+        context.connect(description.laterArguments, ValueFlowProgramNodes::escaped());
+        context.connect(description.otherArguments, ValueFlowProgramNodes::escaped());
+    };
+
+    // The type reaches more than a typed result lists. The validation stays, and validateByPlan does all of it: what it answers is made in the library, or is the very value that it was given.
+    if (!hasObjects) {
+        if (description.result)
+            context.add(description.result, unknownValue(context, ValueFlowUnknownSource::DataFromOutside));
+        letArgumentsEscape();
+        return;
+    }
 
     ValueFlowNodeID target = description.result;
     if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
@@ -346,12 +360,8 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         context.add(target, allocation.valueOf(result.type));
 
     // Where the plan takes any object or any function, the copy holds the very value that its source held.
-    if (!isValidated || parses)
-        return;
-    for (const ValueFlowOperand& argument : description.arguments)
-        context.connect(argument, ValueFlowProgramNodes::escaped());
-    context.connect(description.laterArguments, ValueFlowProgramNodes::escaped());
-    context.connect(description.otherArguments, ValueFlowProgramNodes::escaped());
+    if (isValidated && !parses)
+        letArgumentsEscape();
 }
 
 } } } // namespace JSC::AOT::Typed

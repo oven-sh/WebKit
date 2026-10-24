@@ -65,9 +65,7 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldRef
         return std::nullopt;
     if (flow.occupancy == Occupancy::AlwaysFilled)
         return declared;
-    if (flow.prototypeName != PrototypeNameState::AbsentOnPrototypes)
-        return std::nullopt;
-    return declared.withPrimitives(Primitive::Undefined);
+    return std::nullopt;
 }
 
 std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)

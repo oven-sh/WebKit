@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Request" constructor=f1 fields=[{key="url" declared={type=anything}}, {key="path" declared={type=anything}}]
-layout L1 name="Extended" fields=[{key="extra" declared={type=anything}}]
+layout L1 name="Extended" fields=[{key="route" declared={type=anything}}, {key="path" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
@@ -27,7 +27,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v14 = Call v13, v10, v9
     v15 = PropGet v10 key="rewrite"
     v16 = Call v15, v10, v9
-    v17 = NewObject -, v9 layout=L1 fields=[0]
+    v17 = NewObject -, v9, v9 layout=L1 fields=[0, 1]
     v18 = Builtin builtin=ObjectSetPrototypeOf
     v19 = Call v18, -, v10, v17
     v20 = PropGet v10 key="route"

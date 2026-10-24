@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCalls.h"
-#include "AOTBuiltinTableBindings.h"
 #include "AOTPropertyAccessReceivers.h"
 #include <algorithm>
 #include <initializer_list>
@@ -78,21 +77,6 @@ static bool isLegalBuiltinConstant(const BuiltinTable& table, const Value& const
         return entry.kind == BuiltinKind::Constant && table.nameOfSymbol(constant.builtin());
     return entry.kind == BuiltinKind::DataProperty
         && table.at(table.rootOf(constant.builtin())).scope == BuiltinScope::Module;
-}
-
-static bool hasValidationNodes(const Program& program, const Value& call)
-{
-    ExpectedResultID expectedResult = call.expectedResult();
-    return expectedResult && !program.at(expectedResult).validation.isEmpty();
-}
-
-// The compiler's helpers and the functions of bun:bundle are in no realm.
-static bool hasFunctionObject(const BuiltinTable& table, const Value& call)
-{
-    const Builtin& entry = table.at(table.at(call.overload()).builtin);
-    if (!entry.flags.contains(BuiltinFlag::IsCompilerHelper) && entry.holder != Builtins::BunBundle)
-        return true;
-    return call.builtinCallForm() == BuiltinCallForm::Whole && BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
 }
 
 static ValueID closureEnvironmentOperand(const Program& program, const Value& allocation)
@@ -197,7 +181,7 @@ void FunctionVerifier::verifyCallByValue(BlockID block, ValueID id, const Value&
 {
     if (m_form == IRForm::AsRead || isOptimizing())
         return;
-    if (value.opcode == Opcode::Call && hasValidationNodes(m_program, value))
+    if (isCallThatRequiredPassRemoves(m_program, value))
         fail(InternalErrorKind::RequiredPassLeftOperation, block, id);
 }
 
@@ -381,7 +365,7 @@ void FunctionVerifier::verifyBuiltinOperation(BlockID block, ValueID id, const V
     if (!builtinCallOpcodes.contains(value.opcode))
         return;
 
-    if (value.opcode == Opcode::CallBuiltin && !isOptimizing() && (hasValidationNodes(m_program, value) || !hasFunctionObject(m_program.builtins(), value))) {
+    if (!isOptimizing() && isCallThatRequiredPassRemoves(m_program, value)) {
         fail(InternalErrorKind::RequiredPassLeftOperation, block, id);
         return;
     }

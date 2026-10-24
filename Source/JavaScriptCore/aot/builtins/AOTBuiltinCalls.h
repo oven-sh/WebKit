@@ -93,6 +93,9 @@ bool distinguishesOmittedFromUndefined(const BuiltinTable&, const BuiltinParamet
 
 bool overloadHasForm(const BuiltinTable&, BuiltinOverloadID, BuiltinCallForm);
 
+// A call whose result is validated, and a call of what is in no realm: a helper of the compiler, a function of bun:bundle. There is no code for either, so one that is left stops the build.
+bool isCallThatRequiredPassRemoves(const Program&, const Value& call);
+
 bool overloadTakesOperands(const TypingContext&, const Value& call);
 bool overloadTakesOperands(const TypingContext&, const Terminator& call);
 bool overloadTakesOperands(const Program&, const Function&, const Value& call);

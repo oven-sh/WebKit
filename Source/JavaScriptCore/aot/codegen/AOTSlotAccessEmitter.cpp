@@ -1048,20 +1048,31 @@ std::optional<RememberedKeyOrderStep> SlotAccessEmitter::testRememberedKeyOrderS
     static_assert(!OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore) && OBJECT_OFFSETOF(KeyOrderStepCache, shapeWord) == sizeof(uint32_t));
     const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
     RememberedKeyOrderStep remembered;
-    remembered.offsetInInstance = InstanceLayout::offsetOfKeyOrderSteps + *number % numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache);
     remembered.placePlusOne = *number + 1;
     // The shape word of an object never changes, so the two words together change when the order word does.
     remembered.orderAndShapeWordsBefore = Integer(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
-    Integer rememberedWords(m_out.load64(instanceField(heap, remembered.offsetInInstance + OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore))));
+    auto& members = m_program.at(value->opcode == Opcode::PutSlots ? value->receivers() : m_placement.fieldAccess(value->fieldAccess()).membersWithField).members;
+    const ShapeTable& shapes = m_placement.shapes();
+    LValue entry = m_instance;
+    ptrdiff_t offsetOfEntry = InstanceLayout::offsetOfKeyOrderSteps;
+    if (members.size() == 1 && shapes.shapesOf(members[0]).count == 1)
+        offsetOfEntry += indexOfKeyOrderStepCache(*number, AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) * sizeof(KeyOrderStepCache);
+    else {
+        LValue index = m_out.bitAnd(m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(32)), m_out.constInt64(*number)), m_out.constInt64(numberOfKeyOrderStepCaches - 1));
+        static_assert(sizeof(KeyOrderStepCache) == 1 << 4);
+        entry = m_out.add(entry, m_out.shl(index, m_out.constInt32(4)));
+    }
+    auto entryField = [&](ptrdiff_t offset) { return m_out.address(heap, entry, offsetOfEntry + offset); };
+    Integer rememberedWords(m_out.load64(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore))));
     // No object has zero for its shape word, so an entry that remembers nothing matches nothing.
     remembered.step.applies = equal(remembered.orderAndShapeWordsBefore, rememberedWords);
     // Where there are no more places than entries, each place has an entry of its own.
     if (m_placement.keyOrders().firstStoreThatMayAdd.last() > numberOfKeyOrderStepCaches) {
         static_assert(std::endian::native == std::endian::little);
-        Word32 rememberedTurn(m_out.load8ZeroExt32(instanceField(heap, remembered.offsetInInstance + OBJECT_OFFSETOF(KeyOrderStepCache, turnPlusOne))));
+        Word32 rememberedTurn(m_out.load8ZeroExt32(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, turnPlusOne))));
         remembered.step.applies = logicalAnd(remembered.step.applies, equal(rememberedTurn, word32(static_cast<int32_t>(*number / numberOfKeyOrderStepCaches + 1))));
     }
-    remembered.step.orderWordAfter = Word32(m_out.load32(instanceField(heap, remembered.offsetInInstance + OBJECT_OFFSETOF(KeyOrderStepCache, orderWordAfter))));
+    remembered.step.orderWordAfter = Word32(m_out.load32(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, orderWordAfter))));
     return remembered;
 }
 

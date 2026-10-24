@@ -125,6 +125,7 @@ private:
     bool isOnlyComparedByBits(ValueID check) const;
     bool dropChecksNobodyReliesOn();
     bool dropChecksThatTurnAwayWhatArrives();
+    bool guardElementsThatOneOperatorTakes();
     bool keepsMoreAliveOverAwaitThanFrameMapHolds();
 
     bool tryCreateGenericVersion();
@@ -357,6 +358,7 @@ PassOutcome GenericVersionBuilder::run()
     changed |= removeRedundantChecks();
     bool hasDroppedChecks = dropChecksNobodyReliesOn();
     hasDroppedChecks |= dropChecksThatTurnAwayWhatArrives();
+    hasDroppedChecks |= guardElementsThatOneOperatorTakes();
     if (m_sites.isEmpty()) {
         if (hasDroppedChecks)
             finishTyping();
@@ -564,6 +566,29 @@ bool GenericVersionBuilder::dropChecksThatTurnAwayWhatArrives()
     }
     replaceChecksWithGuards(dropped.span(), ExpectedTypes::Dropped);
     // A report that was put in front of a check has moved what stands behind it.
+    m_sites.shrink(0);
+    collectChecks();
+    return true;
+}
+
+// `sum += list[index]`: an array and an iterator hand out undefined whatever their elements are declared to be, and the operator has a form for it. An exit would make all that the generic version reads.
+bool GenericVersionBuilder::guardElementsThatOneOperatorTakes()
+{
+    Vector<ValueID, 8> guarded;
+    for (const CheckSite& site : m_sites) {
+        const Value& check = m_function.at(site.check);
+        Opcode source = m_function.at(sameObjectThroughCasts(m_function, check.valueOperand())).opcode;
+        std::span<const Use> uses = m_analyses.useLists().usesOf(site.check);
+        if ((source != Opcode::ElemGet && source != Opcode::ResultAt) || uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+            continue;
+        const Value& user = m_function.at(uses[0].user);
+        bool isOnlyLookedAt = user.operandKind(uses[0].operandIndex) == OperandKind::Any && !user.operandUses(uses[0].operandIndex).contains(OperandUse::Retains);
+        if (isOnlyLookedAt && !m_context.types.at(check.castType()).hasObjects() && !typeOf(check.valueOperand()).hasObjects())
+            guarded.append(site.check);
+    }
+    if (guarded.isEmpty())
+        return false;
+    replaceChecksWithGuards(guarded.span());
     m_sites.shrink(0);
     collectChecks();
     return true;

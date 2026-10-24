@@ -265,6 +265,8 @@ static std::optional<CreationTests> testsThatEmptySlotReadsAsUndefined(const Pro
     CreationTests tests;
     if (!state.cannotMoveOut)
         tests.proofs.add(Proof::NoFieldOutsideSlot);
+    if (state.isAbsentOnPrototypes)
+        return tests;
     if (!addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests))
         return std::nullopt;
     return tests;
@@ -362,17 +364,10 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
     // The slot of a private field never defers its closure.
     bool makesClosure = state.hasDeferredMember && !query.isPrivate;
     Opcode readOfSlotThatMayBeEmpty = makesClosure ? Opcode::GetDeferredClosureSlotOrUndefined : Opcode::GetSlotOrUndefined;
-    // Where the read needs a test, it tests for what is expected: the slot of an optional field is often empty, that of a required field hardly ever.
-    bool findsNothingBehindEmptySlot = !state.isAlwaysFilled && state.isAbsentOnPrototypes && !query.isPrivate;
-    if (findsNothingBehindEmptySlot && (state.cannotMoveOut || !state.isRequired)) {
-        requirePropertyInSlotOrNowhere(state, plan);
-        setSlotOperation(plan, readOfSlotThatMayBeEmpty);
-        return;
-    }
     // Nobody stores it, so no object has it, and the read finds what lies above the object.
     if (state.hasSlotNowhere) {
         CreationTests tests;
-        if (state.form.isEmpty() && addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests)) {
+        if (state.form.isEmpty() && (state.isAbsentOnPrototypes || addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests))) {
             plan.requiredProofs |= tests.proofs;
             addConditions(plan.conditions, tests.conditions.span());
             plan.form = AccessForm::Constant;
@@ -380,6 +375,11 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
             return;
         }
         plan.form = AccessForm::ByName;
+        return;
+    }
+    // The state of the slot is the whole answer. Where the read needs a test, it tests for what is expected.
+    if (!state.isAlwaysFilled && state.isAbsentOnPrototypes && state.cannotMoveOut && !query.isPrivate) {
+        setSlotOperation(plan, readOfSlotThatMayBeEmpty);
         return;
     }
     // `if (this[kPending])` asks for a name that is stored late or never.
@@ -434,6 +434,12 @@ static void planFieldTest(const PropertyAccessQuery& query, const FieldArmState&
         plan.form = AccessForm::Constant;
         plan.operation = Opcode::Boolean;
         plan.booleanConstant = true;
+        return;
+    }
+    if (state.hasSlotNowhere && state.isAbsentOnPrototypes && state.form.isEmpty()) {
+        plan.form = AccessForm::Constant;
+        plan.operation = Opcode::Boolean;
+        plan.booleanConstant = false;
         return;
     }
     if (state.isAbsentOnPrototypes || query.isOwnLookup) {

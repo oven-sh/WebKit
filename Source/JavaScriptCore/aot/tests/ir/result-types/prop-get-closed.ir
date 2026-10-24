@@ -7,7 +7,7 @@
 # CHECK-NEXT: v2: object ~ L0
 # CHECK-NEXT: v3: undefined|L0
 # CHECK-NEXT: v4: i32
-# CHECK-NEXT: v5: undefined|i32
+# CHECK-NEXT: v5: anything ~ undefined|i32
 # CHECK-NEXT: v6: anything ~ undefined|i32
 # CHECK-NEXT: v7: anything ~ i32
 # CHECK-NEXT: v8: anything ~ i32

@@ -37,17 +37,17 @@ function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=
     Return v5
 }
 # CHECK-LABEL: function f1 name="sumOfCodes"
-# CHECK: b2(v6: int[0, 2147483647], v7: int|whole):
+# CHECK: b3(v8: int[0, 2147483647], v9: int|whole):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: form=Generic
-# CHECK: : int|whole = Add v7, {{*}}form=Numbers
+# CHECK: : int|whole = Add v9, {{*}}form=Numbers
 # CHECK-NOT: form=Generic
 # CHECK: ([[sum]]: number):
 # CHECK-NEXT: Return [[sum]]
 # REPRESENTED-LABEL: function f1 name="sumOfCodes"
-# REPRESENTED: b2(v6: int[0, 2147483647] @Int32, v7: int|whole @Double):
+# REPRESENTED: b3(v8: int[0, 2147483647] @Int32, v9: int|whole @Double):
 # REPRESENTED-NOT: Box
-# REPRESENTED: : int|whole @Double = Add v7, {{*}}form=Numbers
+# REPRESENTED: : int|whole @Double = Add v9, {{*}}form=Numbers
 # REPRESENTED-NOT: Box
 # REPRESENTED: Return
 

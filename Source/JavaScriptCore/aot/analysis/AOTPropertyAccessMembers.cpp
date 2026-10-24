@@ -349,12 +349,7 @@ BuiltinHolderGain builtinHolderGainOf(const PropertyAccessContext& context, Buil
     if (isClosedKey(context.program, holder, key))
         return BuiltinHolderGain::Impossible;
 
-    const FlowResults* flow = context.flow;
-    if (!flow || !flow->hasResults() || flow->builtinHolder(holder) != BuiltinHolderState::Intact)
-        return BuiltinHolderGain::Unknown;
-    if (flow->usesOf(holder).contains(BuiltinUse::Escaped) || flow->findBuiltinLocation(holder, key))
-        return BuiltinHolderGain::Unknown;
-    return BuiltinHolderGain::Impossible;
+    return context.flow && context.flow->builtinHolderNeverGains(holder, key) ? BuiltinHolderGain::Impossible : BuiltinHolderGain::Unknown;
 }
 
 // "Infinity" and "NaN" name no element of anything but a typed array, and no object of the table is one.
