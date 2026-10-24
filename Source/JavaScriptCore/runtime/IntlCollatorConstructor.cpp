@@ -77,6 +77,8 @@ void IntlCollatorConstructor::finishCreation(VM& vm, IntlCollatorPrototype* coll
 {
     Base::finishCreation(vm, 0, "Collator"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, collatorPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // With Options::immutableGlobals() the prototype is already immutable, and would silently refuse its constructor.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     collatorPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 

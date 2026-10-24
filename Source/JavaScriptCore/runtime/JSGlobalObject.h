@@ -715,6 +715,11 @@ public:
 
     TrustedTypesEnforcement m_trustedTypesEnforcement { TrustedTypesEnforcement::None };
 
+    // See applyImmutableGlobalsOption().
+    bool m_hasImmutableGlobals { false };
+
+    std::optional<unsigned> m_stackTraceLimitOverride;
+
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
         static unsigned hash(T*);
@@ -790,6 +795,10 @@ public:
 #endif
 
     std::optional<unsigned> stackTraceLimit() const;
+    // Takes the place of Error.stackTraceLimit while it is set: for an embedder's own code, which would otherwise assign that property
+    // and put the old value back, and cannot once Error has immutable properties.
+    std::optional<unsigned> stackTraceLimitOverride() const { return m_stackTraceLimitOverride; }
+    void setStackTraceLimitOverride(std::optional<unsigned> limit) { m_stackTraceLimitOverride = limit; }
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);
@@ -1255,6 +1264,27 @@ public:
     }
         
     void haveABadTime(VM&);
+
+    // Does what Options::immutableGlobals() says, which is nothing by default: makes immutable the global object, each object it
+    // holds, and each object that is the prototype of anything in this realm, an embedder's as much as JavaScriptCore's own. An
+    // embedder calls it once it has set up its global object and before any other code runs; create() and
+    // createWithCustomMethodTable() call it themselves. What is created later is made immutable when it is created.
+    JS_EXPORT_PRIVATE void applyImmutableGlobalsOption(VM&);
+    bool hasImmutableGlobals() const { return m_hasImmutableGlobals; }
+    // JSObject::makePropertiesImmutable() for the object, for the functions its properties hold (methods, getters and setters) and,
+    // if it is a function, for its "prototype"; then the same for each of those. An object of a class that does not support it is
+    // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too if
+    // hasImmutableGlobals().
+    JS_EXPORT_PRIVATE void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
+    // For a built-in that is created after applyImmutableGlobalsOption() ran. A function in a property of a covered object does not
+    // need it: that is found when the property is materialized.
+    void didCreateBuiltin(VM& vm, JSObject* object)
+    {
+        if (m_hasImmutableGlobals) [[unlikely]]
+            makeObjectAndItsFunctionsImmutable(vm, object);
+    }
+    // Called, if hasImmutableGlobals(), when `holder` has materialized a property from its static table.
+    void didReifyStaticProperty(VM&, JSObject* holder, JSValue);
 
     void notifyArrayBufferDetaching();
 

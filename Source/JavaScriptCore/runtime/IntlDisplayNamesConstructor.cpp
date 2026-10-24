@@ -74,6 +74,8 @@ void IntlDisplayNamesConstructor::finishCreation(VM& vm, IntlDisplayNamesPrototy
 {
     Base::finishCreation(vm, 2, "DisplayNames"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, displayNamesPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // With Options::immutableGlobals() the prototype is already immutable, and would silently refuse its constructor.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     displayNamesPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 

@@ -76,6 +76,8 @@ void IntlPluralRulesConstructor::finishCreation(VM& vm, IntlPluralRulesPrototype
 {
     Base::finishCreation(vm, 0, "PluralRules"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, pluralRulesPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // With Options::immutableGlobals() the prototype is already immutable, and would silently refuse its constructor.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     pluralRulesPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 

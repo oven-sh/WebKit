@@ -2213,6 +2213,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
 static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionDefinePropertyAllowingLazyMaterialization);
+static JSC_DECLARE_HOST_FUNCTION(functionDeletePropertyAllowingLazyMaterialization);
+static JSC_DECLARE_HOST_FUNCTION(functionSetPrototypeAllowingLazyMaterialization);
+static JSC_DECLARE_HOST_FUNCTION(functionSetStackTraceLimitOverride);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
@@ -3277,6 +3281,60 @@ JSC_DEFINE_HOST_FUNCTION(functionHasImmutableProperties, (JSGlobalObject*, CallF
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
     return JSValue::encode(jsBoolean(object && object->hasImmutableProperties()));
+}
+
+// [[DefineOwnProperty]] under AllowLazyMaterializationOfImmutableProperties. Throws if it fails.
+// Usage: $vm.definePropertyAllowingLazyMaterialization(object, key, descriptor)
+JSC_DEFINE_HOST_FUNCTION(functionDefinePropertyAllowingLazyMaterialization, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(callFrame->argument(0));
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    PropertyDescriptor descriptor;
+    toPropertyDescriptor(globalObject, callFrame->argument(2), descriptor);
+    RETURN_IF_EXCEPTION(scope, { });
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    scope.release();
+    return JSValue::encode(jsBoolean(object->methodTable()->defineOwnProperty(object, globalObject, key, descriptor, true)));
+}
+
+// [[Delete]] under AllowLazyMaterializationOfImmutableProperties.
+// Usage: $vm.deletePropertyAllowingLazyMaterialization(object, key)
+JSC_DEFINE_HOST_FUNCTION(functionDeletePropertyAllowingLazyMaterialization, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(callFrame->argument(0));
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    scope.release();
+    return JSValue::encode(jsBoolean(JSCell::deleteProperty(object, globalObject, key)));
+}
+
+// [[SetPrototypeOf]] under AllowLazyMaterializationOfImmutableProperties. Throws if it fails.
+// Usage: $vm.setPrototypeAllowingLazyMaterialization(object, prototype)
+JSC_DEFINE_HOST_FUNCTION(functionSetPrototypeAllowingLazyMaterialization, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    return JSValue::encode(jsBoolean(asObject(callFrame->argument(0))->setPrototype(vm, globalObject, callFrame->argument(1), true)));
+}
+
+// Calls JSGlobalObject::setStackTraceLimitOverride() and returns the override there was: a number, or undefined for none.
+// Usage: $vm.setStackTraceLimitOverride(limit)
+JSC_DEFINE_HOST_FUNCTION(functionSetStackTraceLimitOverride, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    std::optional<unsigned> previous = globalObject->stackTraceLimitOverride();
+    JSValue limit = callFrame->argument(0);
+    globalObject->setStackTraceLimitOverride(limit.isUInt32() ? std::optional<unsigned>(limit.asUInt32()) : std::nullopt);
+    return JSValue::encode(previous ? jsNumber(*previous) : jsUndefined());
 }
 
 // Calls the specified test function after adjusting the stack to have the specified
@@ -5964,6 +6022,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
+    addFunction(vm, allowIfNotFuzz, "definePropertyAllowingLazyMaterialization"_s, functionDefinePropertyAllowingLazyMaterialization, 3);
+    addFunction(vm, allowIfNotFuzz, "deletePropertyAllowingLazyMaterialization"_s, functionDeletePropertyAllowingLazyMaterialization, 2);
+    addFunction(vm, allowIfNotFuzz, "setPrototypeAllowingLazyMaterialization"_s, functionSetPrototypeAllowingLazyMaterialization, 2);
+    addFunction(vm, alwaysAllow, "setStackTraceLimitOverride"_s, functionSetStackTraceLimitOverride, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
 

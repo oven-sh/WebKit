@@ -79,6 +79,9 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
             RELEASE_ASSERT_NOT_REACHED();
         }
+
+        if (JSGlobalObject* globalObject = thisObject->realm(); globalObject->hasImmutableGlobals()) [[unlikely]]
+            globalObject->didReifyStaticProperty(vm, thisObject, thisObject->getDirect(offset));
     }
 
     if (isAccessor)

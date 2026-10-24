@@ -132,6 +132,10 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     // The ES6 spec says that no vars/global properties/let/const can be duplicated in the global scope.
     // This carried out section 15.1.8 of the ES6 spec: http://www.ecma-international.org/ecma-262/6.0/index.html#sec-globaldeclarationinstantiation
     {
+        // A lexical binding is not a property of the global object, but it is what a name means to every later script, and it can shadow a property.
+        if (globalObject->structure()->hasImmutableProperties() && lexicalDeclarations.size()) [[unlikely]]
+            return createSyntaxError(globalObject, makeString("Can't declare global lexical variable '"_s, StringView(lexicalDeclarations.begin()->key.get()), "': the global object has immutable properties"_s));
+
         // Check for intersection of "var" and "let"/"const"/"class"
         // Check if any new "let"/"const"/"class" will shadow any pre-existing global property names (with configurable = false), or "var"/"let"/"const" variables.
         // It's an error to introduce a shadow.

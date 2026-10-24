@@ -74,6 +74,8 @@ void IntlListFormatConstructor::finishCreation(VM& vm, IntlListFormatPrototype* 
 {
     Base::finishCreation(vm, 0, "ListFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, listFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // With Options::immutableGlobals() the prototype is already immutable, and would silently refuse its constructor.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     listFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 

@@ -74,6 +74,8 @@ void IntlDurationFormatConstructor::finishCreation(VM& vm, IntlDurationFormatPro
 {
     Base::finishCreation(vm, 0, "DurationFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, durationFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // With Options::immutableGlobals() the prototype is already immutable, and would silently refuse its constructor.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     durationFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
