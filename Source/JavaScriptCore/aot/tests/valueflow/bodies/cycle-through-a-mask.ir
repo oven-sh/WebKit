@@ -1,6 +1,6 @@
 # A loop that narrows its own value keeps one node for the value and one for the filter.
 # RUN: valueflow-body f0
-# CHECK: body f0: nodes=5 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
+# CHECK: body f0: nodes=5 sites=0 edges=4 edgesOnceReached=0 seeds=1 statements=0
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 result
 # CHECK-NEXT: n2 thrown
@@ -10,6 +10,7 @@
 # CHECK-NEXT: edge n3 -> n1
 # CHECK-NEXT: edge n3 -> n4
 # CHECK-NEXT: edge n4 -> n3
+# CHECK-NEXT: reached: seed n2 <- unknown
 # CHECK-NEXT: observed v3: n3
 
 module m0 path="main.js" displayPath="main.js"

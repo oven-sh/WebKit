@@ -661,6 +661,7 @@ static void checkBlocksToFillAreFreshBlocksOfTheCage()
     next.freeAlignedMemory(block);
 }
 
+#if !ENABLE(MALLOC_HEAP_BREAKDOWN)
 // The blocks of array storage come from the other allocator, which waits for as many requests of its own. The cage's count starts its supply too.
 static void checkOtherAllocatorWarmsUpWithTheCage()
 {
@@ -691,6 +692,7 @@ static void checkOtherAllocatorWarmsUpWithTheCage()
         allocator.freeAlignedMemory(block);
     }
 }
+#endif
 
 namespace {
 
@@ -810,7 +812,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
+#if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },
+#endif
         { "heap-cage/scan/index-in-low-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInLowHalf>> },
         { "heap-cage/scan/index-in-high-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInHighHalf>> },
         { "heap-cage/scan/offset-from-base"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::Offset>> },

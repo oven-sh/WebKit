@@ -1,6 +1,6 @@
 # A cast, a chain of casts and a block parameter that every edge fills from one value, also around a loop, have no node: whoever reads them reads the source. A result that is read has a node, and a cast of it is that node.
 # RUN: valueflow-body f0
-# CHECK: body f0: nodes=7 sites=0 edges=1 edgesOnceReached=0 seeds=0 statements=2
+# CHECK: body f0: nodes=7 sites=0 edges=1 edgesOnceReached=0 seeds=1 statements=2
 # CHECK-NEXT: n0 parameter v0
 # CHECK-NEXT: n1 parameter v1
 # CHECK-NEXT: n2 parameter v2 : boolean
@@ -9,6 +9,7 @@
 # CHECK-NEXT: n5 operation v6
 # CHECK-NEXT: n6 merge
 # CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: reached: seed n4 <- unknown
 # CHECK-NEXT: returns n0 as it came, the rest in n6
 # CHECK-NEXT: PropGet v6 (n0) -> n5 throws n4
 # CHECK-NEXT: PropGet v8 (n5) throws n4

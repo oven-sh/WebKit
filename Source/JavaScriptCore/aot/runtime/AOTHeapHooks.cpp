@@ -185,6 +185,16 @@ JSCell* innerCellAround(JSCell* outerCell, const void* address)
     return inner && inner->structureID() ? inner : nullptr;
 }
 
+std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
+{
+    if (!structure->isCompiledStructure() || !uncheckedDowncast<CompiledStructure>(structure)->describesObject())
+        return { };
+    std::span<const uint32_t> table = inlineReferenceTableOf(uncheckedDowncast<CompiledStructure>(structure)->layout());
+    if (table.empty())
+        return { };
+    return table.subspan(numberOfInlineReferenceCounts + table[0] + table[1], table[2]);
+}
+
 void noteInnerCellsWithoutMark(JSCell* outerCell)
 {
     VM& vm = outerCell->vm();

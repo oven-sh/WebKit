@@ -18,13 +18,13 @@ function f1 name="loops" parameters=[{type=boolean}] results=[{type=undefined}] 
   b2():
     Return
 }
-# CHECK-NEXT: f1 return: reads(RuntimeState) writes(RuntimeState) collects terminates throw: none
+# CHECK-NEXT: f1 return: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates throw: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
 function f2 name="callsLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean):
     v1 = CallDirect v0 function=f1
     Return
 }
-# CHECK-NEXT: f2 return: reads(RuntimeState) writes(RuntimeState) collects terminates throw: none
+# CHECK-NEXT: f2 return: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates throw: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
 function f3 name="loopsAndThrows" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean, v1: boolean):
     Jump -> next b1()

@@ -36,6 +36,7 @@ public:
     LBasicBlock attachLandingOfMisfit(B3::PatchpointValue*, uint32_t site);
 
 private:
+    friend class HintEmitter;
     friend class RuntimeCallEmitter;
     friend class ThrowEmitter;
 

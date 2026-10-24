@@ -65,7 +65,7 @@ function f6 name="flagsOfReturningPath" parameters=[{type=boolean}] results=[{ty
     LoopHint
     Return
 }
-# CHECK-NEXT: f6 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: throws collects terminates
+# CHECK-NEXT: f6 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: reads(RuntimeState) writes(RuntimeState) throws collects terminates
 function f7 name="reachesNoExit" results=[{type=undefined}] {
   b0():
     Jump -> next b1()
@@ -73,4 +73,4 @@ function f7 name="reachesNoExit" results=[{type=undefined}] {
     LoopHint
     Jump -> next b1()
 }
-# CHECK-NEXT: f7 return: collects terminates throw: none
+# CHECK-NEXT: f7 return: throwsForLackOfMemory collects terminates throw: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates

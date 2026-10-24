@@ -19,6 +19,8 @@
 #include "AOTVector.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
+#include "JITOperationList.h"
+#include "JITOperationValidation.h"
 #include "JSCJSValueInlines.h"
 #include "LinkBuffer.h"
 #include "LocalAllocator.h"
@@ -160,7 +162,7 @@ public:
     uint32_t& stringCell(uint32_t number) { return m_environment->stringCells[number]; }
 
     template<typename Function>
-    void install(Entry entry, Function* function) { m_environment->runtimeTable[indexOf(entry)] = tagCFunctionPtr<void*, OperationPtrTag>(function); }
+    void install(Entry entry, Function* function) { m_environment->runtimeTable[indexOf(entry)] = operationPointer(function); }
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }
@@ -174,6 +176,16 @@ private:
     StubRunner(const StubOptions&, StubPolicy&&, std::span<const StubKey> keysWithBoundImmediates);
 
     static constexpr uint64_t distanceOfCompiledFunction = 64;
+
+    template<typename Function>
+    static void* operationPointer(Function* function)
+    {
+#if ENABLE(JIT_OPERATION_VALIDATION)
+        JITOperationAnnotation annotation { std::bit_cast<void*>(function), std::bit_cast<void*>(function) };
+        JITOperationList::populatePointersInEmbedder(&annotation, &annotation + 1);
+#endif
+        return tagCFunctionPtr<void*, OperationPtrTag>(function);
+    }
 
     static UGPRPair JIT_OPERATION_ATTRIBUTES countOperationCall(Instance*);
     static UGPRPair JIT_OPERATION_ATTRIBUTES recordOperationCall(Instance*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -401,7 +413,7 @@ inline StubRunner::StubRunner(const StubOptions& options, StubPolicy&& policy, s
     , m_environment(makeUniqueWithoutFastMallocCheck<StubEnvironment>())
 {
     AOT_TEST_CHECK(m_blob.code.relocations.isEmpty());
-    m_environment->runtimeTable.fill(tagCFunctionPtr<void*, OperationPtrTag>(countOperationCall));
+    m_environment->runtimeTable.fill(operationPointer(countOperationCall));
     Instance& instance = m_environment->instance;
     instance.runtimeTable = m_environment->runtimeTable.data();
     instance.vm = &m_environment->vm.get();

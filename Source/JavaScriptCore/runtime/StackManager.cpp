@@ -65,7 +65,7 @@ CONCURRENT_SAFE void StackManager::cancelStop()
         mirror.m_trapAwareSoftStackLimit.storeRelaxed(limit);
 #if ENABLE(AOT)
     if (vm().hasCompiledCode())
-        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), false);
+        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), stopsAtFunctionEntries());
 #endif
 }
 
@@ -74,7 +74,13 @@ void StackManager::setStopsAtFunctionEntries(bool stops)
 {
     Locker lock { m_mirrorLock };
     m_stopsAtFunctionEntries.storeRelaxed(stops);
-    if (stopsAtEveryPoll() || (!stops && Options::forceTrapAwareStackChecks()))
+    if (stopsAtEveryPoll())
+        return;
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::RuntimeHooks::setLoopPollsEnabled(vm(), stops);
+#endif
+    if (!stops && Options::forceTrapAwareStackChecks())
         return;
     void* limit = stops ? stopRequestMarker() : m_softStackLimit;
     m_trapAwareSoftStackLimit.storeRelaxed(limit);

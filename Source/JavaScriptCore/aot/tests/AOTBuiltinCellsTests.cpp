@@ -23,6 +23,7 @@
 #include "Options.h"
 #include "ShadowRealmPrototype.h"
 #include "VMInlines.h"
+#include "WeakInlines.h"
 #include <bit>
 #include <wtf/StackPointer.h>
 #include <wtf/text/MakeString.h>
@@ -154,13 +155,15 @@ static NEVER_INLINE uintptr_t fillCellOfCustomGetter(LoadedProgram& program, uin
     return ~std::bit_cast<uintptr_t>(getter);
 }
 
-static NEVER_INLINE Vector<JSCell*> createUnreferencedCustomGetters(LoadedProgram& program)
+static NEVER_INLINE Vector<Weak<JSObject>> createUnreferencedCustomGetters(LoadedProgram& program)
 {
-    Vector<JSCell*> getters;
+    Vector<Weak<JSObject>> getters;
     for (BuiltinID accessor : otherCustomAccessors) {
         auto found = findInRealm(program.realm(), BuiltinCellKey::getter(accessor));
-        AOT_TEST_CHECK(found && (*found)->inherits<JSCustomGetterFunction>() && !getters.contains(*found));
-        getters.append(*found);
+        AOT_TEST_CHECK(found && (*found)->inherits<JSCustomGetterFunction>());
+        for (const Weak<JSObject>& earlier : getters)
+            AOT_TEST_CHECK(earlier.get() != *found);
+        getters.append(Weak<JSObject>(asObject(*found)));
     }
     return getters;
 }
@@ -171,17 +174,18 @@ static void checkGetterOfCustomAccessorSurvivesACollection(LoadedProgram& progra
     // The engine's own custom accessors are read by name. Some of a host's have a cell.
     uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength), customGetterKeyOf());
     uintptr_t hiddenGetter = fillCellOfCustomGetter(program, number);
-    Vector<JSCell*> otherGetters = createUnreferencedCustomGetters(program);
+    Vector<Weak<JSObject>> otherGetters = createUnreferencedCustomGetters(program);
 
     vm.heap.collectSync(CollectionScope::Full);
     JSCell* getter = std::bit_cast<JSCell*>(~hiddenGetter);
     AOT_TEST_CHECK(vm.heap.isMarked(getter) && wordOf(program, number) == getter && cellsOf(program).cell(number) == getter);
-    AOT_TEST_CHECK(!otherGetters.contains(getter));
 
-    unsigned numberOfDeadGetters = 0;
-    for (JSCell* other : otherGetters)
-        numberOfDeadGetters += !vm.heap.isMarked(other);
-    AOT_TEST_CHECK(numberOfDeadGetters);
+    unsigned numberOfCollectedGetters = 0;
+    for (const Weak<JSObject>& other : otherGetters) {
+        AOT_TEST_CHECK(other.get() != getter);
+        numberOfCollectedGetters += !other;
+    }
+    AOT_TEST_CHECK(numberOfCollectedGetters);
 
     vm.heap.collectSync(CollectionScope::Eden);
     vm.heap.collectSync(CollectionScope::Full);

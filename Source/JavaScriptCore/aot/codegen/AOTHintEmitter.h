@@ -20,6 +20,7 @@ public:
 
 private:
     bool endsWithinLengthOfData(BlockID);
+    bool allocatesWhereErrorsAreCaught(BlockID);
     void emitPoll(const ValueContext&);
 };
 

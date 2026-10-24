@@ -265,6 +265,26 @@ bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
     return false;
 }
 
+// A caller that has handlers, and none at its call, plans no error there: the call may stand in a try. Then the error waits for the next poll.
+static bool callersPlanErrors(VM& vm, const Image& image, CallFrame* frameThatReturns)
+{
+    if (frameThatReturns->callerFrameOrEntryFrame() == vm.topEntryFrame)
+        return true;
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frameThatReturns, vm.topEntryFrame);
+    if (!frames)
+        return true;
+    for (; !frames->isAtEnd(); frames->advanceToCallerMachineFrame()) {
+        if (frames->asyncGeneratorStubFrameLeft())
+            return true;
+        const auto& site = frames->callSite();
+        if (site.exceptionHandler() || site.rejectsOnThrow)
+            return true;
+        if (catchesExceptions(image, site.code.index()))
+            return false;
+    }
+    return true;
+}
+
 CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFrame)
 {
     const Image& image = *vm.aotState().image;
@@ -278,7 +298,7 @@ CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFra
         frame = static_cast<CallFrame*>(frame->callerFrameOrEntryFrame());
         location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
     }
-    if (location.kind != CodeKind::Function || catchesExceptions(image, location.function))
+    if (location.kind != CodeKind::Function || catchesExceptions(image, location.function) || !callersPlanErrors(vm, image, frame))
         return nullptr;
     return frame;
 }

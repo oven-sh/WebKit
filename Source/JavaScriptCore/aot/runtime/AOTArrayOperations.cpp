@@ -164,9 +164,7 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
     size_t size = sizeof(JSArray) + propertyRoom + Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue));
     if (size > MarkedSpace::largeCutoff)
         return nullptr;
-    char* cell = static_cast<char*>(vm.cellSpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull));
-    if (!cell)
-        return nullptr;
+    char* cell = static_cast<char*>(vm.cellSpace().allocate(vm, size, nullptr, AllocationFailureMode::Assert));
     std::fill_n(std::bit_cast<uint64_t*>(cell + sizeof(JSArray)), propertyRoom / sizeof(uint64_t), 0);
     Butterfly* butterfly = Butterfly::fromBase(cell + sizeof(JSArray) + propertyRoom, 0, 0);
     butterfly->setVectorLength(vectorLength);

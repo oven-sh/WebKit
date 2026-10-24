@@ -145,7 +145,7 @@ operation CatchValue () -> unknown ; UsesRuntime ; runtime = Catch ; boundTo = F
 operation CatchException () -> natural(Exception) ; UsesRuntime ; runtime = CatchException ; boundTo = Frame ; flow = Copies
 
 family Hint AsRead..Placed
-operation LoopHint () [| engine isVersioned] -> none ; UsesRuntime terminates collects ; runtime = PollSlow ; flow = TableProves
+operation LoopHint () [| engine isVersioned] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none

@@ -11,6 +11,7 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
+#include "AOTExceptionEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInductionVariables.h"
 #include "AOTInstance.h"
@@ -141,11 +142,29 @@ bool HintEmitter::endsWithinLengthOfData(BlockID block)
     return loop && countsUpToLengthOfData(analyses(), *loop) && likelyPathsAlwaysComplete(analyses(), *loop);
 }
 
+// In a function without handlers an allocation that finds no room throws by itself.
+bool HintEmitter::allocatesWhereErrorsAreCaught(BlockID block)
+{
+    if (!analyses().cfg().hasHandlers())
+        return false;
+    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
+    for (unsigned index = 0; index < loop->size(); ++index) {
+        BlockID member = loop->at(index);
+        for (ValueID id : m_function.at(member).values) {
+            if (m_function.at(id).opcode != Opcode::LoopHint && analyses().effectsOf(id).onAnyEdge().mayCollect)
+                return true;
+        }
+        if (analyses().effectsOfTerminator(member).onAnyEdge().mayCollect)
+            return true;
+    }
+    return false;
+}
+
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     if (generator().validates())
         emitter<BarrierEmitter>().validateBeforeCollection(value);
-    if (!endsWithinLengthOfData(value.block()))
+    if (!endsWithinLengthOfData(value.block()) || allocatesWhereErrorsAreCaught(value.block()))
         emitPoll(value);
 }
 
@@ -165,9 +184,9 @@ void HintEmitter::pollWhereNoFrameIsSetUp(const OperationContext& context)
 void HintEmitter::emitPoll(const ValueContext& value)
 {
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    patchpoint->isLoopPoll = true;
+    patchpoint->isLoopPoll = !emitter<ExceptionEmitter>().unwindsWithinFunction(value);
     Effects effects = value.effects().onAnyEdge();
-    RELEASE_ASSERT(effects.mayBeTerminated && !effects.mayThrow);
+    RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
     // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program.
     emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -178,6 +197,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
         patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             emitFaultingLoad(jit, params, records, site);
         });
+        emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
         return;
     }
 
@@ -186,6 +206,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     patchpoint->setGenerator([records = &m_records, site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         emitCompareAndCall(jit, params, records, site);
     });
+    emitter<ExceptionEmitter>().attachLandingPad(value, patchpoint, site, true);
 }
 
 } } } // namespace JSC::AOT::Typed

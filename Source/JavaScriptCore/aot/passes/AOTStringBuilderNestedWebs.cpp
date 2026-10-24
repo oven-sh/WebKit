@@ -293,7 +293,7 @@ bool NestedWebMerger::buildsOnlyStringsToBlockEnd(BlockID block, uint32_t firstI
 bool NestedWebMerger::buildsOnlyStrings(BlockID block, uint32_t firstIndex, uint32_t endIndex)
 {
     for (ValueID id : m_function.at(block).values.subspan(firstIndex, endIndex - firstIndex)) {
-        if (isUnobservable(m_context.analyses.effectsOf(id).onAnyEdge()))
+        if (m_function.at(id).opcode == Opcode::LoopHint || isUnobservable(m_context.analyses.effectsOf(id).onAnyEdge()))
             continue;
         // To convert a primitive and to join primitives can only run out of memory, which is the error of a text that grows too long.
         const Value& value = m_function.at(id);

@@ -248,8 +248,11 @@ void MarkedBlockCage::keepReserveOnceHalfFull()
 
 bool MarkedBlockCage::releaseReserve()
 {
-    size_t numberOfChunksKept = m_reserve.size() / lastReserveDivisor;
-    if (m_hasReleasedReserve || m_reserve.size() == numberOfChunksKept)
+    if (!m_range)
+        return false;
+    // A share of the whole reserve: a program that is told again and again, and lets go of nothing, does not get the last of it piece by piece.
+    size_t numberOfChunksKept = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize) / reserveChunkSize / lastReserveDivisor;
+    if (m_hasReleasedReserve || m_reserve.size() <= numberOfChunksKept)
         return false;
     m_numberOfChunksReleased = m_reserve.size() - numberOfChunksKept;
     while (m_reserve.size() > numberOfChunksKept)

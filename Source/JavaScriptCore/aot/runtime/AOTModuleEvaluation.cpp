@@ -639,8 +639,12 @@ bool Modules::beginEvaluationOfModuleInRecord(ModuleID module)
 void Modules::failFrames(JSValue error, const EvaluationFrames& frames)
 {
     for (const EvaluationFrame& frame : frames) {
-        if (!frame.record)
+        if (!frame.record) {
             setFailed(frame.module, error);
+            continue;
+        }
+        // A require() under the evaluation may have run the body and kept its error. Whoever owns the stack finishes what is on it.
+        frame.record->setStatus(CyclicModuleRecord::Status::Evaluating);
     }
 }
 

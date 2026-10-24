@@ -173,6 +173,7 @@ static void makeClosuresAgainWhereTheyLeave(IRBuilder& builder, FunctionAnalyses
 {
     struct Replacement {
         Use use;
+        ValueID original;
         ValueID closure;
     };
     Vector<Replacement, 4> replacements;
@@ -181,15 +182,21 @@ static void makeClosuresAgainWhereTheyLeave(IRBuilder& builder, FunctionAnalyses
             if (use.kind == Use::Kind::EdgeArgument)
                 continue;
             builder.setOrigin(function.at(decision.allocation).origin());
-            replacements.append({ use, builder.insertBefore(analyses.useLists().pointOf(use), closureOfHeapLike(function.at(decision.allocation))) });
+            replacements.append({ use, decision.allocation, builder.insertBefore(analyses.useLists().pointOf(use), closureOfHeapLike(function.at(decision.allocation))) });
         }
     }
     builder.applyInsertions();
     for (const Replacement& replacement : replacements) {
-        if (replacement.use.kind == Use::Kind::Operand)
-            function.edit(replacement.use.user, ValueEdit::Definition).setOperand(replacement.use.operandIndex, replacement.closure);
-        else
+        if (replacement.use.kind != Use::Kind::Operand) {
             function.edit(replacement.use.block, BlockEdit::Terminator).terminator.setOperand(replacement.use.operandIndex, replacement.closure);
+            continue;
+        }
+        function.edit(replacement.use.user, ValueEdit::Definition).setOperand(replacement.use.operandIndex, replacement.closure);
+        // The user may itself be a closure that is made again. What was made of it above holds what it held then.
+        for (const Replacement& madeOfUser : replacements) {
+            if (madeOfUser.original == replacement.use.user)
+                function.edit(madeOfUser.closure, ValueEdit::Definition).setOperand(replacement.use.operandIndex, replacement.closure);
+        }
     }
 
     struct SplitEdge {

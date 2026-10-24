@@ -105,6 +105,7 @@ private:
     size_t m_capacity;
     JSC::Heap& m_heap;
     MarkedBlockCage::Indices m_narrowReferences;
+    MarkedBlockCage::Indices m_narrowReferencesInFrameCells;
     HeapCell* m_inlineRoots[inlineCapacity];
 };
 

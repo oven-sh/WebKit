@@ -1,4 +1,4 @@
-# A loop whose blocks name a handler stays until the handler that nothing can reach is taken off them
+# A loop whose blocks name a handler stays until the handler that nothing can reach is taken off them. The handler of the block with the loop hint stays: a program that has run out of memory is told so there
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass RemoveDeadCountedLoops
@@ -31,8 +31,9 @@ function f0 name="wholeLoopCovered" parameters=[{type=int[0, 100]}] results=[{ty
 # CHECK: b1(v2: {{*}}) handler=b4():
 # CHECK: b2(v5: {{*}}) handler=b4():
 # AFTER-LABEL: function f0 name="wholeLoopCovered"
-# AFTER: Jump -> next b3()
-# AFTER-NOT: LoopHint
+# AFTER: Jump -> next b1(v1)
+# AFTER: b1(v2: {{*}}) handler=b4():
+# AFTER-NEXT: LoopHint
 
 function f1 name="oneBlockCovered" parameters=[{type=int[0, 100]}] results=[{type=anything}] {
   b0(v0: int[0, 100]):

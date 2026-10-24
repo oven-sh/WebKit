@@ -35,7 +35,7 @@ function f0 name="items" captures=[{type=env L2}] parameters=[{type=object}, {ty
 # CHECK-NEXT: v11 GetArrayLength: reads(ArrayStorage)
 # CHECK-NEXT: v12 GetArrayLength: reads(ArrayStorage)
 # CHECK-NEXT: v13 AppendElement: reads(Elements/1, ArrayStorage, AllocatorState) writes(Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v14 LoopHint: reads(RuntimeState) writes(RuntimeState) collects terminates
+# CHECK-NEXT: v14 LoopHint: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
 # CHECK-NEXT: v15 ScopeHasBinding: unknownCode
 # CHECK-NEXT: b0 Throw: throws
 function f1 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
@@ -58,6 +58,6 @@ function f1 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=any
 # ONLY-NOT: GetArrayLength:{{*}}, 
 # ONLY-NOT: GetArrayLength:{{*}}writes
 # ONLY-NOT: AppendElement:{{*}}terminates
-# ONLY-NOT: LoopHint:{{*}}throws
+# ONLY-NOT: LoopHint:{{*}}throws collects
 # ONLY-NOT: ScopeHasBinding:{{*}}suspends
 # ONLY-NOT: Throw:{{*}}collects

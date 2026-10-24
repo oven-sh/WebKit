@@ -119,6 +119,7 @@ private:
     bool isConfined(ObjectID);
     bool escapesAtWriter(ObjectID);
     bool isContainedInOperand(ObjectID);
+    bool namesOnlyObjectsOfKind(ObjectKind, ValueID);
     std::optional<bool> mayEndProofJudgedByDefinitions(ValueID subject, WrittenLocations&);
     bool mayEndProofJudgedByObjects(ValueID subject, WrittenLocations&);
 
@@ -260,8 +261,10 @@ bool KillQuery::mayEndProofJudgedByObjects(ValueID subject, WrittenLocations& wr
 {
     const EscapeAnalysis& escape = m_analyses.escape();
     if (!isConfined(subject)) {
+        // What the function makes was not there when it was entered, wherever it goes afterwards.
+        bool wasThereAtEntry = namesOnlyObjectsOfKind(ObjectKind::EntryParameter, subject);
         return mayWriteBeyondOperands(written) || std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-            return escape.mayAlias(operand, subject);
+            return escape.mayAlias(operand, subject) && !(wasThereAtEntry && namesOnlyObjectsOfKind(ObjectKind::Allocation, operand));
         });
     }
 
@@ -269,6 +272,19 @@ bool KillQuery::mayEndProofJudgedByObjects(ValueID subject, WrittenLocations& wr
     return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
         return escape.pointsTo(operand).objects.overlaps(objects);
     });
+}
+
+bool KillQuery::namesOnlyObjectsOfKind(ObjectKind kind, ValueID value)
+{
+    const EscapeAnalysis& escape = m_analyses.escape();
+    PointsToSet set = escape.pointsTo(value);
+    if (set.mayBeUntracked)
+        return false;
+    for (ObjectID object : set.objects) {
+        if (escape.at(object).kind != kind)
+            return false;
+    }
+    return true;
 }
 
 bool KillQuery::mayWriteBeyondOperands(WrittenLocations& written)

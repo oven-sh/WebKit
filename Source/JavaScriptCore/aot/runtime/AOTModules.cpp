@@ -266,6 +266,8 @@ void Modules::retireRecord(ModuleRecord* record)
 void Modules::setFailed(ModuleID module, JSValue error)
 {
     ModuleRecord* record = ensureRecord(module);
+    // While a body of the module runs, the table has the status.
+    setStoredStatus(module, StoredModuleStatus::InRecord);
     record->retain();
     record->setEvaluationError(*m_instance.vm, error);
     record->setStatus(CyclicModuleRecord::Status::Evaluated);

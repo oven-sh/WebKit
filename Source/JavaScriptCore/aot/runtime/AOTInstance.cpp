@@ -295,7 +295,7 @@ static void registerStackMirror(Instance* instance, VM& vm)
     Locker locker { loopPollPages.lock };
     void* page = loopPollPage(instance);
     loopPollPages.pages.append(page);
-    if (vm.traps().stopsAtEveryPoll())
+    if (vm.traps().stopsAtEveryPoll() || vm.traps().needsOutOfMemoryError())
         RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), PROT_NONE));
 #endif
 }

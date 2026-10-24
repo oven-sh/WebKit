@@ -255,7 +255,7 @@ static bool mayHaveItsCallersListed(FunctionAnalyses& bodyAnalyses, const Fusion
         if (listsCallers(bodyAnalyses.effectsOfTerminator(block).onAnyEdge()) && (isSentWhatToThrow || !throwsWhatStepSends(body, body.at(block).terminator)))
             return true;
         return std::ranges::any_of(body.at(block).values, [&](ValueID id) {
-            return !isYield(body, id) && listsCallers(bodyAnalyses.effectsOf(id).onAnyEdge());
+            return !isYield(body, id) && body.at(id).opcode != Opcode::LoopHint && listsCallers(bodyAnalyses.effectsOf(id).onAnyEdge());
         });
     });
 }

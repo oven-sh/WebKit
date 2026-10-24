@@ -33,6 +33,7 @@
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
+#include "OwedOutOfMemoryError.h"
 #include "SuppressedError.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
@@ -54,6 +55,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     vm.throwTerminationExceptionIfNeeded();
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+    }
     OPERATION_RETURN(scope);
 }
 
