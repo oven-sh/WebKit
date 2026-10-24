@@ -11,12 +11,10 @@
 #include "AOTBuildContext.h"
 #include "AOTCarryVariablesAroundLoops.h"
 #include "AOTCodeSizeEstimate.h"
-#include "AOTDecidedBranches.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
-#include "AOTKnownValue.h"
 #include "AOTMethodDispatch.h"
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
@@ -69,7 +67,6 @@ private:
     std::optional<SeparationPlan> planFor(const NaturalLoop&, LoopVariables);
     std::optional<SeparationPlan> planWithCarriedVariables(const NaturalLoop&);
     bool onlyComputes(BlockID);
-    bool runsCodeOfHotFunction(const NaturalLoop&);
     BitVector findLeavingBlocks(const NaturalLoop&, const BitVector& isInLoop);
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves);
 
@@ -287,30 +284,11 @@ std::optional<SeparationPlan> LoopPathSeparator::planWithCarriedVariables(const 
     return plan;
 }
 
-// A loop runs as often as what it calls and as what was inlined into it. The heat of a function was estimated while the cycle through its caller's generic version still counted as a loop around the loop.
-bool LoopPathSeparator::runsCodeOfHotFunction(const NaturalLoop& loop)
-{
-    const Heat& heat = m_context.inputs.heat;
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        const Block& block = m_function.at(loop.at(index));
-        if (block.frequency != BlockFrequency::Normal)
-            continue;
-        for (ValueID id : block.values) {
-            const Value& value = m_function.at(id);
-            if (value.opcode == Opcode::CallDirect && isHot(heat.of(m_program, value.function())))
-                return true;
-            if (value.inlineFrame && isHot(heat.of(m_program, m_function.inlineFrames[value.inlineFrame].callee)))
-                return true;
-        }
-    }
-    return false;
-}
-
 std::optional<SeparationPlan> LoopPathSeparator::planFor(const NaturalLoop& loop, LoopVariables variables)
 {
     const CFG& cfg = m_analyses.cfg();
     BlockID header = loop.header();
-    if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || (!isHot(heatClassOf(m_context, header)) && !runsCodeOfHotFunction(loop)))
+    if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || heatClassOf(m_context, header) != HeatClass::Hot)
         return std::nullopt;
     // The cycle through the copy of a separated loop starts at a block that this pass made, which has no hint.
     bool isLoopOfProgram = std::ranges::any_of(m_function.at(header).values, [&](ValueID value) {
@@ -713,160 +691,6 @@ void LoopPathSeparator::carryVariables(IRBuilder& builder, BlockID header, Block
     m_analyses.didChangeControlFlow();
 }
 
-// The header of a loop tests a value that goes around, and whatever code as frequent as the loop hands over passes. Only rarer code, which comes back into the loop now and then, may hand over something else. Such an edge makes the test itself: what passes goes on as before, and what fails goes through a copy of the blocks between the edge and the test to where the test fails to. The value is then typed as the loop hands it around, and the test in the header goes.
-class HeaderTestMover {
-    WTF_MAKE_NONCOPYABLE(HeaderTestMover);
-public:
-    explicit HeaderTestMover(FunctionPassContext& context)
-        : m_context(context)
-        , m_program(context.program)
-        , m_function(context.function)
-        , m_analyses(context.analyses)
-    {
-    }
-
-    PassOutcome run()
-    {
-        unsigned numberOfMovedTests = 0;
-        while (std::optional<Plan> plan = findPlan()) {
-            move(*plan);
-            ++numberOfMovedTests;
-        }
-        m_context.build.statistics().count(StatisticID::TestsMovedFromHeadersToWaysBack, numberOfMovedTests);
-        return numberOfMovedTests ? PassOutcome::Changed : PassOutcome::Unchanged;
-    }
-
-private:
-    struct TestedEdge {
-        Edge edge;
-        uint32_t argumentIndex { 0 };
-    };
-
-    struct Plan {
-        BlockID header;
-        Vector<TestedEdge, 2> edges;
-        Vector<BlockID, 4> blocksFromEdgesToTest;
-    };
-
-    struct ForwardedParameter {
-        BlockID block;
-        uint32_t index { 0 };
-    };
-
-    // A test that was moved is passed on every edge, so its header gives no plan again.
-    std::optional<Plan> findPlan()
-    {
-        const NaturalLoops& loops = m_analyses.naturalLoops();
-        for (unsigned index = 0; index < loops.numLoops(); ++index) {
-            if (std::optional<Plan> plan = planFor(loops.loop(index).header()))
-                return plan;
-        }
-        return std::nullopt;
-    }
-
-    std::optional<Plan> planFor(BlockID id)
-    {
-        const CFG& cfg = m_analyses.cfg();
-        const Block& header = m_function.at(id);
-        if (header.isHandlerBlock() || header.terminator.kind != TerminatorKind::Branch || isCold(heatClassOf(m_context, id)))
-            return std::nullopt;
-        ValueID condition = header.terminator.conditionOperand();
-        const Value& test = m_function.at(condition);
-        if (test.opcode != Opcode::TypeTest || !header.values.contains(condition))
-            return std::nullopt;
-        size_t testedIndex = header.parameters.find(test.valueOperand());
-        Edge failingEdge { id, 1 };
-        if (testedIndex == notFound || !canFollowWithoutTest(m_function, failingEdge))
-            return std::nullopt;
-        if (!argumentsFitParameters(m_program, m_function, Target { targetOf(m_function, failingEdge).block, argumentsWithoutTest(m_function, failingEdge), { } }))
-            return std::nullopt;
-
-        const Type& tested = m_context.types.at(test.testedType());
-        Plan plan { id, { }, { } };
-        Vector<BlockID, 4> visited { id };
-        Vector<ForwardedParameter, 4> worklist { { id, static_cast<uint32_t>(testedIndex) } };
-        while (!worklist.isEmpty()) {
-            ForwardedParameter forwarded = worklist.takeLast();
-            if (forwarded.block == entryBlock)
-                return std::nullopt;
-            for (Edge edge : cfg.incomingEdges(forwarded.block)) {
-                if (edge.isHandlerEdge() || forwarded.index >= targetOf(m_function, edge).arguments.size())
-                    return std::nullopt;
-                ValueID argument = targetOf(m_function, edge).arguments[forwarded.index];
-                if (evaluateTypeTest(m_program, m_program.typeOf(m_function, argument), tested) == KnownBoolean::True)
-                    continue;
-                const Block& from = m_function.at(edge.from);
-                if (isRarerThan(from.frequency, header.frequency)) {
-                    plan.edges.append({ edge, forwarded.index });
-                    continue;
-                }
-                size_t index = from.parameters.find(argument);
-                if (index == notFound || from.terminator.kind != TerminatorKind::Jump || from.isHandlerBlock() || visited.contains(edge.from))
-                    return std::nullopt;
-                visited.append(edge.from);
-                worklist.append({ edge.from, static_cast<uint32_t>(index) });
-            }
-        }
-        if (plan.edges.isEmpty())
-            return std::nullopt;
-
-        uint64_t numberOfValues = 0;
-        for (const TestedEdge& tested : plan.edges) {
-            for (BlockID block = targetOf(m_function, tested.edge).block; !plan.blocksFromEdgesToTest.contains(block); block = m_function.at(block).terminator.next().block) {
-                plan.blocksFromEdgesToTest.append(block);
-                numberOfValues += m_function.at(block).values.size();
-                if (block == id)
-                    break;
-            }
-        }
-        if (m_context.exceeds(LimitID::MaxThreadedBlockValues, numberOfValues, condition))
-            return std::nullopt;
-        if (RegionCloner::checkCanDuplicate(m_analyses, plan.blocksFromEdgesToTest.span()) != CloneCheck::CanClone)
-            return std::nullopt;
-        return plan;
-    }
-
-    void move(const Plan& plan)
-    {
-        IRBuilder builder(m_analyses.context(), m_function, m_context.types, &m_analyses);
-        const Value& test = m_function.at(m_function.at(plan.header).terminator.conditionOperand());
-        TypeID testedType = test.testedType();
-        builder.setOrigin(test.origin());
-
-        RegionCloner cloner(builder, m_function);
-        cloner.cloneBlocks(plan.blocksFromEdgesToTest.span(), [](ValueID, Value&) { });
-        builder.convertBranchToJump(cloner.cloneOf(plan.header), 1);
-        BlockFrequency frequencyOfCopy = BlockFrequency::Rare;
-        for (const TestedEdge& tested : plan.edges)
-            frequencyOfCopy = moreFrequentOf(frequencyOfCopy, m_function.at(tested.edge.from).frequency);
-        for (BlockID block : plan.blocksFromEdgesToTest)
-            m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = frequencyOfCopy;
-
-        for (const TestedEdge& tested : plan.edges) {
-            BlockID tests = builder.splitEdge(tested.edge);
-            BlockFrequency frequency = m_function.at(tests).frequency;
-            BlockID target = m_function.at(tests).terminator.next().block;
-            Arguments arguments(m_function.at(tests).terminator.next().arguments);
-            m_function.edit(tests, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
-            builder.moveToEndOf(tests);
-            ValueID typeTest = builder.appendTypeTest(arguments[tested.argumentIndex], testedType);
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(typeTest, OperandIndex::TypeTest::value, frequency, frequency);
-            builder.moveToEndOf(branch.notTaken);
-            builder.emitJump(cloner.cloneOf(target), Arguments(arguments));
-            builder.moveToEndOf(branch.taken);
-            arguments[tested.argumentIndex] = branch.provenOnTaken;
-            builder.emitJump(target, WTF::move(arguments));
-        }
-        cloner.repairSSA(m_analyses);
-        m_analyses.didChangeControlFlow();
-    }
-
-    FunctionPassContext& m_context;
-    const Program& m_program;
-    Function& m_function;
-    FunctionAnalyses& m_analyses;
-};
-
 } // anonymous namespace
 
 PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
@@ -874,7 +698,6 @@ PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
     if (!context.function.hasBody() || !context.analyses.naturalLoops().numLoops())
         return PassOutcome::Unchanged;
     PassOutcome outcome = LoopPathSeparator(context).run();
-    outcome |= HeaderTestMover(context).run();
     outcome |= carryVariablesAroundLoops(context);
     // SimplifyCasts runs inside this pass, and what it says it has kept holds for the function as it left it.
     context.keptAnalyses = { };
