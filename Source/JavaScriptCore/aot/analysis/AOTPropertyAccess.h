@@ -63,6 +63,8 @@ enum class AccessForm : uint8_t {
     Call,
     // An own accessor whose GetterSetter lies in the slot of its field: the getter is read out of the slot and called.
     GetterInSlot,
+    // A store to such an accessor: the setter is read out of the slot and called.
+    SetterInSlot,
     Split,
 };
 

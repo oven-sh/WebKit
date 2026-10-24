@@ -372,6 +372,7 @@ static void emitAddThenBranchOnOverflow(B3::Procedure& proc, const Update& updat
 
 static void apply(B3::Procedure& proc, const Update& update)
 {
+    proc.movedLoadLog().willMove(update.store);
     rematerializeSumOnExits(proc, update);
     switch (update.kind) {
     case UpdateKind::CompareThenAdd:

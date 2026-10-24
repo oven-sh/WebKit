@@ -80,6 +80,7 @@ struct FieldArmState {
     // What the properties in the slots are other than writable, enumerable, configurable data properties.
     OptionSet<FieldForm> form;
     bool isAccessorInEveryMember { true };
+    bool isExpectedToHaveSetterInEveryMember { true };
     bool hasDeferredMember { false };
     bool deferralIsUniform { true };
     // Unknown code may have stored another function into the slot of an object that reached it.

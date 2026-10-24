@@ -89,6 +89,7 @@ static bool isAccessArmForm(AccessForm form)
     case AccessForm::Namespace:
     case AccessForm::Builtin:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return true;
     case AccessForm::ByName:
     case AccessForm::Method:
@@ -178,12 +179,13 @@ static bool canResolveElementAccess(const Program& program, const Function& func
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The getter in a slot is called behind a test of the slot, and nobody places a test in code that runs once: there the arm would read by name as the rest does.
+// The getter or the setter in a slot is called behind a test of the slot, and nobody places a test in code that runs once: there the arm would read by name as the rest does.
 static bool waitsForTestThatNobodyPlaces(FunctionPassContext& context, BlockID block, const Value& access, const UnionPart& part)
 {
     if (part.kind != UnionPartKind::Layouts || !isNamedAccess(access.opcode) || heatClassOf(context, block) != HeatClass::RunsOnce)
         return false;
-    return planWithReceivers(context, access, MemberStart::Instance, candidatesOf(context.program, part.type, nullptr, receiversStampOf(access))).form == AccessForm::GetterInSlot;
+    AccessForm form = planWithReceivers(context, access, MemberStart::Instance, candidatesOf(context.program, part.type, nullptr, receiversStampOf(access))).form;
+    return form == AccessForm::GetterInSlot || form == AccessForm::SetterInSlot;
 }
 
 static std::optional<uint32_t> splitOperandOf(const Value& value)
@@ -769,6 +771,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplit(const ValueSite& site)
     case AccessForm::Method:
     case AccessForm::Call:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();

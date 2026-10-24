@@ -10,6 +10,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTInstance.h"
 #include "AOTOperand.h"
+#include "B3MovedLoadCheck.h"
 #include "JSCJSValue.h"
 #include "JSString.h"
 #include "JSType.h"
@@ -170,9 +171,11 @@ protected:
     CellPointer decode(NarrowReference);
     NarrowReference compress(CellPointer);
 
-    Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }
     Condition hasCellTypeIn(CellPointer, JSTypeRange stableRange);
     Condition hasCellType(CellPointer cell, JSType type) { return hasCellTypeIn(cell, { type, type }); }
+    Condition hasCellTypeAbove(CellPointer, JSType);
+    // True of a cell that has left the type in place since the type was last read. False is the truth.
+    Condition hasOrHadCellType(CellPointer, JSType);
     Condition hasMutableCellType(CellPointer, JSType);
     Condition isObjectCell(CellPointer cell) { return hasCellTypeIn(cell, { ObjectType, MaxJSType }); }
     Word32 loadStructureID(CellPointer cell) { return Word32(m_out.load32(cell.value(), m_heaps.JSCell_structureID)); }
@@ -215,9 +218,13 @@ protected:
     LValue& m_numberTag;
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
+
+private:
+    Word32 loadCellType(CellPointer cell) { return Word32(m_out.load8ZeroExt32(cell.value(), m_heaps.JSCell_typeInfoType)); }
 };
 
 bool isStableCellTypeRange(JSTypeRange);
+std::span<const B3::WordChange> cellTypeChangesInPlace();
 void pinRegisters(B3::Procedure&);
 void definePinnedValues(Output&, B3::Procedure&, InstanceSizes, PinnedValues&);
 

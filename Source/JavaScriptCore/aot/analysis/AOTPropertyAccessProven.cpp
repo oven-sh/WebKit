@@ -77,6 +77,7 @@ static ProofState addArm(const PropertyAccessPlan& plan, Access access, ProvenAc
         insertInUniquedSortedVector(result.accessors, plan.member.accessorFor(access));
         return ProofState::Proven;
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return ProofState::Unknown;
     case AccessForm::ByName:
     case AccessForm::Split:

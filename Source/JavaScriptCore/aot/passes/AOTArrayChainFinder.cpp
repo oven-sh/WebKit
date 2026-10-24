@@ -122,12 +122,12 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     m_chains.append(WTF::move(chain));
 }
 
-// The traversal knows how long the array can get and which storage holds what the callback returns, and it is shorter than the text of the built-in.
+// The traversal knows how long the array can get, and it is shorter than the text of the built-in.
 bool ArrayChainFinder::paysAlone(const ArrayMethodCall& call) const
 {
     if (!m_callsTakenAlone || !m_callsTakenAlone->get(call.call.index()))
         return false;
-    return call.method->role == ChainMethodRole::End ? call.method->end == ChainEndKind::FlatMap : call.method->link != ChainLinkKind::None;
+    return call.method->role == ChainMethodRole::End ? call.method->end == ChainEndKind::FlatMap : call.method->link == ChainLinkKind::Filter;
 }
 
 bool ArrayChainFinder::takeEnd(ArrayChain& chain, const ArrayMethodCall& last)

@@ -414,8 +414,14 @@ Condition GuardEmitter::holds(GuardBitID id)
     if (!id)
         return boolean(false);
     StaticsEmitter& statics = emitter<StaticsEmitter>();
-    Word32 byte(m_out.load8ZeroExt32(statics.guardByteOf(id)));
-    return m_placement.guardBit(id).holdsWhileClear ? hasNoBits(byte, statics.guardMaskOf(id)) : hasBits(byte, statics.guardMaskOf(id));
+    // A guard may begin to hold without a word to anybody: the first allocation of a constructor function's class defines the class, and no operation says that it writes MemberGuards.
+    // A read from before says "does not hold", and the code goes the general way. What ENDS a guard says that it writes them: --aot-check=MovedLoads reports a guard that ended unseen.
+    TypedPointer address = statics.guardByteOf(id);
+    bool holdsWhileClear = m_placement.guardBit(id).holdsWhileClear;
+    if (build().options().checksMovedLoads)
+        m_records.guardTests.append(GuardTest { valueOfOrigin(m_out.origin()), static_cast<int32_t>(address.offset()), statics.guardMaskOf(id), holdsWhileClear });
+    Word32 byte(m_out.load8ZeroExt32(address));
+    return holdsWhileClear ? hasNoBits(byte, statics.guardMaskOf(id)) : hasBits(byte, statics.guardMaskOf(id));
 }
 
 Condition GuardEmitter::belongsToInstance(CellPointer cell)

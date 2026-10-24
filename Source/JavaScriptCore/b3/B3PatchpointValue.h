@@ -67,7 +67,6 @@ public:
     Effects effects;
 
     bool isLoopPoll { false };
-    bool isMovedLoadCheck { false };
     std::optional<PureFunction> pureFunction;
     ClientTag clientTag;
 

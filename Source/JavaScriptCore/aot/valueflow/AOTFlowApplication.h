@@ -39,6 +39,8 @@ struct FlowAccessorField {
     OptionSet<FieldForm> form;
     // The functions that the getter was seen to be a closure of, ascending. None where it may be something else.
     Vector<FunctionID, 1> getters;
+    // The same for the setter. Nothing keeps another setter out of the slot.
+    Vector<FunctionID, 1> setters;
 
     bool isAccessor() const { return form.contains(FieldForm::IsAccessor); }
 };

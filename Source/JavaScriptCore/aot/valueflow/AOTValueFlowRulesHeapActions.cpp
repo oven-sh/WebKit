@@ -36,9 +36,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     // No lookup goes on from a placeholder to what was copied onto it: what the sources hold is stored through it like any value.
     auto storeThrough = [&](ClimbingSet placeholder) {
         ValueFlowNodeID stored = m_context.written(placeholder, valueUnderUnknownKey);
-        connect(m_context.read(known(sources), everyValue), stored);
-        connect(storedThroughUnknownObjectInto(known(sources), everyValue), stored);
-        connect(storedThroughUntrackedObjectInto(known(sources), everyValue), stored);
+        ClimbingSet holders = withSourcesOfCopies(m_context, known(sources));
+        connect(m_context.read(holders, everyValue), stored);
+        connect(storedThroughUnknownObjectInto(holders, everyValue), stored);
+        connect(storedThroughUntrackedObjectInto(holders, everyValue), stored);
         if (keepsAccessors) {
             connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Getter)));
             connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everySetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Setter)));
@@ -113,13 +114,14 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
 
-    // A setter takes what the source itself holds, or what a getter of the source has answered.
+    // A setter takes what the source itself holds, what was copied onto the source before, or what a getter of the source has answered.
     if (storesThroughSetters) {
-        convertStoredValue(targets, unknownHeapKey, operandOf(m_context.read(known(sources), everyValue)));
+        ValueFlowOperand held = operandOf(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyValue));
+        convertStoredValue(targets, unknownHeapKey, held);
         convertStoredValue(targets, unknownHeapKey, operandOf(copied));
         // As for a store: what is found through a placeholder among the targets says nothing about the targets beside it.
         forEachStartOfLookup(targets, [&](ClimbingSet start) {
-            callSettersOfReceivers(start, unknownHeapKey, operandOf(m_context.read(known(sources), everyValue)));
+            callSettersOfReceivers(start, unknownHeapKey, held);
             callSettersOfReceivers(start, unknownHeapKey, operandOf(m_context.read(known(targets), valueUnderUnknownKey)));
         });
     }

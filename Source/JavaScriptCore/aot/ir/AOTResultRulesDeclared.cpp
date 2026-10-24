@@ -119,6 +119,26 @@ std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::spa
     return result;
 }
 
+// A GetterSetter holds a function in either half. Which function the setter is, nobody has tested.
+std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+{
+    if (context.level == TypeLevel::Proven)
+        return Type::function();
+    Type result = Type::never();
+    for (LayoutID receiver : receivers) {
+        std::optional<FieldReference> field = findField(context.program, receiver, key, BaseChain::Proven);
+        if (!field || !fieldAt(context.program, *field).setterType)
+            return Type::function();
+        result = result.unionWith(context.types.at(fieldAt(context.program, *field).setterType), context.types);
+    }
+    return result;
+}
+
+std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, LayoutSetID receivers, PropertyKeyID key)
+{
+    return tryTypeOfSetterInSlot(context, context.types.at(receivers).members.span(), key);
+}
+
 // What a read finds that looks for a deferred closure: the closure, made by now, or whatever else the program has stored.
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {

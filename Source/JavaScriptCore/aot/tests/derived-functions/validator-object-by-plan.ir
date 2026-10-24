@@ -1,4 +1,4 @@
-# What holds for every object of one Structure is asked once: whether it is plain data with declared keys alone and no required member missing, where its members lie, and the order of its keys. The members are then loaded from their places, validated, and the copy is allocated as a parser allocates it. Every other input goes the way that reads member by member.
+# What holds for every object of one Structure is asked once: whether it is plain data with declared keys alone and no required member missing, where its members lie, and the order of its keys. A compiled object is copied first as a spread copies it, where that runs no code. The members are then loaded from their places, validated, and the copy is allocated as a parser allocates it. Every other input goes the way that reads member by member.
 # FORM: Prepared optimizing
 # RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0
 # STATISTIC: ValidatorsCreated = 3
@@ -21,10 +21,11 @@ layout L2 name="IndexedMember" fields=[{key="x" declared={type=number}}]
 # CHECK: [[byPlan]]():
 # CHECK-NEXT: [[plan]]: sourceplan = ResultAt [[found]] index=1
 # CHECK-NEXT: [[order]]: keyorder = ResultAt [[found]] index=2
-# CHECK-NEXT: [[first]]: undefined = GetPlannedProperty [[object]], [[plan]] @
+# CHECK-NEXT: [[planned]]: object = ResultAt [[found]] index=3
+# CHECK-NEXT: [[first]]: undefined = GetPlannedProperty [[planned]], [[plan]] @
 # CHECK-NEXT: [[x]]: anything = ResultAt [[first]] @
 # CHECK-NEXT: = ResultAt [[first]] index=1
-# CHECK-NEXT: [[second]]: undefined = GetPlannedProperty [[object]], [[plan]] memberIndex=1
+# CHECK-NEXT: [[second]]: undefined = GetPlannedProperty [[planned]], [[plan]] memberIndex=1
 # CHECK-NEXT: [[label]]: anything = ResultAt [[second]] @
 # CHECK-NEXT: [[hasLabel]]: boolean = ResultAt [[second]] index=1
 # CHECK-NEXT: = TypeTest [[x]] testedType=number

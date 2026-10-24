@@ -253,6 +253,8 @@ static std::optional<Type> tryTypeOfContentsOfReadSlot(const TypingContext& cont
 {
     if (read.opcode == Opcode::GetDeferredClosureSlot || read.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
         return tryTypeOfDeferringSlotContents(context, receivers, read.key());
+    if (read.opcode == Opcode::GetSlotSetter)
+        return tryTypeOfSetterInSlot(context, receivers, read.key());
     return tryTypeOfSlotContents(context, receivers, read.key());
 }
 

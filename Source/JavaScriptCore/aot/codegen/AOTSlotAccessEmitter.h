@@ -45,6 +45,7 @@ public:
     void generateGetSlot(const ValueContext&);
     void generateGetSlotOrUndefined(const ValueContext&);
     void generateGetSlotGetter(const ValueContext&);
+    void generateGetSlotSetter(const ValueContext&);
     void generateGetDeferredClosureSlot(const ValueContext&);
     void generateGetDeferredClosureSlotOrUndefined(const ValueContext&);
     void generatePutSlot(const ValueContext&);
@@ -88,6 +89,8 @@ private:
 
     const FieldAccess& fieldAccessOf(const ValueContext&) const;
     Operand readSlot(const ValueContext&, CellPointer, const FieldAccess&, bool absentIsUndefined);
+    // Nothing where the operation has got its result without a read.
+    std::optional<CellPointer> loadHalfOfAccessorInSlot(const ValueContext&, ptrdiff_t offsetInGetterSetter);
     void readDeferringSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
     Operand loadDeferringSlot(const ValueContext&, CellPointer, const FieldAccess&, bool readsEmptySlotAsUndefined);
     bool mayHaveLeftDeferringSlot(const ValueContext&, const FieldAccess&) const;

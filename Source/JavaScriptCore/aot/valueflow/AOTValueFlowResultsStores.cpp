@@ -808,6 +808,20 @@ static bool storesIntoThisOfConstructor(const Program& program, const Writer& wr
     return definitionThroughSameValues(function, function.at(writer.statement.site).operand(*receiver)) == function.at(entryBlock).parameters[*thisParameter];
 }
 
+// `Object.defineProperty(object, key, { .. })`: the literals that the call may get. Nothing for any other call, and where the descriptor may be an object that the program has not made.
+std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker& maker, const ValueFlowStatement& statement) const
+{
+    constexpr size_t positionOfDescriptor = OperandIndex::Call::arguments + 2;
+    std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
+    if (statement.opcode != Opcode::Call || operands.size() != positionOfDescriptor + 1)
+        return std::nullopt;
+    ValueSetID descriptors = std::as_const(m_heap).valueOf(maker, operands[positionOfDescriptor]);
+    const ValueSets& sets = m_inputs.sets();
+    if (sets.isEmpty(descriptors) || !sets.isSubset(descriptors, maker.intersect(m_inputs.universe().knownObjects(), ValueSets::complement(m_inputs.universe().builtinObjects()))))
+        return std::nullopt;
+    return descriptors;
+}
+
 // `{ get name() { .. } }` makes a property that is enumerable and configurable. `Object.defineProperty(object, key, { get, enumerable: true })` makes what the literal says: an attribute that it leaves out is false.
 uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
@@ -857,16 +871,12 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
         return 0;
     if (statement.opcode == Opcode::DefineGetter || statement.opcode == Opcode::DefineSetter)
         return AccessorForms::of(true, true);
-    constexpr size_t positionOfDescriptor = OperandIndex::Call::arguments + 2;
-    std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
-    if (statement.opcode != Opcode::Call || operands.size() != positionOfDescriptor + 1)
+    std::optional<ValueSetID> descriptors = descriptorsWrittenOutIn(maker, statement);
+    if (!descriptors)
         return AccessorForms::unknown;
-    ValueSetID descriptors = std::as_const(m_heap).valueOf(maker, operands[positionOfDescriptor]);
     const ValueSets& sets = m_inputs.sets();
-    if (sets.isEmpty(descriptors) || !sets.isSubset(descriptors, maker.intersect(m_inputs.universe().knownObjects(), ValueSets::complement(m_inputs.universe().builtinObjects()))))
-        return AccessorForms::unknown;
     auto attribute = [&](BuiltinName member) -> std::optional<bool> {
-        ValueSetID written = std::as_const(m_heap).writtenUnder(maker, descriptors, ValueFlowName::property(m_inputs.program.keyOf(member)));
+        ValueSetID written = std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program.keyOf(member)));
         if (sets.isEmpty(written))
             return false;
         ValueFlowObjectID only = sets.onlyMember(written);
@@ -883,6 +893,18 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
     return AccessorForms::of(*isEnumerable, *isConfigurable);
 }
 
+// Whatever makes a property with a value, or may: not `object.name = value`, which leaves an accessor as it is, and not a descriptor that is written out without `value`.
+bool StoresByLayout::definesValue(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
+{
+    const ValueFlowStatement& statement = writer.statement;
+    if (name.kind != ValueFlowNameKind::Property || statement.kind != ValueFlowStatementKind::Operation || statement.opcode == Opcode::PropSet)
+        return false;
+    if (statement.opcode != Opcode::Call)
+        return true;
+    std::optional<ValueSetID> descriptors = descriptorsWrittenOutIn(maker, statement);
+    return !descriptors || !m_inputs.sets().isEmpty(std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program.keyOf(BuiltinNames::value))));
+}
+
 auto StoresByLayout::describeStore(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const -> StoreUnderName
 {
     bool spellsItsKey = spellsKey(maker, writer, name);
@@ -891,6 +913,7 @@ auto StoresByLayout::describeStore(ValueSetMaker& maker, const Writer& writer, V
         .name = name,
         .spellsKey = spellsItsKey,
         .isIntoThisOfConstructor = spellsItsKey && storesIntoThisOfConstructor(m_inputs.program, writer),
+        .definesValue = definesValue(maker, writer, name),
         .accessorForms = formsOfAccessorDefinedBy(maker, writer, name),
         .familyDeclaredForReceiver = spellsItsKey ? familyDeclaredForReceiverOf(writer) : UINT32_MAX,
         .numbers = std::nullopt,
@@ -930,6 +953,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .isStoredByConstructor = isNamedByOperation && store.isIntoThisOfConstructor,
         .isWrittenByOperation = writer.statement.kind == ValueFlowStatementKind::Operation,
         .givesValueItself = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode != Opcode::Call,
+        .definesValue = store.definesValue,
         .leavesOutComputedKey = leavesOutComputedKey(m_inputs.program, writer.statement, name),
         .accessorForms = store.accessorForms,
         .value = value,
@@ -950,6 +974,7 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.isStoredByConstructor |= write.isStoredByConstructor;
         merged.isWrittenByOperation |= write.isWrittenByOperation;
         merged.givesValueItself |= write.givesValueItself;
+        merged.definesValue |= write.definesValue;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
         merged.numbers.unite(write.numbers);
@@ -1023,8 +1048,11 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         bool isFilledByAllocation = field && fieldAt(m_inputs.program, *field).flags.contains(FieldFlags::IsRequired);
         note(maker, stores, name, writes.value, isFilledByAllocation, false);
         noteNumbers(stores, name, writes.numbers);
-        if (name.kind == ValueFlowNameKind::Property)
-            stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.isGivenValueByOperation = true;
+        if (name.kind == ValueFlowNameKind::Property) {
+            StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
+            stored.isGivenValueByOperation = true;
+            stored.isGivenValueByDefinition = true;
+        }
         return;
     }
     if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).members.span(), layout))
@@ -1040,6 +1068,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
         stored.valueFromOperations = maker.unite(stored.valueFromOperations, writes.value);
         stored.isGivenValueByOperation |= writes.givesValueItself;
+        stored.isGivenValueByDefinition |= writes.definesValue;
     }
     if (name.kind == ValueFlowNameKind::UnknownKey) {
         stores.valueFromOperationsUnderUnknownKey = maker.unite(stores.valueFromOperationsUnderUnknownKey, writes.value);
@@ -1057,6 +1086,8 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
     stored.accessorForms |= writes.accessorForms;
     if (name.kind == ValueFlowNameKind::Getter)
         stored.getters = maker.unite(stored.getters, writes.value);
+    else
+        stored.setters = maker.unite(stored.setters, writes.value);
 }
 
 // Where the proven type of the receiver lists layouts, the object that a placeholder stands for has one of them: noteWrites() puts the write down for those.
@@ -1504,14 +1535,20 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     const ValueSets& sets = m_inputs.sets();
     // What is defined under a key nobody knows speaks for the key only in an object that is born empty: see getsAccessorsUnderKeysNobodyKnows(). It speaks against the key in any.
     ValueSetID getters = m_inputs.program.at(layout).fields.isEmpty() ? stores.gettersUnderUnknownKey : ValueSets::nothing;
+    ValueSetID setters = ValueSets::nothing;
     ValueSetID values = stores.valueFromOperationsUnderUnknownKey;
     uint8_t forms = stores.formsOfAccessorsUnderUnknownKey;
     bool isGivenValue = stores.isGivenValueByOperationUnderUnknownKey;
     if (auto found = stores.underKey.find(key.index()); found != stores.underKey.end()) {
         getters = maker.unite(getters, found->value.getters);
-        values = maker.unite(values, found->value.valueFromOperations);
+        setters = found->value.setters;
         forms |= found->value.accessorForms;
-        isGivenValue |= found->value.isGivenValueByOperation;
+        // `object.name = value` runs the setter where there is one: what it stores is no value of the property.
+        if (setters == ValueSets::nothing) {
+            values = maker.unite(values, found->value.valueFromOperations);
+            isGivenValue |= found->value.isGivenValueByOperation;
+        } else
+            isGivenValue |= found->value.isGivenValueByDefinition;
     }
     // A descriptor without `value` defines none.
     if (isGivenValue || getters == ValueSets::nothing || !sets.isSubset(values, m_inputs.universe().undefinedValue()))
@@ -1524,14 +1561,18 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         return { };
 
     // A helper that defines the getters of every caller under one roof has hundreds: there the slot takes any function.
-    FlowAccessorField accessor { *form, { } };
-    if (ValueSets::isComplement(getters) || sets.size(getters) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
-        return accessor;
+    FlowAccessorField accessor { *form, { }, { } };
     // The closures among them are what to expect.
-    sets.forEachMember(getters, [&](ValueFlowObjectID getter) {
-        if (FunctionID function = m_inputs.universe().closureFunction(getter))
-            accessor.getters.append(function);
-    });
+    auto listClosures = [&](ValueSetID functions, Vector<FunctionID, 1>& list) {
+        if (ValueSets::isComplement(functions) || sets.size(functions) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
+            return;
+        sets.forEachMember(functions, [&](ValueFlowObjectID member) {
+            if (FunctionID function = m_inputs.universe().closureFunction(member))
+                list.append(function);
+        });
+    };
+    listClosures(getters, accessor.getters);
+    listClosures(setters, accessor.setters);
     return accessor;
 }
 

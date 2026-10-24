@@ -315,6 +315,7 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
     case AccessForm::Method:
     case AccessForm::Call:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
     case AccessForm::Split:
         return { };
     }

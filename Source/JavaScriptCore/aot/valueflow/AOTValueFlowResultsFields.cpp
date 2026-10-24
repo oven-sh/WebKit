@@ -450,6 +450,8 @@ static void uniteAccessors(FlowAccessorField& known, FlowAccessorField&& other, 
         known = { };
         return;
     }
+    for (FunctionID setter : other.setters)
+        insertInUniquedSortedVector(known.setters, setter);
     if (known.getters.isEmpty() || other.getters.isEmpty()) {
         known.getters.clear();
         return;

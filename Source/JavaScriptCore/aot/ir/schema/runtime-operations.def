@@ -56,7 +56,7 @@ runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second
 runtime CloneObjectAs : JSCell* (EncodedJSValue source, uint32_t request, const EncodedJSValue* values) ; RuntimeAllocates
 runtime IsPlainDataObject : size_t (EncodedJSValue value) ; reads(all)
 runtime GetOwnDataProperty : EncodedJSValue (JSCell* object, uint32_t key) ; RuntimeCreatesConstant
-runtime FindSourcePlan : void* (JSCell* source, uint32_t request) ; RuntimeCreatesConstant
+runtime FindSourcePlan : UGPRPair (JSCell* source, uint32_t request) ; RuntimeAllocates
 runtime GetPreparedPlans : EncodedJSValue () ; RuntimeCreatesConstant
 runtime IsThrownValueIgnored : size_t () ; reads(all) writes(RuntimeState) throws
 runtime MatchesUnrecorded : size_t (JSCell* regExp, JSCell* string) ; RuntimeCreatesString

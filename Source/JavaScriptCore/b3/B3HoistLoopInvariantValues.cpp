@@ -73,7 +73,7 @@ static bool isTrappingLoad(const Value* value)
 // Whether a poll leaves depends on nothing that the procedure computes, so it guards no value behind it.
 static bool isBarrier(const Value* value, const Effects& effects)
 {
-    return effects.isTrapBarrier() && !isLoopPoll(value) && !isMovedLoadCheck(value);
+    return effects.isTrapBarrier() && !isLoopPoll(value);
 }
 
 static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block, const IndexSet<BasicBlock*>& blockBarriers)
@@ -321,10 +321,12 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         for (unsigned inner = 0; inner <= i; ++inner)
                             addLoadLiveThroughLoop(*blockLoops[inner], value);
                     }
-                    if (std::optional<MovedLoad> moved = MovedLoad::of(proc, value))
-                        value = createMovedLoadCheck(proc, *moved, value->lastChild(), value);
-                    else
-                        value = proc.add<Value>(Nop, Void, value->origin());
+                    if (std::optional<MovedLoad> moved = MovedLoad::of(proc, value)) {
+                        proc.movedLoadLog().add(*moved, block, static_cast<unsigned>(&value - block->values().begin()), value->lastChild(), value);
+                        for (unsigned inLoop = 0; inLoop < loop.size(); ++inLoop)
+                            proc.movedLoadLog().addBehindEachValueThatStaysIn(loop.at(inLoop), *moved, value->lastChild(), value);
+                    }
+                    value = proc.add<Value>(Nop, Void, value->origin());
                     changed = true;
                     hoisted = true;
                     if (hoistsOnlyFromLikelyPaths)

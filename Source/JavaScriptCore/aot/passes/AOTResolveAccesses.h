@@ -69,6 +69,7 @@ private:
     void becomeBuiltin(const NamedAccessSite&);
     void becomeMethodClosure(const NamedAccessSite&, const AccessOperands&);
     void becomeCallOfGetterInSlot(const NamedAccessSite&, const AccessOperands&);
+    void becomeCallOfSetterInSlot(const NamedAccessSite&, const AccessOperands&);
 
     void becomeVariableAccess(const NamedAccessSite&, const AccessOperands&);
     void becomeNamespace(const NamedAccessSite&);

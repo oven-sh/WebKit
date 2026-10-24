@@ -58,6 +58,7 @@ static bool namesOperation(AccessForm form)
     case AccessForm::Constant:
     case AccessForm::Variable:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return true;
     case AccessForm::ByName:
     case AccessForm::Namespace:
@@ -580,6 +581,7 @@ static bool isBoundToInstance(const PropertyAccessQuery& query, const PropertyAc
     case AccessForm::Method:
     case AccessForm::Call:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return true;
     case AccessForm::ByName:
     case AccessForm::Slot:
@@ -621,6 +623,7 @@ static KnowledgeLevel levelOf(const PropertyAccessPlan& plan, KnowledgeLevel mem
     case AccessForm::Method:
     case AccessForm::Call:
     case AccessForm::GetterInSlot:
+    case AccessForm::SetterInSlot:
         return plan.needsNoTest() ? memberLevel : KnowledgeLevel::Expected;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -13,6 +13,7 @@
 #include "AOTConvention.h"
 #include "AOTHeaps.h"
 #include "AOTInstance.h"
+#include "AOTPrimitiveEmitter.h"
 #include "AOTRuntimeTable.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CheckValue.h"
@@ -84,15 +85,26 @@ static RefPtr<B3::DifferenceReport> reportOf(BrokenClaim claim, Typed::FunctionI
     });
 }
 
+// False as told, and true of what every test of the word answers: the type of a cell changes in place, by the rows of cellTypeChangesInPlace() alone. Where a compiled object has its shape word
+// other cells have other things, half of a pointer for one, and none of those has compiledObjectShapeBit (AOTCellFormat.h).
+static bool saysWhatCountsOfUnchangingWord(AOTHeaps& heaps, const B3::MemoryValue& load, B3::MovedLoad& moved)
+{
+    if (load.range() == heaps.rangeOf(heaps.JSCell_typeInfoType))
+        moved.changesThatDoNotCount = Typed::cellTypeChangesInPlace();
+    if (load.range() == heaps.rangeOf(heaps.AOTObject_shapeWord)) {
+        if (load.opcode() != B3::Load || load.offset() != offsetOfShapeWord)
+            return false;
+        moved.bitsOfWordsThatCount = compiledObjectShapeBit;
+    }
+    return true;
+}
+
 // A word that never changes still holds, wherever what was read from it is used, what was read. The check keeps the address alive, and with it the cell.
 static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionID function)
 {
     bool changed = false;
     RefPtr<B3::DifferenceReport> report = reportOf(BrokenClaim::WordNeverChanges, function);
     AOTHeaps& heaps = AOTHeaps::of(proc);
-    B3::HeapRange shapeWords = heaps.rangeOf(heaps.AOTObject_shapeWord);
-    // A slim closure that gets properties gets the type beside its own.
-    B3::HeapRange cellTypes = heaps.rangeOf(heaps.JSCell_typeInfoType);
     B3::InsertionSet insertionSet(proc);
     for (B3::BasicBlock* block : proc) {
         for (unsigned index = 0; index < block->size(); ++index) {
@@ -103,16 +115,8 @@ static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionI
                 if (!load || load == lastChecked || !load->isLoad() || load->readsMutability() != B3::Mutability::Immutable)
                     continue;
                 std::optional<B3::MovedLoad> described = B3::MovedLoad::describe(load);
-                if (!described)
+                if (!described || !saysWhatCountsOfUnchangingWord(heaps, *load, *described))
                     continue;
-                // In a cell that is no compiled object other things lie there, half of a pointer for one. They change, and what every test of the word answers does not.
-                if (load->range() == cellTypes)
-                    continue;
-                if (load->range() == shapeWords) {
-                    if (load->opcode() != B3::Load || load->offset() != offsetOfShapeWord)
-                        continue;
-                    described->bitsOfWordsThatCount = compiledObjectShapeBit;
-                }
                 insertionSet.insertValue(index, B3::createMovedLoadCheck(proc, *described, load->lastChild(), load, report));
                 lastChecked = load;
                 changed = true;
@@ -137,17 +141,51 @@ void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const 
     policy.clientPhases.append(reportReadsOfUnwrittenStackSlots(function, slotsOfCells, entersOnlyAtRoot));
 }
 
-void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure)
+// Only the bit that the operation asks for, and only that the guard has ended: see GuardEmitter::holds().
+static bool saysWhatCountsOfGuardByte(const GuardTests& tests, B3::MovedLoad& moved)
 {
-    policy.validation.checksMovedLoadsAtRunTime = true;
-    policy.reportMovedLoadThatDiffers = reportOf(BrokenClaim::LoadMayMove, function);
-    policy.isWrittenBehindTheBackOfCode = createSharedTask<bool(const B3::HeapRange&)>([&procedure](const B3::HeapRange& range) {
+    const GuardTest* found = nullptr;
+    unsigned numberOfTests = 0;
+    for (const GuardTest& test : tests) {
+        if (test.operation != Typed::valueOfOrigin(moved.origin))
+            continue;
+        ++numberOfTests;
+        if (!found || test.offset == moved.offset)
+            found = &test;
+    }
+    if (!found || (numberOfTests > 1 && found->offset != moved.offset))
+        return false;
+    moved.bitsThatCount = found->mask;
+    (found->holdsWhileClear ? moved.bitsThatMayGetCleared : moved.bitsThatMayGetSet) = found->mask;
+    return true;
+}
+
+void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure, const GuardTests& guardTests)
+{
+    policy.validation.logsMovedLoads = true;
+    policy.saysWhatCountsOfMovedLoad = createSharedTask<bool(const B3::MemoryValue&, B3::MovedLoad&)>([&procedure, &guardTests](const B3::MemoryValue& load, B3::MovedLoad& moved) {
         AOTHeaps& heaps = AOTHeaps::of(*procedure);
-        // A rope that is resolved, a slim closure that gets properties, a class that its first allocation defines: each changes a word, and none what a test of the word answers or may answer.
-        const B3::AbstractHeap* heapsThatChangeUnseen[] = { &heaps.collectorState, &heaps.AOTObject_shapeWord, &heaps.JSCell_typeInfoType, &heaps.entire(Typed::AbstractHeap::StringStorage), &heaps.entire(Typed::AbstractHeap::MemberGuards) };
-        return std::ranges::any_of(heapsThatChangeUnseen, [&](const B3::AbstractHeap* heap) {
-            return range.overlaps(heaps.rangeOf(*heap));
-        });
+        auto isIn = [&](const B3::AbstractHeap& heap) {
+            return load.range().overlaps(heaps.rangeOf(heap));
+        };
+        // The collector's threads write the first. A rope that is resolved changes a word of the second, and nothing that an operation answers.
+        if (isIn(heaps.collectorState) || isIn(heaps.entire(Typed::AbstractHeap::StringStorage)))
+            return false;
+        // Whoever finds the word of a string's or a key's cell empty asks for the cell, and what makes the cell fills the word and is called a pure function. A read from before says "empty", and the code asks again.
+        if (isIn(heaps.AOTInstance_stringCells)) {
+            moved.bitsThatMayGetSet = std::numeric_limits<uint64_t>::max();
+            return true;
+        }
+        if (isIn(heaps.entire(Typed::AbstractHeap::MemberGuards)))
+            return saysWhatCountsOfGuardByte(guardTests, moved);
+        return saysWhatCountsOfUnchangingWord(heaps, load, moved);
+    });
+    policy.clientPhases.append(B3::ClientPhase {
+        B3::ClientPhase::Point::AfterSinking,
+        "checkMovedLoadsAtRunTime"_s,
+        createSharedTask<bool(B3::Procedure&)>([function](B3::Procedure& proc) {
+            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function));
+        })
     });
 }
 

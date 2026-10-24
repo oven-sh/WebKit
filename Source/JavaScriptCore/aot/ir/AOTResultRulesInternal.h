@@ -166,6 +166,8 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext&, std::span<const Lay
 std::optional<Type> tryTypeOfFieldRead(const TypingContext&, const Type& receiver, PropertyKeyID);
 std::optional<Type> tryTypeOfSlotContents(const TypingContext&, std::span<const LayoutID> receivers, PropertyKeyID);
 std::optional<Type> tryTypeOfSlotContents(const TypingContext&, LayoutSetID receivers, PropertyKeyID);
+std::optional<Type> tryTypeOfSetterInSlot(const TypingContext&, std::span<const LayoutID> receivers, PropertyKeyID);
+std::optional<Type> tryTypeOfSetterInSlot(const TypingContext&, LayoutSetID receivers, PropertyKeyID);
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext&, std::span<const LayoutID> receivers, PropertyKeyID);
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext&, LayoutSetID receivers, PropertyKeyID);
 std::optional<Type> tryTypeOfContentsRead(const TypingContext&, const Type& container, ContentsSlot);

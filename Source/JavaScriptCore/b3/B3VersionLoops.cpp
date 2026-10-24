@@ -262,8 +262,10 @@ private:
             RELEASE_ASSERT(hoisted);
             if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, value)) {
                 Value* clone = m_cloner.appendClone(value, copy, map);
-                copy->values().last() = createMovedLoadCheck(m_proc, *moved, clone->lastChild(), hoisted);
+                Value* address = clone->lastChild();
+                copy->values().removeLast();
                 m_proc.deleteValue(clone);
+                m_proc.movedLoadLog().add(*moved, copy, copy->size(), address, hoisted);
             }
             m_cloner.substitute(map, value, hoisted);
             return;

@@ -119,6 +119,7 @@ static constexpr NestedHeap<B3::IndexedAbstractHeap, ElementBase> elementIndexed
 };
 
 static constexpr B3::AbstractHeap Repository::* immutableFieldHeaps[] = {
+    // It does change in place, between the types of a row of cellTypeChangesInPlace(): PrimitiveEmitter::hasCellTypeIn() keeps every test under this heap to ranges that cannot tell.
     &Repository::JSCell_typeInfoType,
     &Repository::Structure_classInfo,
     &Repository::Structure_realm,

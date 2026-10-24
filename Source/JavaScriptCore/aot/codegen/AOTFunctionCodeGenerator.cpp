@@ -254,7 +254,7 @@ bool FunctionCodeGenerator::generateB3()
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
     if (options.checksMovedLoads) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure);
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

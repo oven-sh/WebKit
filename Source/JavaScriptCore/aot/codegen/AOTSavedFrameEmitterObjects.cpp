@@ -226,7 +226,7 @@ void SavedFrameEmitter::generateIsUnmodifiedAsyncGenerator(const ValueContext& v
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock otherwise = targets.notTaken.block();
         if (!classPart || classPart->builtinClass != BuiltinClasses::AsyncGenerator)
-            branchUnless(equal(loadCellType(generator), word32(JSAsyncGeneratorType)), otherwise);
+            branchUnless(hasCellType(generator, JSAsyncGeneratorType), otherwise);
         branchUnless(Condition(m_out.isNull(m_out.loadPtr(generator.value(), m_heaps.JSObject_butterfly))), otherwise);
         Boxed prototype(m_out.load64(loadStructure(generator).value(), m_heaps.Structure_prototype));
         branchUnless(isCell(prototype), otherwise);

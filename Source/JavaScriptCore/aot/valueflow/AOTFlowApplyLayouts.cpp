@@ -80,7 +80,7 @@ static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
     applyFieldUpdates(layout, update);
 }
 
-// The slot holds the GetterSetter, and the type of the slot is that of the getter.
+// The slot holds the GetterSetter, and the type of the slot is that of the getter. The setter is expected to be one of those that were seen.
 static void becomeAccessor(TypeArena& arena, Field& field, const FlowAccessorField& accessor)
 {
     field.form = accessor.form;
@@ -89,6 +89,10 @@ static void becomeAccessor(TypeArena& arena, Field& field, const FlowAccessorFie
     for (FunctionID function : accessor.getters)
         getter = getter.unionWith(Type::forFunction(function), arena);
     field.slotType = arena.intern(getter);
+    Type setter = Type::never();
+    for (FunctionID function : accessor.setters)
+        setter = setter.unionWith(Type::forFunction(function), arena);
+    field.setterType = accessor.setters.isEmpty() ? TypeID() : arena.intern(setter);
 }
 
 static void applyAccessorFields(TypeArena& arena, Layout& layout, const FlowLayoutUpdate& update)

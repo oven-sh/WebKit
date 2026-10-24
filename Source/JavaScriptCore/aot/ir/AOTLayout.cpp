@@ -350,6 +350,7 @@ static void appendBaseFields(Program& program, LayoutID id)
             if (field.flags.contains(FieldFlags::IsInherited)) {
                 field.declared = baseField.declared;
                 field.slotType = baseField.slotType;
+                field.setterType = baseField.setterType;
                 field.form = baseField.form;
                 field.flags.set(FieldFlags::IsEnforced, baseField.flags.contains(FieldFlags::IsEnforced));
             }

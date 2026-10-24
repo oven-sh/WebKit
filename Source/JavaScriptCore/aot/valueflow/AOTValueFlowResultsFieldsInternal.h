@@ -312,15 +312,18 @@ private:
 
 struct StoredUnderKey {
     ValueSetID value { ValueSets::nothing };
-    // By something else than the operation that allocates the object.
-    bool isStoredAfterCreation { false };
-    bool mayBeAccessor { false };
     // What the operations of the program do, for a guess at what the property is.
     ValueSetID valueFromOperations { ValueSets::nothing };
     ValueSetID getters { ValueSets::nothing };
+    ValueSetID setters { ValueSets::nothing };
+    // By something else than the operation that allocates the object.
+    bool isStoredAfterCreation { false };
+    bool mayBeAccessor { false };
     uint8_t accessorForms { 0 };
     // An operation puts a value there itself: a store, or an allocation that lists the field.
     bool isGivenValueByOperation { false };
+    // The same without `object.name = value`, which runs the setter of an accessor that has one, and with a call that may define a value.
+    bool isGivenValueByDefinition { false };
     // An operation of the program stores under the key and spells it, or computes a key that can be no other. The code of a built-in and a store under a key that may be one of several do not count.
     bool isNamedByOperation { false };
     // A constructor function stores it into its `this`, so the objects that pass the constructor have it.
@@ -545,6 +548,7 @@ private:
         bool isStoredByConstructor;
         bool isWrittenByOperation;
         bool givesValueItself;
+        bool definesValue;
         bool leavesOutComputedKey;
         uint8_t accessorForms;
         ValueSetID value;
@@ -567,6 +571,7 @@ private:
         ValueFlowName name;
         bool spellsKey { false };
         bool isIntoThisOfConstructor { false };
+        bool definesValue { false };
         uint8_t accessorForms { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
         // None until a node under the name holds a number.
@@ -600,7 +605,9 @@ private:
     bool admits(const Writer& writer, LayoutID layout) const { return admits(writer.layoutsOfReceiver, layout); }
     const Vector<LayoutID>& layoutsAdmittedBy(LayoutSetID familyOfReceiver);
     uint32_t familyDeclaredForReceiverOf(const Writer&) const;
+    std::optional<ValueSetID> descriptorsWrittenOutIn(ValueSetMaker&, const ValueFlowStatement&) const;
     uint8_t formsOfAccessorDefinedBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
+    bool definesValue(ValueSetMaker&, const Writer&, ValueFlowName) const;
     StoreUnderName describeStore(ValueSetMaker&, const Writer&, ValueFlowName) const;
     // The store is what the call before has left there: the description of the last statement and name that were looked at.
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;

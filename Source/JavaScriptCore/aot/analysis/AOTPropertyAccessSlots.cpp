@@ -73,6 +73,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.hasImmutableMember |= field.flags.contains(FieldFlags::IsImmutable);
         state.form.add(field.form);
         state.isAccessorInEveryMember &= field.form.contains(FieldForm::IsAccessor) && holdsGetterThatIsFunction(program, field);
+        state.isExpectedToHaveSetterInEveryMember &= !!field.setterType;
 
         TypeID slotType = slotTypeOf(program, field);
         state.slotTypes.add(slotType);
@@ -451,6 +452,13 @@ static void planFieldTest(const PropertyAccessQuery& query, const FieldArmState&
 
 static void planFieldStore(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)
 {
+    // Whatever the setter in a filled slot is, the store calls it. Where nobody has seen a setter the store by name says what becomes of the value.
+    if (query.access == Access::Store && !query.isPrivate && state.isAccessorInEveryMember && state.isExpectedToHaveSetterInEveryMember) {
+        plan.form = AccessForm::SetterInSlot;
+        plan.operation = Opcode::GetSlotSetter;
+        requireFilledSlot(state, plan);
+        return;
+    }
     if (state.hasImmutableMember || state.form.containsAny({ FieldForm::IsReadOnly, FieldForm::IsAccessor })) {
         plan.form = AccessForm::ByName;
         return;

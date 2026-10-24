@@ -1,4 +1,4 @@
-# An array under construction and the direct stores into it get one storage kind, from the types of what is stored
+# An array under construction and the direct stores into it get one storage kind, from the types of what is stored. So do all the arrays that one operand of a store may name
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
 # RUN(TWICE): pass PlanArrayCapacities PlanArrayCapacities
@@ -87,6 +87,40 @@ function f5 name="storeThroughBlockParameter" parameters=[{type=boolean}, {type=
     Return v8
 }
 # CHECK-LABEL: function f5
-# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Int32
-# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 arrayStorage=Int32
+# CHECK-NOT: arrayStorage=
+
+function f6 name="oneKindThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=i32}, {type=number}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: i32, v3: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewArrayWithCapacity v1
+    v5 = Integer integer=0
+    v6 = TryPutByValDirect v4, v5, v2
+    Jump -> next b3(v4)
+  b2():
+    v7 = NewArrayWithCapacity v1
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Integer integer=1
+    v10 = TryPutByValDirect v8, v9, v3
+    Return v8
+}
+# CHECK-LABEL: function f6
+# CHECK: v4: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double
+# CHECK: v6: {{*}} = TryPutByValDirect v4, v5, v2 arrayStorage=Double
+# CHECK: v7: {{*}} = NewArrayWithCapacity v1 arrayStorage=Double
+# CHECK: v10: {{*}} = TryPutByValDirect v8, v9, v3 arrayStorage=Double
+
+function f7 name="blockParameterThatMayNameAnotherArray" parameters=[{type=boolean}, {type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=Array<anything>}] {
+  b0(v0: boolean, v1: int[0, 100], v2: Array<anything>, v3: i32):
+    Branch v0 -> taken b1(), notTaken b2(v2)
+  b1():
+    v4 = NewArrayWithCapacity v1
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v3
+    Return v5
+}
+# CHECK-LABEL: function f7
 # CHECK-NOT: arrayStorage=

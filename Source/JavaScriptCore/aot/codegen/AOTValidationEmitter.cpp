@@ -13,6 +13,7 @@
 #include "AOTFlowResults.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTSourcePlans.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
@@ -86,11 +87,13 @@ void ValidationEmitter::generateFindSourcePlan(const ValueContext& value)
         fail(value, InternalErrorKind::PlacedPayloadMissing);
         return;
     }
-    Pointer plan = callOperation<Pointer>(value, RuntimeOperation::FindSourcePlan, { in<CellPointer>(value->sourceOperand()), word32(static_cast<int32_t>(request->value())) });
+    Operand arguments[] { in<CellPointer>(value->sourceOperand()), word32(static_cast<int32_t>(request->value())) };
+    StubCallResult found = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::FindSourcePlan, arguments);
+    Pointer plan(found.first);
     auto wordAt = [&](unsigned index) {
         return Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), plan.value(), index * sizeof(uint32_t))));
     };
-    defineResults(value, { isNotZero(wordAt(SourcePlan::isUsableWord)), plan, Pointer(zeroExtended(wordAt(SourcePlan::orderWord)).value()) });
+    defineResults(value, { isNotZero(wordAt(SourcePlan::isUsableWord)), plan, Pointer(zeroExtended(wordAt(SourcePlan::orderWord)).value()), CellPointer(found.second) });
 }
 
 void ValidationEmitter::generateGetPlannedProperty(const ValueContext& value)

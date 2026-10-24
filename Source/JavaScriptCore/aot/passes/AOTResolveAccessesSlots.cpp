@@ -11,6 +11,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -18,6 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
     v(GetSlot) \
     v(GetSlotOrUndefined) \
     v(GetSlotGetter) \
+    v(GetSlotSetter) \
     v(GetDeferredClosureSlot) \
     v(GetDeferredClosureSlotOrUndefined) \
     v(IsSlotFilled) \
@@ -108,6 +110,31 @@ void AccessRewriter::becomeCallOfGetterInSlot(const NamedAccessSite& site, const
     call.setCalleeOperand(getter);
     call.setThisValueOperand(operands.receiver);
     call.setCallees(calleesOfGetterInSlot(m_context, plan, stamp.key));
+    call.setAccessSite(stamp.accessSite);
+    finish(site.site, replaced);
+}
+
+// The setter is whatever the slot holds: the call tests it for the functions that are expected of it, like any call of a value.
+void AccessRewriter::becomeCallOfSetterInSlot(const NamedAccessSite& site, const AccessOperands& operands)
+{
+    const PropertyAccessPlan& plan = site.plan;
+    RELEASE_ASSERT(plan.operation == Opcode::GetSlotSetter && valueAt(site.site).opcode == Opcode::PropSet);
+
+    ReplacedEffects replaced;
+    if (m_checksEffects)
+        replaced.add({ m_context.program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
+    SlotStamp stamp = createSlotStamp(m_context, valueAt(site.site), plan);
+
+    Value read = IRBuilder::make(Opcode::GetSlotSetter, { operands.receiver, operands.guard });
+    setSlotStamp(read, { stamp.key, stamp.receivers, stamp.level, { } });
+    read.setIsInStrictCode(valueAt(site.site).mode() == ECMAMode::Strict);
+    ValueID setter = insert(WTF::move(read), valueAt(site.site).origin());
+
+    Value& call = valueAt(site.site);
+    call.become(Opcode::Call);
+    call.setCalleeOperand(setter);
+    call.setThisValueOperand(operands.receiver);
+    call.setArgumentsOperands(std::array { operands.stored });
     call.setAccessSite(stamp.accessSite);
     finish(site.site, replaced);
 }

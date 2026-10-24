@@ -33,6 +33,7 @@
 #include "B3HeapSet.h"
 #include "B3InductionRecords.h"
 #include "B3KnownProperties.h"
+#include "B3MovedLoadCheck.h"
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
 #include "B3Policy.h"
@@ -231,6 +232,8 @@ public:
     std::optional<InductionRecord> knownInduction(const Value* phi) const { return m_knownInductions.find(phi); }
     const InductionRecords& knownInductions() const LIFETIME_BOUND { return m_knownInductions; }
     InductionRecords& knownInductions() LIFETIME_BOUND { return m_knownInductions; }
+
+    MovedLoadLog& movedLoadLog() LIFETIME_BOUND { return m_movedLoadLog; }
 
     // A valid procedure cannot contain any orphan values. An orphan is a value that is not in
     // any basic block. It is possible to create an orphan value during code generation or during
@@ -472,6 +475,7 @@ private:
     HeapSetTable m_heapSets;
     KnownProperties m_knownProperties;
     InductionRecords m_knownInductions;
+    MovedLoadLog m_movedLoadLog;
     Vector<DataSectionRecord, 1> m_dataSections;
     Vector<std::unique_ptr<JumpTableRecord>> m_jumpTables;
     Vector<BasicBlock*> m_blocksInPreOrder;

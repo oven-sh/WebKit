@@ -2650,8 +2650,11 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
         RETURN_IF_EXCEPTION(scope, (StreamingJSONParseResult { lastGoodPosition, StreamingJSONParseResult::Status::Error }));
 
         if (!value) {
-            if (m_needsIterativeParser) [[unlikely]]
+            if (m_needsIterativeParser) [[unlikely]] {
+                // The caller starts again at the first byte, so it gets the values of the lines in front once more.
+                results.clear();
                 return { 0, StreamingJSONParseResult::Status::NeedsText };
+            }
             if (m_lexer.failedToAllocate()) [[unlikely]] {
                 throwOutOfMemoryError(m_globalObject, scope);
                 return { lastGoodPosition, StreamingJSONParseResult::Status::Error };

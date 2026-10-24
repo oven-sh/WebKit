@@ -333,6 +333,8 @@ const lanes = platforms.flatMap(platform =>
         test_quick: platform.tested?.[arch]?.quick ?? false,
         programs: programs(platform, arch, variant, test).join(" "),
         aot: v.aot === false ? 0 : 1,
+        // What of HARDENING the headers in the tarball test: they lay classes out by it.
+        defines: v.hardened ? [...HARDENING.matchAll(/-D((?:BUN|ENABLE)_\w+=\S+)/g)].map(match => match[1]).join(" ") : "",
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -403,7 +405,7 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot });
+  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);

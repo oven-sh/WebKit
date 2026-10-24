@@ -220,6 +220,8 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         return declaredBoundOf(Opcode::ModuleNamespace);
     case AccessForm::GetterInSlot:
         return effectsOfCallingGetterInSlot(context, plan, stamp);
+    case AccessForm::SetterInSlot:
+        return Effects::unknownCode();
     case AccessForm::ByName:
     case AccessForm::Call:
     case AccessForm::Split:
@@ -287,6 +289,9 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
         break;
     case AccessForm::GetterInSlot:
         becomeCallOfGetterInSlot(site, operands);
+        break;
+    case AccessForm::SetterInSlot:
+        becomeCallOfSetterInSlot(site, operands);
         break;
     case AccessForm::ByName:
     case AccessForm::Call:

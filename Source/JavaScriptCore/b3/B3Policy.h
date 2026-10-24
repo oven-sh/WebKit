@@ -26,6 +26,7 @@ class CCallHelpers;
 
 namespace B3 {
 
+class MemoryValue;
 struct MovedLoad;
 class Procedure;
 class RelocationLowering;
@@ -39,7 +40,7 @@ enum class ValidationLevel : uint8_t {
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
-    bool checksMovedLoadsAtRunTime { false };
+    bool logsMovedLoads { false };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -213,9 +214,8 @@ struct Policy {
     Air::Policy air;
     bool collectsRemarks { false };
     Vector<ClientPhase, 4> clientPhases;
-    // The collector's threads, and writes that no operation's result depends on.
-    RefPtr<SharedTask<bool(const HeapRange&)>> isWrittenBehindTheBackOfCode;
-    RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportMovedLoadThatDiffers;
+    // False: the load is not logged. The collector's threads write some words, and some writes change no operation's result.
+    RefPtr<SharedTask<bool(const MemoryValue&, MovedLoad&)>> saysWhatCountsOfMovedLoad;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 

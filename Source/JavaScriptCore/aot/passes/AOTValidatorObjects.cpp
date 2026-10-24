@@ -185,11 +185,12 @@ ValueID ValidatorBuilder::emitObjectByPlan(const ResultNode& node, ValueID objec
     emitJumpUnless(appendResultAt(found, 0), otherwise);
     ValueID plan = appendResultAt(found, 1);
     ValueID order = appendResultAt(found, 2);
+    ValueID planned = appendResultAt(found, 3);
 
     Vector<ValueID, 8> values;
     Vector<ValueID, 8> isPresent;
     for (size_t index = 0; index < numberOfMembers; ++index) {
-        Value read = IRBuilder::make(Opcode::GetPlannedProperty, { object, plan });
+        Value read = IRBuilder::make(Opcode::GetPlannedProperty, { planned, plan });
         read.setMemberIndex(static_cast<uint32_t>(index));
         ValueID results = builder().append(WTF::move(read));
         values.append(appendResultAt(results, 0));

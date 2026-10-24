@@ -250,6 +250,7 @@ jobs:
           TEST: ${{ matrix.test }}
           PROGRAMS: ${{ matrix.programs }}
           AOT: ${{ matrix.aot }}
+          DEFINES: ${{ matrix.defines }}
           SOURCES: ${{ matrix.sources }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -269,6 +270,8 @@ jobs:
           # headers. Whoever links these libraries and says nothing reads the headers as they were compiled here; bun
           # compares BUN_WEBKIT_ENABLE_AOT with what it was told to build.
           printf '#define BUN_WEBKIT_ENABLE_AOT %s\n#if !defined(ENABLE_AOT)\n#define ENABLE_AOT %s\n#endif\n' "$AOT" "$AOT" >> bun-webkit/include/cmakeconfig.h
+          # So do these (`defines` in lanes.mjs).
+          for define in $DEFINES; do printf '#if !defined(%s)\n#define %s %s\n#endif\n' "${define%%=*}" "${define%%=*}" "${define#*=}" >> bun-webkit/include/cmakeconfig.h; done
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
           # Which programs this lane ships: `programs` in lanes.mjs.

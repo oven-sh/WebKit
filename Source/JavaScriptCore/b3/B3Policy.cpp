@@ -263,7 +263,7 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
     if (validation.level != ValidationLevel::FromOptions)
         out.print(comma, "validation = "_s, validation.level);
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
-    PRINT_IF_SET(validation, checksMovedLoadsAtRunTime);
+    PRINT_IF_SET(validation, logsMovedLoads);
 }
 
 #undef PRINT_IF_DIFFERENT

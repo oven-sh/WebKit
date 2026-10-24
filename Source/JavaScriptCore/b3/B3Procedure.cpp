@@ -172,6 +172,7 @@ Value* Procedure::clone(Value* value)
     clone->owner = nullptr;
     Value* result = m_values.add(WTF::move(clone));
     m_knownProperties.copy(value, result);
+    m_movedLoadLog.didClone(value, result);
     return result;
 }
 
@@ -550,6 +551,7 @@ void Procedure::deleteValue(Value* value)
 {
     m_knownProperties.remove(value);
     m_knownInductions.willDelete(value, m_values);
+    m_movedLoadLog.willDelete(value);
     m_values.remove(value);
 }
 

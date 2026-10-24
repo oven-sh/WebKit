@@ -725,6 +725,26 @@ void ValueFlowHeapIndex::findOperandsOfCalls(const ValueFlowResultInputs& inputs
 
 using ValueFlowBuiltinApplicationsFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&, ValueSetID builtinCallees)>;
 
+// Each of the bound functions binds no argument: its target takes the call with the bound `this`, and every argument keeps its position.
+static void forEachBuiltinAppliedThroughBoundFunctions(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, std::span<const ValueFlowObjectID> boundFunctions, ValueFlowBuiltinApplication& application, ValueSetID amongFunctions, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor)
+{
+    for (ValueFlowObjectID boundFunction : boundFunctions) {
+        ValueSetID alone = maker.of(boundFunction);
+        ValueSetID targets = maker.intersect(heap.writtenUnder(maker, alone, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), amongFunctions);
+        if (targets == ValueSets::nothing)
+            continue;
+        application.kind = ValueFlowCallKind::CallByNativeCode;
+        application.thisValue = heap.writtenUnder(maker, alone, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionBoundThis.index() });
+        if (!passesAnyOf(application, wantedOperands))
+            continue;
+        inputs.sets().forEachMember(targets, [&](ValueFlowObjectID target) {
+            application.builtin = inputs.universe().builtinOf(target);
+            if (!raisesEventWhenCalled(inputs.program.builtins(), application.builtin))
+                functor(application);
+        });
+    }
+}
+
 static void forEachBuiltinAppliedByOperation(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const ValueFlowStatement& call, ValueSetID callees, const ValueFlowHeapIndex::OperandsOfCall* knownOperands, ValueSetID amongFunctions, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor, const ValueFlowBuiltinApplicationsFunctor* functorForAllCallees)
 {
     const ValueFlowUniverse& universe = inputs.universe();
@@ -757,50 +777,45 @@ static void forEachBuiltinAppliedByOperation(const ValueFlowResultInputs& inputs
             });
         }
     }
-    for (ValueFlowObjectID boundFunction : boundFunctions) {
-        ValueSetID alone = maker.of(boundFunction);
-        ValueSetID targets = maker.intersect(heap.writtenUnder(maker, alone, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), amongFunctions);
-        if (targets == ValueSets::nothing)
-            continue;
-        application.kind = ValueFlowCallKind::CallByNativeCode;
-        application.thisValue = heap.writtenUnder(maker, alone, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionBoundThis.index() });
-        if (!passesAnyOf(application, wantedOperands))
-            continue;
-        inputs.sets().forEachMember(targets, [&](ValueFlowObjectID target) {
-            application.builtin = universe.builtinOf(target);
-            if (!raisesEventWhenCalled(inputs.program.builtins(), application.builtin))
-                functor(application);
-        });
-    }
+    forEachBuiltinAppliedThroughBoundFunctions(inputs, heap, maker, boundFunctions.span(), application, amongFunctions, wantedOperands, functor);
 }
 
-static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const ValueFlowNodeKey& key, ValueFlowNodeID first, ValueSetID amongObjects, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor)
+static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const ValueFlowNodeKey& key, ValueFlowNodeID first, ValueSetID amongObjects, ValueSetID amongFunctions, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueFlowSolver& solver = inputs.solver();
     ValueSetID builtinCallees = heap.expandAmong(maker, key.set, amongObjects);
-    if (builtinCallees == ValueSets::nothing)
+    ValueFlowCallKind kind = key.callKind();
+    // The rule of a group applies the target of such a bound function where it stands, without a group for the target: callTargetsWithoutBoundArguments().
+    Vector<ValueFlowObjectID, 4> boundFunctions;
+    if (!isConstruction(kind)) {
+        inputs.sets().forEachMember(heap.expandAmong(maker, key.set, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
+            if (bindsNoArgument(inputs.program, universe, callee))
+                boundFunctions.append(callee);
+        });
+    }
+    if (builtinCallees == ValueSets::nothing && boundFunctions.isEmpty())
         return;
 
     ValueFlowCallGroup group = callGroupAt(first);
-    ValueFlowCallKind kind = key.callKind();
     bool isAccessorCall = kind == ValueFlowCallKind::Get || kind == ValueFlowCallKind::Set;
     ValueFlowBuiltinApplication application;
     application.thisValue = solver.valueOf(isConstruction(kind) ? group.newTarget : group.thisValue);
     for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
         application.arguments.append(solver.valueOf(group.argument(index)));
     application.otherArguments = maker.unite(solver.valueOf(group.otherArguments), solver.valueOf(group.laterArguments));
-    if (!passesAnyOf(application, wantedOperands))
-        return;
-    inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
-        // A lookup finds accessors and data properties of the table, which are applied in the mode of the group. A function of the table that the program has made an accessor is called like any function.
-        bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);
-        if (!isFunction && !isAccessorCall)
-            return;
-        application.builtin = universe.builtinOf(callee);
-        application.kind = isFunction && isAccessorCall ? ValueFlowCallKind::Call : kind;
-        functor(application);
-    });
+    if (passesAnyOf(application, wantedOperands)) {
+        inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
+            // A lookup finds accessors and data properties of the table, which are applied in the mode of the group. A function of the table that the program has made an accessor is called like any function.
+            bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);
+            if (!isFunction && !isAccessorCall)
+                return;
+            application.builtin = universe.builtinOf(callee);
+            application.kind = isFunction && isAccessorCall ? ValueFlowCallKind::Call : kind;
+            functor(application);
+        });
+    }
+    forEachBuiltinAppliedThroughBoundFunctions(inputs, heap, maker, boundFunctions.span(), application, amongFunctions, wantedOperands, functor);
 }
 
 // A protocol of the language applies what it finds under one of these names.
@@ -908,7 +923,7 @@ void BuiltinApplicationTasks::run(unsigned task, ValueSetMaker& maker, SetsMeeti
     }
     size_t first = (task - numberOfTasksOfCalls()) * groupsPerTask;
     for (ValueFlowNodeID node : m_groups.subspan(first, std::min(groupsPerTask, m_groups.size() - first)))
-        forEachBuiltinAppliedByGroup(m_inputs, m_heap, maker, *m_inputs.solver().keyOfMadeNode(node), node, m_among.objects, wantedOperands, functor);
+        forEachBuiltinAppliedByGroup(m_inputs, m_heap, maker, *m_inputs.solver().keyOfMadeNode(node), node, m_among.objects, m_among.functions, wantedOperands, functor);
 }
 
 // All threads put the applications together. The functor gets them on this thread, in the order of the tasks.

@@ -527,16 +527,31 @@ static SourcePlans::Words createSourcePlan(VM& vm, Instance& instance, JSCell* s
     return plan;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindSourcePlan, void*, (Instance* instance, JSCell* source, uint32_t requestOffset))
+// The plan, and the object that it is a plan of: the source, or what a spread of a compiled source gives where a spread runs no code.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindSourcePlan, UGPRPair, (Instance* instance, JSCell* source, uint32_t requestOffset))
 {
     SourcePlans& plans = instance->state->objects->caches->sourcePlans;
-    Structure* structure = source->structure();
-    if (const uint32_t* plan = plans.find(structure, requestOffset)) [[likely]]
-        return const_cast<uint32_t*>(plan);
-    VM& vm = *instance->vm;
+    auto planOf = [](const uint32_t* plan, JSCell* object) {
+        return makeUGPRPair(std::bit_cast<UCPURegister>(plan), std::bit_cast<UCPURegister>(object));
+    };
+    if (const uint32_t* plan = plans.find(source->structure(), requestOffset)) [[likely]]
+        return planOf(plan, source);
+
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFindSourcePlan);
+    DeferTerminationForAWhile deferTermination(vm);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
+    if (compiledObjectOrNull(source)) {
+        if (JSFinalObject* copy = tryCopyAsOrdinaryObject(vm, globalObject, asObject(source), { }))
+            source = copy;
+        if (const uint32_t* plan = plans.find(source->structure(), requestOffset))
+            return planOf(plan, source);
+    }
     DeferGCForAWhile deferGC(vm);
     const CloneAsRequest& request = requestAt<CloneAsRequest>(instance, requestOffset);
-    return const_cast<uint32_t*>(plans.add(structure, requestOffset, request.count, createSourcePlan(vm, *instance, source, request)));
+    // Of a compiled object that no spread copies so, nothing is remembered: one Structure stands for objects with other keys.
+    if (compiledObjectOrNull(source))
+        return planOf(plans.planThatNeverApplies(request.count), source);
+    return planOf(plans.add(source->structure(), requestOffset, request.count, createSourcePlan(vm, *instance, source, request)), source);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsPlainDataObject, size_t, (Instance*, EncodedJSValue value))

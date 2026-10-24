@@ -15,7 +15,7 @@
 #include "AOTOperationData.h"
 #include "AOTRelocation.h"
 #include "AOTSchemaRecords.h"
-#include "AOTStackSlotPoisoning.h"
+#include "AOTClaimChecks.h"
 #include "AOTStubCalls.h"
 #include "AOTVector.h"
 #include "AirInstObserver.h"
@@ -152,6 +152,8 @@ struct CodeRecords {
     // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
     BitVector operationsWithCompressedOperand;
     StackSlots slotsOfFrameCells;
+    // Only with --aot-check=MovedLoads.
+    GuardTests guardTests;
     bool hasBirthsOfFrameCells { false };
 };
 

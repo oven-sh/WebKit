@@ -16,17 +16,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-struct CellTypeChange {
-    JSType before;
-    JSType after;
-};
-
-} // anonymous namespace
-
-// In row order: ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
-static constexpr CellTypeChange cellTypeChangesInPlace[] = {
+// The back end is told that the type of a cell never changes (AOTHeaps.cpp). These do, in place: in row order ClassPrototype::convertToOrdinaryObject, SlimClosure::reify.
+// So a type is tested under that heap only by a range that holds both types of a row or neither. --aot-check=ClaimsToBackEnd | MovedLoads report every other change.
+static constexpr B3::WordChange changesOfCellTypeInPlace[] = {
     { ObjectType, FinalObjectType },
     { SlimClosureType, SlimClosureWithPropertiesType },
 };
@@ -36,11 +28,20 @@ static constexpr bool isStableRange(JSTypeRange range)
     auto contains = [&](JSType type) {
         return range.first <= type && type <= range.last;
     };
-    for (CellTypeChange change : cellTypeChangesInPlace) {
-        if (contains(change.before) != contains(change.after))
+    for (B3::WordChange change : changesOfCellTypeInPlace) {
+        if (contains(static_cast<JSType>(change.before)) != contains(static_cast<JSType>(change.after)))
             return false;
     }
     return true;
+}
+
+static constexpr bool isTakenInPlace(JSType type)
+{
+    for (B3::WordChange change : changesOfCellTypeInPlace) {
+        if (change.after == type)
+            return true;
+    }
+    return false;
 }
 
 static_assert(isStableRange({ StringType, StringType }) && isStableRange({ ObjectType, MaxJSType }) && isStableRange(slimClosureTypes) && isStableRange({ ArrayType, DerivedArrayType }) && isStableRange({ CompiledClosureType, CompiledClosureType }));
@@ -51,6 +52,11 @@ static_assert(!isStableRange({ SlimClosureType, SlimClosureType }) && !isStableR
 bool isStableCellTypeRange(JSTypeRange range)
 {
     return isStableRange(range);
+}
+
+std::span<const B3::WordChange> cellTypeChangesInPlace()
+{
+    return changesOfCellTypeInPlace;
 }
 
 Condition PrimitiveEmitter::isUndefinedOrNull(Boxed value, uint16_t occurringPrimitives)
@@ -92,6 +98,18 @@ Condition PrimitiveEmitter::hasCellTypeIn(CellPointer cell, JSTypeRange range)
     if (range.last == MaxJSType)
         return aboveOrEqual(type, word32(range.first));
     return below(sub(type, word32(range.first)), word32(range.last - range.first + 1));
+}
+
+Condition PrimitiveEmitter::hasCellTypeAbove(CellPointer cell, JSType type)
+{
+    RELEASE_ASSERT(type < MaxJSType && isStableCellTypeRange({ static_cast<JSType>(type + 1), MaxJSType }));
+    return above(loadCellType(cell), word32(type));
+}
+
+Condition PrimitiveEmitter::hasOrHadCellType(CellPointer cell, JSType type)
+{
+    RELEASE_ASSERT(!isTakenInPlace(type));
+    return equal(loadCellType(cell), word32(type));
 }
 
 // A type that a cell takes or leaves in place is read as one of the bytes that change: alone, so that the comparison takes it from memory.

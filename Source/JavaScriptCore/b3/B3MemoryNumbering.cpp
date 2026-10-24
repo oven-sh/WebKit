@@ -82,7 +82,8 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_pureCalls.clear();
     m_heapEpochs.clear();
     m_replacedLoads.shrink(0);
-    m_loadsToCheck.shrink(0);
+    m_loadsToLog.shrink(0);
+    m_storesToLog.clear();
     m_lastMemoryStateID = noID;
     m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
     recordLoopWrites();
@@ -154,7 +155,7 @@ void MemoryNumbering::endWalk()
 {
     if (m_validates)
         validateReplacedLoads();
-    checkReplacedLoadsAtRunTime();
+    logReplacedLoads();
 }
 
 static PatchpointValue* asPureCall(Value* value)
@@ -425,8 +426,12 @@ MemoryNumbering::Result MemoryNumbering::replaceIfRedundant(Value* current)
         }
         if (memory->isStore()) {
             didWriteMemory(memory->range(), memory->origin());
-            if (memory->opcode() == Store)
-                m_values.add(keyForLoad(Load, memory->child(0)->type(), memory), memory->child(0));
+            if (memory->opcode() == Store) {
+                ValueKey keyOfLoad = keyForLoad(Load, memory->child(0)->type(), memory);
+                m_values.add(keyOfLoad, memory->child(0));
+                if (m_proc.policy().validation.logsMovedLoads)
+                    m_storesToLog.set(keyOfLoad, memory);
+            }
             return Result::Unchanged;
         }
         key = keyForLoad(memory->kind(), memory->type(), memory);
@@ -454,22 +459,25 @@ MemoryNumbering::Result MemoryNumbering::replaceIfRedundant(Value* current)
         });
     }
     if (load) {
-        if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, load))
-            m_loadsToCheck.append({ *moved, current, m_block, load->lastChild(), *match });
+        if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, load)) {
+            Value* store = isEqualLoad(load, *match) ? nullptr : m_storesToLog.get(key);
+            if (store || isEqualLoad(load, *match))
+                m_loadsToLog.append({ *moved, current, m_block, load->lastChild(), *match, store });
+        }
     }
     current->replaceWithIdentity(*match);
     return Result::Replaced;
 }
 
-void MemoryNumbering::checkReplacedLoadsAtRunTime()
+void MemoryNumbering::logReplacedLoads()
 {
-    for (const LoadToCheck& replaced : m_loadsToCheck) {
+    for (const LoadToLog& replaced : m_loadsToLog) {
         size_t index = replaced.block->values().find(replaced.load);
-        if (index == notFound)
-            continue;
-        replaced.block->values().insert(index + 1, createMovedLoadCheck(m_proc, replaced.moved, replaced.address, replaced.replacement));
+        if (index != notFound)
+            m_proc.movedLoadLog().add(replaced.moved, replaced.block, static_cast<unsigned>(index), replaced.address, replaced.replacement, replaced.store);
     }
-    m_loadsToCheck.shrink(0);
+    m_loadsToLog.shrink(0);
+    m_storesToLog.clear();
 }
 
 MemoryNumbering::Result MemoryNumbering::replacePureCallIfRedundant(Value* current, PatchpointValue* patchpoint)

@@ -6,7 +6,7 @@ enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
 record Field wire {
     key: PropertyKey? computedKey: UInt32? declared: DeclaredType flags: FieldFlags form: FieldForm originLayout: Layout? originField: UInt32?
-    | engine flow: FieldFlow slotType: Type?
+    | engine flow: FieldFlow slotType: Type? setterType: Type?
 }
 record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
 record InnerObject engine { field: UInt32 layout: Layout? arrayCapacity: UInt32 outerFields: List<UInt32> outerAllocationClass: AllocationClass? isAlwaysInPlace: Bool }

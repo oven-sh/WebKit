@@ -33,7 +33,10 @@
 #include "AOTVector.h"
 #include "GetterSetter.h"
 #include "JSCJSValueInlines.h"
+#include "JSGlobalObject.h"
+#include "JSType.h"
 #include <limits>
+#include <optional>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -298,25 +301,43 @@ void SlotAccessEmitter::generateGetSlotOrUndefined(const ValueContext& value)
     define(value, readSlot(value, in<CellPointer>(value->objectOperand()), fieldAccessOf(value), true));
 }
 
-// Nothing writes the words of a GetterSetter once it is made, so what its getter is depends on the slot alone.
-void SlotAccessEmitter::generateGetSlotGetter(const ValueContext& value)
+// Nothing writes the words of a GetterSetter once it is made, so what its getter and its setter are depends on the slot alone.
+std::optional<CellPointer> SlotAccessEmitter::loadHalfOfAccessorInSlot(const ValueContext& value, ptrdiff_t offsetInGetterSetter)
 {
     if (value.representation() == Representation::Void) {
         define(value, { });
-        return;
+        return std::nullopt;
     }
     const FieldAccess& access = fieldAccessOf(value);
     if (access.coverage == FieldAccess::Coverage::NoMember) {
         define(value, guardProvesSlotFilled(analyses(), value.value()) ? resultBehindTestThatNeverPasses(value) : failRead(value, InternalErrorKind::SlotAccessNotPlaced));
-        return;
+        return std::nullopt;
     }
     MemoryLocation location = MemoryLocation::objectField(access.key, access.receivers);
     Operand held = emitter<SlotEmitter>().loadSlot(in<CellPointer>(value->objectOperand()), access.slot, location, extensionWordOf(access), Type::object());
     CellPointer accessor = held.is<CellPointer>() ? held.as<CellPointer>()
         : held.is<NarrowReference>() ? emitter<ConversionEmitter>().decode(held.as<NarrowReference>(), Type::object(), Representation::Cell).as<CellPointer>()
         : unboxCell(held.as<Boxed>());
-    CellPointer getter(m_out.loadPtr(m_out.address(m_heaps.at(m_program, location), accessor.value(), GetterSetter::offsetOfGetter())));
-    define(value, inResultRepresentation(value, getter));
+    return CellPointer(m_out.loadPtr(m_out.address(m_heaps.at(m_program, location), accessor.value(), offsetInGetterSetter)));
+}
+
+void SlotAccessEmitter::generateGetSlotGetter(const ValueContext& value)
+{
+    if (std::optional<CellPointer> getter = loadHalfOfAccessorInSlot(value, GetterSetter::offsetOfGetter()))
+        define(value, inResultRepresentation(value, *getter));
+}
+
+// The function that stands for an absent setter ignores the call. Strict code calls the one that throws.
+void SlotAccessEmitter::generateGetSlotSetter(const ValueContext& value)
+{
+    std::optional<CellPointer> setter = loadHalfOfAccessorInSlot(value, GetterSetter::offsetOfSetter());
+    if (!setter)
+        return;
+    if (value->isInStrictCode()) {
+        CellPointer thrower(loadField<Pointer>(loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)), m_heaps.JSGlobalObject_nullSetterStrictFunction).value());
+        setter = select(hasCellType(*setter, NullSetterFunctionType), thrower, *setter);
+    }
+    define(value, inResultRepresentation(value, *setter));
 }
 
 void SlotAccessEmitter::generateGetDeferredClosureSlot(const ValueContext& value)

@@ -53,13 +53,13 @@ public:
         return findInTable(structure, request);
     }
     const uint32_t* add(Structure*, uint32_t request, uint32_t numberOfMembers, Words&&);
+    const uint32_t* planThatNeverApplies(uint32_t numberOfMembers);
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
     AOT_CLASS_THRESHOLD(unsigned, maxNumberOfPlans, 4096);
 
     const uint32_t* findInTable(Structure*, uint32_t request);
-    const uint32_t* planThatNeverApplies(uint32_t numberOfMembers);
 
     UncheckedKeyHashMap<std::pair<Structure*, uint32_t>, Words> m_plans;
     Vector<Words, 1> m_plansThatNeverApply;

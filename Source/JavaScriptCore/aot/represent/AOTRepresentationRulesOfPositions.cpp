@@ -175,6 +175,7 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
     case Opcode::GetDeferredClosureSlotOrUndefined:
         return loadRepresentationOf(slotOf(inputs, value.fieldAccess()), type);
     case Opcode::GetSlotGetter:
+    case Opcode::GetSlotSetter:
         return Representation::Cell;
     case Opcode::GetEnvironmentField:
         return representationOf(inputs.placement.slot(value.layout(), value.field()).representation);

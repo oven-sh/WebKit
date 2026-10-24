@@ -133,7 +133,7 @@ private:
     Result replaceIfRedundant(Value*);
     Result replacePureCallIfRedundant(Value* current, PatchpointValue*);
     void validateReplacedLoads();
-    void checkReplacedLoadsAtRunTime();
+    void logReplacedLoads();
     bool isUnchangedSince(const ReplacedLoad&, const IndexSet<BasicBlock*>& reachable, Value*& clobber);
 
     Procedure& m_proc;
@@ -150,14 +150,16 @@ private:
     const bool m_validates;
     Vector<ReplacedLoad> m_replacedLoads;
 
-    struct LoadToCheck {
+    struct LoadToLog {
         MovedLoad moved;
         Value* load;
         BasicBlock* block;
         Value* address;
         Value* replacement;
+        Value* store;
     };
-    Vector<LoadToCheck> m_loadsToCheck;
+    Vector<LoadToLog> m_loadsToLog;
+    UncheckedKeyHashMap<ValueKey, Value*> m_storesToLog;
 };
 
 } } // namespace JSC::B3

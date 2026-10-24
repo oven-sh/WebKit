@@ -39,6 +39,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(frameSlots) \
     v(counters)
 
+// AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
 #define FOR_EACH_AOT_IMMUTABLE_FIELD_HEAP(v) \
     v(AOTInstance_vm, AOT_INSTANCE_OFFSET(vm)) \
     v(AOTInstance_fixedFields, 0) \
@@ -48,6 +49,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTObject_shapeWord, offsetOfShapeWord) \
     v(ArrayBuffer_shared, ArrayBuffer::offsetOfShared()) \
     v(JSArrayBuffer_impl, JSArrayBuffer::offsetOfImpl()) \
+    v(JSGlobalObject_nullSetterStrictFunction, JSGlobalObject::offsetOfNullSetterStrictFunction()) \
     v(JSPropertyNameEnumerator_cachedOrderWord, JSPropertyNameEnumerator::cachedOrderWordOffset()) \
     v(JSPropertyNameEnumerator_cachedOrderWordMask, JSPropertyNameEnumerator::cachedOrderWordMaskOffset()) \
     v(AOTImage_tables, 0)

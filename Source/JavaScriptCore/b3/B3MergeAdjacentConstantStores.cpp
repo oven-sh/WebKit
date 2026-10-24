@@ -225,8 +225,10 @@ private:
             patchpoint->setGenerator([firstOffset = first->offset(), numberOfVectors = stretch.stores.size() / 2](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 storeZeroVectors(jit, params[0].gpr(), params.fpScratch(0), firstOffset, numberOfVectors);
             });
-            for (const ConstantStore& zeroStore : stretch.stores)
+            for (const ConstantStore& zeroStore : stretch.stores) {
+                m_proc.movedLoadLog().willMove(zeroStore.store);
                 zeroStore.store->replaceWithNop();
+            }
         }
         m_insertionSet.execute(block);
         m_changed |= !m_zeroStretches.isEmpty();
@@ -267,8 +269,10 @@ private:
             Origin origin = block->at(index)->origin();
             Value* constant = m_insertionSet.insert<Const64Value>(index, origin, static_cast<int64_t>(pair.constant));
             m_insertionSet.insert<MemoryValue>(index, Store, origin, constant, pair.low.store->lastChild(), pair.low.store->offset(), pair.low.store->range() | pair.high.store->range());
-            pair.low.store->replaceWithNop();
-            pair.high.store->replaceWithNop();
+            for (MemoryValue* store : { pair.low.store, pair.high.store }) {
+                m_proc.movedLoadLog().willMove(store);
+                store->replaceWithNop();
+            }
         }
         m_insertionSet.execute(block);
         m_changed |= !m_pairs.isEmpty();

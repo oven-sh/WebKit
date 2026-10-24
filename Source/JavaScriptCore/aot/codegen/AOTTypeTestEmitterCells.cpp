@@ -214,7 +214,7 @@ Condition TypeTestEmitter::hasSharingMode(CellPointer cell, ArrayBufferSharingMo
 Condition TypeTestEmitter::isNamespaceOf(CellPointer cell, ModuleID module)
 {
     // The cell type of a namespace object never changes. A cell that leaves ObjectType is refused by the call, whichever type was read.
-    Condition mayBeNamespace = equal(loadCellType(cell), word32(ObjectType));
+    Condition mayBeNamespace = hasOrHadCellType(cell, ObjectType);
     return selectByBranch<Condition>(mayBeNamespace, [&] {
         return callLeaf<Condition>(RuntimeOperation::IsNamespaceOfModule, { cell, word32(static_cast<int32_t>(module.index())) });
     }, [&] {

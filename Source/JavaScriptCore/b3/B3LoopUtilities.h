@@ -30,12 +30,6 @@ inline bool isLoopPoll(const Value* value)
     return patchpoint && patchpoint->isLoopPoll;
 }
 
-inline bool isMovedLoadCheck(const Value* value)
-{
-    auto* patchpoint = value->as<PatchpointValue>();
-    return patchpoint && patchpoint->isMovedLoadCheck;
-}
-
 inline bool canCloneForLoop(const Value* value)
 {
     if (value->kind().isCloningForbidden() || value->type().isTuple())

@@ -383,7 +383,7 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
         LBasicBlock isComparedByBits = newBlock();
         branch(isCell(searched), { normalEdge(isCellBlock), normalEdge(isComparedByBits) });
         m_out.appendTo(isCellBlock);
-        missUnless(call, above(loadCellType(unboxCell(searched)), Word32(m_out.constInt32(LastValueCompareCellType))));
+        missUnless(call, hasCellTypeAbove(unboxCell(searched), static_cast<JSType>(LastValueCompareCellType)));
         m_out.jump(isComparedByBits);
         m_out.appendTo(isComparedByBits);
     }
