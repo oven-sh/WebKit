@@ -7124,6 +7124,7 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     Procedure& procedure = *compilationContext.procedure;
     procedure.setIsWasm(true);
     procedure.setName(callee.nameWithHash());
+    procedure.setCancellationFlag(compilationContext.cancellationFlag);
     if (shouldDumpIRFor(functionIndex + info.importFunctionCount()))
         procedure.setShouldDumpIR();
 
@@ -7169,6 +7170,8 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
         if (shouldDumpDisassemblyFor(compilationMode))
             procedure.code().setDisassembler(makeUniqueWithoutFastMallocCheck<B3::Air::Disassembler>());
         B3::prepareForGeneration(procedure);
+        if (procedure.hasBeenCancelled()) [[unlikely]]
+            return makeUnexpected("compilation was cancelled "_s);
         B3::generate(procedure, *compilationContext.wasmEntrypointJIT);
         compilationContext.wasmEntrypointByproducts = procedure.releaseByproducts();
         result->entrypoint.calleeSaveRegisters = procedure.calleeSaveRegisterAtOffsetList();

@@ -400,6 +400,8 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
 #endif
 
     m_liveness = makeUniqueWithoutFastMallocCheck<UnifiedTmpLiveness>(m_code);
+    if (m_code.hasBeenCancelled())
+        return;
 
     {
         buildLiveRanges(*m_liveness);

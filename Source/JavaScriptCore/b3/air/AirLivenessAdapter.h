@@ -78,6 +78,8 @@ public:
         ensureActions();
     }
 
+    bool hasBeenCancelled() const { return code.hasBeenCancelled(); }
+
     // The fixpoint can read the use and def sets straight off the instructions, so the per-boundary
     // table is only materialized for a client that walks a block itself through LocalCalc.
     static constexpr bool streamsActions = true;

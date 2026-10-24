@@ -124,6 +124,7 @@ void Plan::fail(String&& errorMessage, CompilationError error)
     dataLogLnIf(WasmPlanInternal::verbose, "failing with message: ", errorMessage);
     m_errorMessage = WTF::move(errorMessage);
     m_error = error;
+    m_cancelled.store(true, std::memory_order_relaxed);
     complete();
 }
 

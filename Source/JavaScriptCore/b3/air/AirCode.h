@@ -89,6 +89,9 @@ public:
     ~Code();
 
     Procedure& proc() { return m_proc; }
+
+    // See Procedure::hasBeenCancelled().
+    bool hasBeenCancelled() const;
     
     const Vector<Reg>& regsInPriorityOrder(Bank bank) const
     {

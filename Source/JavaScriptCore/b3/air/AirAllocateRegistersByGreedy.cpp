@@ -951,6 +951,8 @@ public:
             IndexSet<Tmp::AbsolutelyIndexed<GP>> cannotSpillInPlaceGP;
             IndexSet<Tmp::AbsolutelyIndexed<FP>> cannotSpillInPlaceFP;
             buildLiveRanges(cannotSpillInPlaceGP, cannotSpillInPlaceFP);
+            if (m_code.hasBeenCancelled())
+                return;
             initSpillCosts<GP>(cannotSpillInPlaceGP);
             if (hasFPTmps)
                 initSpillCosts<FP>(cannotSpillInPlaceFP);
@@ -959,12 +961,16 @@ public:
         coalesceTmps<GP>();
         if (hasFPTmps)
             coalesceTmps<FP>();
+        if (m_code.hasBeenCancelled())
+            return;
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " state before allocate registers:\n", *this, "IR:\n", m_code);
 
         allocateRegisters<GP>();
         if (hasFPTmps)
             allocateRegisters<FP>();
+        if (m_code.hasBeenCancelled())
+            return;
 
         insertFixupCode();
 
@@ -1341,6 +1347,8 @@ private:
     {
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::buildLiveRanges"_s);
         UnifiedTmpLiveness liveness(m_code);
+        if (m_code.hasBeenCancelled())
+            return;
         TmpMap<Point> activeEnds(m_code);
 #if ASSERT_ENABLED
         UnifiedTmpLiveness::LiveAtHead assertOnlyLiveAtHead = liveness.liveAtHead();
@@ -1483,6 +1491,8 @@ private:
             BasicBlock* block = m_code[blockIndex];
             if (!block)
                 continue;
+            if (m_code.hasBeenCancelled())
+                return;
 
             Point positionOfHead = this->positionOfHead(block);
             Point positionOfTail = this->positionOfTail(block);
@@ -2346,6 +2356,8 @@ private:
 
         do {
             while (!m_queue.isEmpty()) {
+                if (m_code.hasBeenCancelled())
+                    return;
                 auto entry = m_queue.dequeue();
                 Tmp tmp = entry.tmp();
                 ASSERT(tmp && tmp.bank() == bank);

@@ -41,6 +41,7 @@
 #include "WasmMemory.h"
 #include "WasmModuleInformation.h"
 #include "WasmTierUpCount.h"
+#include <atomic>
 #include <wtf/Box.h>
 #include <wtf/SegmentedVector.h>
 
@@ -63,6 +64,9 @@ class OptimizingJITCallee;
 class TierUpCount;
 
 struct CompilationContext {
+    // The plan's cancellation flag (Plan::cancellationFlag()). parseAndCompileOMG hands it to the
+    // B3::Procedure so the pipeline stops once the plan is cancelled.
+    const std::atomic<bool>* cancellationFlag { nullptr };
     std::unique_ptr<CCallHelpers> jsToWasmJIT;
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
     std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;

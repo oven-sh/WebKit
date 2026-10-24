@@ -198,6 +198,10 @@ public:
         // Lower defs before uses on a global level. This is a good heuristic to lock down a
         // hoisted address expression before we duplicate it back into the loop.
         for (B3::BasicBlock* block : m_procedure.blocksInPreOrder()) {
+            // A cancelled compile leaves the Air code half built. generateToAir checks the same flag
+            // right after this phase and nothing reads the code then.
+            if (m_procedure.hasBeenCancelled()) [[unlikely]]
+                return;
             m_block = block;
 
             m_isRare = !m_fastWorklist.saw(block);

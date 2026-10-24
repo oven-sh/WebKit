@@ -160,6 +160,11 @@ bool Code::needsUsedRegisters() const
     return m_proc.needsUsedRegisters();
 }
 
+bool Code::hasBeenCancelled() const
+{
+    return m_proc.hasBeenCancelled();
+}
+
 BasicBlock* Code::addBlock(double frequency)
 {
     std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));

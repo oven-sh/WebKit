@@ -36,6 +36,7 @@
 #include "JITOpaqueByproducts.h"
 #include "PureNaN.h"
 #include "RegisterAtOffsetList.h"
+#include <atomic>
 #include <wtf/Bag.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashSet.h>
@@ -265,6 +266,13 @@ public:
     void setNeedsUsedRegisters(bool value) { m_needsUsedRegisters = value; }
     bool needsUsedRegisters() const { return m_needsUsedRegisters; }
 
+    // The client sets this when the result of the compile can become useless while it runs (a Wasm
+    // tier-up whose VM is torn down). The pipeline polls it between phases and inside its long
+    // fixpoints. Once it reads true, the phases stop and the Procedure holds partial IR: the client
+    // must not generate code from it.
+    void setCancellationFlag(const std::atomic<bool>* flag) { m_cancellationFlag = flag; }
+    bool hasBeenCancelled() const { return m_cancellationFlag && m_cancellationFlag->load(std::memory_order_relaxed); }
+
     JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE frameSize() const;
     JS_EXPORT_PRIVATE RegisterAtOffsetList calleeSaveRegisterAtOffsetList() const;
 
@@ -358,6 +366,7 @@ private:
     String m_name;
     PCToOriginMap m_pcToOriginMap;
     RefPtr<JSON::Array> m_ionGraphPasses;
+    const std::atomic<bool>* m_cancellationFlag { nullptr };
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_needsUsedRegisters : 1 { true };

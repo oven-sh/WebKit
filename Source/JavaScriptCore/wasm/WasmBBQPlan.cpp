@@ -90,6 +90,8 @@ bool BBQPlan::dumpDisassembly(CompilationContext& context, LinkBuffer& linkBuffe
 void BBQPlan::work()
 {
     ASSERT(m_calleeGroup->runnable());
+    if (hasBeenCancelled())
+        return;
     CompilationContext context;
     Vector<UnlinkedWasmToWasmCall> unlinkedWasmToWasmCalls;
     FunctionSpaceIndex functionIndexSpace = m_moduleInformation->toSpaceIndex(m_functionIndex);

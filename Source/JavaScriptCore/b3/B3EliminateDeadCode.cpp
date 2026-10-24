@@ -60,6 +60,9 @@ bool eliminateDeadCodeImpl(Procedure& proc)
         }
     }
     for (;;) {
+        // Nothing is mutated before the fixpoint ends, so a cancelled compile can stop here.
+        if (proc.hasBeenCancelled())
+            return false;
         while (Value* value = worklist.pop()) {
             for (Value* child : value->children())
                 worklist.push(child);
