@@ -417,7 +417,7 @@ void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
         return typeTestPlanFor(widest, operand.representation, types().intern(type));
     };
     const Type& listed = m_program.at(value->validatedType());
-    if (hasMembersWithoutLayout(m_program, listed))
+    if (listed.anyFunction || hasMembersWithoutLayout(m_program, listed))
         return;
     Type testable = testableTypeOf(listed);
     bool isWidened = (testable.anyFunction && !listed.anyFunction) || (testable.anyObject && !listed.anyObject);

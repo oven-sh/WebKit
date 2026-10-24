@@ -122,6 +122,8 @@ static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& input
     constexpr size_t firstArgument = 2;
     std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(*statement);
     const CalleeSet& callees = inputs.program.at(stamp->callees);
+    if (!callees.isComplete)
+        return false;
     ValueSetID called = ValueSets::nothing;
     for (BuiltinID builtin : callees.builtins) {
         for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
